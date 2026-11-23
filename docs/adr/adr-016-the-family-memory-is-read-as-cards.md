@@ -366,5 +366,12 @@ sign any people with `agent_audience.sign`, which is on the container's
 `PYTHONPATH` (`/app/shared`). It can also read a concurrent command's
 signature from that command's `/proc/<pid>/environ`. A command's own signature is in its environment, so a shell can keep
 one and use it in another room until it expires. Closing both needs the
-memory tools in a process the shell cannot reach. The agent's container
-also still mounts the whole memory read-only, which this does not cover.
+memory tools in a process the shell cannot reach.
+
+No part of the memory is mounted into the agent's container. nanobot's file tools
+(`read_file`, `grep`, `find_files`, `list_dir`) and its exec shell read
+every file in the container, around the audience rule, so a mounted memory
+would give any room every person's own notes. The agent reads the memory
+only through the commands above. Its per-turn brief reads the same way,
+for the room's people: a person's own page is in the brief only in that
+person's own chat.

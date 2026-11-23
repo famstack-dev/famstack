@@ -24,6 +24,11 @@ Rows (the first four are the card's behavior, the fifth is the admin's):
      changed or expired signature): nothing of Marge's in Bart's chat.
   8. The history of a person's folder: shown only in that person's own chat.
   9. A list in a person's folder: no list verb names its items elsewhere.
+ 10. No memory file in the container: no mount brings one in, the skill
+     names no path into the memory, and a path the model writes reaches
+     nothing of Marge's.
+ 11. The brief: it knows the speaker's profile and the room's topic, read
+     for the room's people.
 
 A last row pins a known limit, strict xfail: a shell that reads the
 runtime's own environment holds its key, and signs any people with it.
@@ -50,6 +55,7 @@ import os
 import shlex
 import socket
 import subprocess
+import threading
 import time
 import sys
 import types
@@ -81,11 +87,15 @@ class Room:
     key: str
     people: tuple[str, ...]
     asker: str
+    label: str = ""
 
 
 BARTS_CHAT = Room("!bart-chat:simpson", ("bart",), "bart")
 MARGES_CHAT = Room("!marge-chat:simpson", ("marge",), "marge")
-FAMILY_ROOM = Room("!family:simpson", ("homer", "marge", "bart", "lisa"), "marge")
+FAMILY_ROOM = Room("!family:simpson", ("homer", "marge", "bart", "lisa"), "marge", "Simpsons")
+# The family's topic room, as the archivist names one.
+CAMPING_ROOM = Room("!camping:simpson", ("homer", "marge", "bart", "lisa"), "marge",
+                    "Thema: Camping")
 # Nobody knows who is in it: the room's people could not be told.
 UNKNOWN_PEOPLE = Room("!somewhere:simpson", (), "bart")
 
@@ -102,9 +112,10 @@ MARGES_NOTE = _note("Marge000000001", "Gift for the bowling night",
 BARTS_NOTE = _note("Bart0000000001", "Gift ramp plan", "Bart builds a gift ramp for Lisa.")
 SHARED_NOTE = _note("Family0000001", "Camping tent", "The tent for four is in the garage.")
 
-# Marge's page, in her own folder: what `memory_person` reads.
+# Marge's page, in her own folder: what `memory_person` reads. Its tagline
+# is what the brief takes as her essence.
 MARGES_PAGE = ("---\ntitle: Marge\nslug: marge\ncanonical: Marge\n---\n\n"
-               "# Marge\n\nKeeps the spare key in the blue vase.\n")
+               "# Marge\n\n> Keeps the spare key in the blue vase.\n")
 
 SEED = {"marge/notes/gift.md": MARGES_NOTE,
         "bart/notes/gift.md": BARTS_NOTE,
@@ -197,9 +208,15 @@ class Stacky:
         request = None if room is None else types.SimpleNamespace(
             turn_id="t1", sender_id=f"@{room.asker}:simpson", session_key=f"matrix:{room.key}",
             chat_id=room.key,
-            metadata={"room_people": list(room.people)} if room.people else {})
+            metadata={"room": room.label or room.key,
+                      **({"room_people": list(room.people)} if room.people else {})})
         context.current_request_context = lambda: request
+        self.request = request
         return self
+
+    def briefs(self) -> list[str]:
+        """The brief nanobot's runtime gives the model with the room's next message."""
+        return sys.modules["brief"].brief_lines(self.request)
 
     def searches(self, query: str) -> str:
         """What the `memory_search` tool answers to `query`, as the model reads it."""
@@ -246,8 +263,12 @@ def host_api(memory, api, shim):
     `agent_command` turns the line into the command or a refusal, then the
     command runs and the answer is the text, with a status line on failure.
     It runs the command on the test's memory, not through the host's
-    `./stack` (which would reach whatever runs on this Mac).
+    `./stack` (which would reach whatever runs on this Mac). One command at a
+    time: the API runs each in a process of its own, while this one captures
+    the test process's output, which two commands at once would share.
     """
+    one_at_a_time = threading.Lock()
+
     def handle(conn) -> None:
         line = b""
         while not line.endswith(b"\n"):
@@ -259,7 +280,8 @@ def host_api(memory, api, shim):
         if refusal:
             conn.sendall(refusal.encode())
             return
-        code, text = run_command(memory, args)
+        with one_at_a_time:
+            code, text = run_command(memory, args)
         if code:
             text = f"{text.rstrip(chr(10))}\n{shim.EXIT_MARKER} {code}\n"
         conn.sendall(text.encode())
@@ -563,6 +585,261 @@ def test_in_barts_chat_a_write_through_the_shared_folder_into_marges_is_refused(
 
     assert "read only in" in answer
     assert memory.new_commits() == before
+
+
+# ── 10. No memory file in the container ─────────────────────────────
+
+AGENT_DIR = REPO_ROOT / "stacklets" / "agent"
+
+
+# The test instance's data dir, as `stack up agent` renders `{data_dir}`.
+DATA_DIR = Path("/Users/simpson/famstack-data")
+
+
+def _agent_mounts(compose_text: str, data_dir: Path = DATA_DIR) -> list[tuple[Path, str]]:
+    """Every bind mount in `compose_text` as `(host path, container path)`: its
+    variables rendered from the agent's `[env.defaults]` for `data_dir`, a
+    relative path resolved from the stacklet's folder, as Docker resolves it."""
+    import tomllib
+    import yaml
+
+    defaults = tomllib.loads((AGENT_DIR / "stacklet.toml").read_text())["env"]["defaults"]
+    rendered = {name: str(value).replace("{data_dir}", str(data_dir))
+                for name, value in defaults.items()}
+    mounts = []
+    for service in yaml.safe_load(compose_text)["services"].values():
+        for volume in service.get("volumes", []):
+            host, container = volume.split(":")[:2]
+            for name, value in rendered.items():
+                host = host.replace("${" + name + "}", value)
+            assert "${" not in host, f"{host} is not rendered from the stacklet's defaults"
+            mounts.append((Path(os.path.normpath(AGENT_DIR / host)), container))
+    return mounts
+
+
+# What the agent's container needs from the host, and nothing else: its own
+# data dir, its runtime shims, the two shared modules and the `stack` shim.
+AGENT_NEEDS = {
+    DATA_DIR / "agent",
+    AGENT_DIR / "runtime",
+    REPO_ROOT / "lib" / "stack" / "name_trigger.py",
+    REPO_ROOT / "lib" / "stack" / "agent_audience.py",
+    AGENT_DIR / "client" / "stack",
+}
+
+
+def _mount_refusals(compose_text: str) -> list[str]:
+    """Why each mount of `compose_text` may not be in the agent's container.
+
+    SAFETY: a mount outside what the agent needs is refused, and so, by
+    name, are the memory, every folder above it (the data dir) and the
+    stack's own folder, whose `.stack/` holds the secrets.
+    """
+    memory = DATA_DIR / "memory"
+    refused = []
+    for host, container in _agent_mounts(compose_text):
+        if host == memory or host in memory.parents or memory in host.parents:
+            refused.append(f"{host} -> {container}: the memory or a folder that holds it")
+        elif host == REPO_ROOT:
+            refused.append(f"{host} -> {container}: the stack's own folder")
+        elif host not in AGENT_NEEDS:
+            refused.append(f"{host} -> {container}: not something the agent needs")
+    return refused
+
+
+AGENT_COMPOSE = (AGENT_DIR / "docker-compose.yml").read_text()
+
+
+def test_no_mount_brings_a_memory_file_into_the_agents_container():
+    """Given the agent's compose file as `stack up agent` renders it, then each
+    mount is one the agent needs, and none holds the memory.
+
+    Why it matters: nanobot's file tools (read_file, grep, find_files,
+    list_dir) and exec reach every file in the container, around every
+    audience rule. With the memory mounted, `read_file ./vault/marge/...`
+    in Bart's chat returned Marge's private note word for word. Without it,
+    the memory is read only through the commands, for the room's people.
+    """
+    assert _agent_mounts(AGENT_COMPOSE), "the agent has mounts: its home, its runtime, its shim"
+    assert _mount_refusals(AGENT_COMPOSE) == []
+
+
+def _with_mount(volume: str) -> str:
+    """The agent's compose file with one more mount, as a later change could add it."""
+    anchor = "      - ${AGENT_DATA_DIR}:/home/nanobot/.nanobot\n"
+    assert anchor in AGENT_COMPOSE
+    return AGENT_COMPOSE.replace(anchor, f"{anchor}      - {volume}\n")
+
+
+@pytest.mark.parametrize("volume", [
+    "${AGENT_DATA_DIR}/../memory/brain:/home/nanobot/.nanobot/workspace/vault:ro",
+    "${AGENT_DATA_DIR}/..:/data:ro",
+    "${AGENT_DATA_DIR}/../memory:/memory:ro",
+    "../..:/stack:ro",
+    "../memory:/stacklet:ro",
+])
+def test_the_mount_check_refuses_a_mount_that_reaches_the_memory_or_the_stack(volume):
+    """Given a mount of the memory, of the data dir above it, of the stack's
+    own folder or of anything the agent does not need, then the check above
+    refuses it: a check that cannot fail proves nothing."""
+    assert _mount_refusals(_with_mount(volume))
+
+
+def test_the_agents_container_gets_no_memory_path_in_its_environment():
+    """Given the agent's compose file, then no variable hands its container a
+    path into the memory, which a shell could follow."""
+    compose = (AGENT_DIR / "docker-compose.yml").read_text()
+
+    assert "MEMORY_" not in compose
+
+
+def test_the_agents_skill_names_no_file_path_into_the_memory():
+    """Given the agent's workspace (its skills and rules), then no text tells
+    the model to read or write a file of the memory: it reads through its
+    memory tools and `stack memory` commands."""
+    texts = {path: path.read_text() for path in (AGENT_DIR / "workspace").rglob("*.md")}
+
+    assert texts
+    for path, text in texts.items():
+        assert "vault/" not in text, path.relative_to(AGENT_DIR)
+        assert "read_file(page)" not in text, path.relative_to(AGENT_DIR)
+
+
+# With the memory mounted, a file tool found Marge's note and her own topic by
+# their paths in Bart's chat. Without the mount no file tool finds them; these
+# are the same paths, through the commands the model may still run.
+PATHS_TO_MARGES = {
+    "her note by its path": "memory card marge/notes/gift.md",
+    "her note through the shared folder": "memory card family/../marge/notes/gift.md",
+    "her topic through the shared folder": "memory topic ../marge/geschenke",
+}
+
+
+@pytest.mark.parametrize("line", PATHS_TO_MARGES)
+def test_in_barts_chat_a_path_to_marges_memory_reaches_nothing_of_hers(stacky, memory, line):
+    """Given Marge's note and her own topic `Geschenke`, when a line in Bart's
+    chat names them by a path, then nothing of them is in the answer. The
+    answer may repeat the path the line named: that is Bart's own text."""
+    topic = memory.brain / "marge" / "geschenke" / "about.md"
+    topic.parent.mkdir(parents=True)
+    topic.write_text("---\ntitle: Geschenke\n---\n# Geschenke\n\nA bowling ball for Homer.\n")
+
+    answer = stacky.in_room(BARTS_CHAT).execs(PATHS_TO_MARGES[line])
+
+    assert "bowling night" not in answer and "Marge00000" not in answer
+    assert "for Homer" not in answer
+
+
+# ── 10b. A page the agent writes leaves no copy behind ──────────────
+
+def _stand_in_stack(bin_dir: Path, buffer: Path, exit_code: int) -> None:
+    """A `stack` on PATH that answers as the host's `memory write` does: it
+    reads the page the runtime left for it, then exits with `exit_code`."""
+    bin_dir.mkdir()
+    script = bin_dir / "stack"
+    # Unquoted, so the shell drops the blanks macOS's `wc` pads the count with.
+    script.write_text(f"#!/bin/sh\necho read $(wc -c < '{buffer}') bytes\nexit {exit_code}\n")
+    script.chmod(0o755)
+
+
+@pytest.mark.parametrize("exit_code", [0, 1], ids=["written", "refused"])
+def test_a_page_the_agent_writes_leaves_no_copy_where_exec_reads_it(
+        nanobot, tmp_path, monkeypatch, exit_code):
+    """Given Marge's chat, when Stacky writes her private note, then the host
+    command reads the page, and afterwards no copy of it is left in the
+    agent's data dir, also when the write failed.
+
+    Why it matters: exec reads every file in the container. A page left in
+    the data dir would give the next room the last page written, word for
+    word, around the room's audience.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    buffer = tmp_path / ".nanobot" / ".write-buffer"
+    _stand_in_stack(tmp_path / "bin", buffer, exit_code)
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    nanobot()
+
+    answer = sys.modules["vault_write"].write_page("marge/notes/gift.md", MARGES_NOTE)
+
+    assert f"read {len(MARGES_NOTE.encode())} bytes" in answer
+    assert not buffer.exists()
+
+
+# ── 11. The brief ────────────────────────────────────────────────────
+
+@pytest.fixture
+def camping(memory):
+    """The family's topic Camping: its page as the wiki compiles it into the
+    brain, and a packing list for it with an open item, made in Forgejo."""
+    page = memory.brain / "family" / "camping" / "about.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("---\ntitle: Camping\n---\n# Camping\n\nThe family's trips.\n")
+    memory.edited_in_forgejo({"family/lists/packliste.md":
+                              "---\ntype: list\ntitle: Packliste\ntopics:\n  - camping\n---\n\n"
+                              "- [ ] Zelt\n",
+                              "family/lists/einkauf.md":
+                              "---\ntype: list\ntitle: Einkauf\ntopics:\n  - einkauf\n---\n\n"
+                              "- [ ] Milk\n"},
+                             by="marge", subject="a packing list for camping")
+
+
+def test_in_her_own_chat_the_brief_knows_marges_profile(stacky):
+    """Given Marge's page, when Marge writes in her own chat, then the brief
+    the model gets names her and her page's essence."""
+    brief = "\n".join(stacky.in_room(MARGES_CHAT).briefs())
+
+    assert "marge" in brief
+    assert "blue vase" in brief
+
+
+@pytest.mark.parametrize("room", {"the family room": FAMILY_ROOM, "the camping room": CAMPING_ROOM})
+def test_where_others_listen_the_brief_holds_nothing_of_marges_page(stacky, camping, room):
+    """Given Marge's page in her own folder, when she writes in a room with the
+    family, then the brief names her but holds nothing of her page: the model
+    could repeat it to everyone in the room."""
+    brief = "\n".join(stacky.in_room({"the family room": FAMILY_ROOM,
+                                      "the camping room": CAMPING_ROOM}[room]).briefs())
+
+    assert "marge" in brief
+    assert "blue vase" not in brief
+
+
+def test_in_barts_chat_the_brief_holds_nothing_of_marges(stacky):
+    brief = "\n".join(stacky.in_room(BARTS_CHAT).briefs())
+
+    assert "blue vase" not in brief and not shows(brief, MARGES_CARD)
+
+
+def test_in_a_topic_room_the_brief_names_the_topic_and_its_open_lists(stacky, camping):
+    """Given the family's topic Camping and its packing list, when someone
+    writes in `Thema: Camping`, then the brief names the topic, the command
+    for its overview and the topic's list with open items, and no other list."""
+    brief = "\n".join(stacky.in_room(CAMPING_ROOM).briefs())
+
+    assert "'camping'" in brief
+    assert "stack memory topic camping" in brief
+    assert "packliste" in brief
+    assert "einkauf" not in brief
+
+
+def test_a_room_kept_only_for_lists_is_its_topic_without_an_overview(stacky, camping):
+    """Given the shopping list of the topic `einkauf`, which has no page yet,
+    when someone writes in `Thema: Einkauf`, then the brief names the topic,
+    so the list tool adds to its lists, and offers no overview it lacks."""
+    room = Room("!einkauf:simpson", FAMILY_ROOM.people, "homer", "Thema: Einkauf")
+    brief = "\n".join(stacky.in_room(room).briefs())
+
+    assert "'einkauf'" in brief and "einkauf" in brief.split("lists with open items:")[-1]
+    assert "stack memory topic einkauf" not in brief
+
+
+def test_a_room_nobody_is_known_in_gets_no_brief_from_the_memory(stacky, camping):
+    """Given a room whose people nobody could tell, then the brief reads
+    nothing of the memory: the API would refuse it, and the admin's view is
+    never the fallback."""
+    brief = "\n".join(stacky.in_room(UNKNOWN_PEOPLE).briefs())
+
+    assert "blue vase" not in brief and "packliste" not in brief
 
 
 # ── A known limit ────────────────────────────────────────────────────

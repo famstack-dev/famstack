@@ -339,7 +339,7 @@ SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
                    "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
                    "list_tool", "tool_trim", "voice_trigger", "open_question",
-                   "status_trace", "turn", "photo_before", "room_people")
+                   "status_trace", "turn", "photo_before", "room_people", "room_reads")
 
 
 @pytest.fixture

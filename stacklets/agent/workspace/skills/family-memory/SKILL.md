@@ -5,30 +5,32 @@ metadata: {"nanobot": {"always": true}}
 ---
 # Family memory (rules as pseudocode)
 
-Vault = all family knowledge. Look before answering.
+Memory = all family knowledge. Look before answering. No memory file is on my disk:
+read_file, grep, find and list_dir never reach it; the memory tools and `stack memory` do.
 
 ```
 LOOKUP:
-  brief names the page        -> read_file(page)          # no search
+  brief names a profile|topic -> memory_person(name) | exec `stack memory topic <topic>`   # no search
   else                        -> memory_search(2-4 literal keywords)
      scope family/<topic> first; miss -> widen
      independent lookups      -> ONE call, queries=[..]   # max 3
      miss                     -> retry once, new keywords; then say tried + ask
   profile                     -> memory_person(name)
+  a hit's full text           -> exec `stack memory card <path from search>`
   "lately|since when|who did" -> memory_history           # search ranks NOW, not change
   full source document        -> paperless_id frontmatter + `stack docs show <id> --content`
 
-PATHS:
-  person -> vault/<name>/about.md
+READS:
+  person -> memory_person(<name>)
   person|home page = summary up to a day old; a newer card wins when they disagree
-  topic  -> vault/family/<topic>/about.md
-  list   -> vault/family/lists/<list>.md ; which lists exist -> `stack memory list show`
-  search prints vault-relative paths -> read as vault/<path>
+  topic  -> exec `stack memory topic <topic>`
+  list   -> exec `stack memory list show <list>` ; which lists exist -> `stack memory list show`
+  a card -> exec `stack memory card <id|path>`; search prints its path
 
-SOURCES (answer used a vault page, searched or read):
+SOURCES (answer used a memory card, searched or read):
   end answer with: Sources: [<page title>](<link line from search output, verbatim>)
   only pages I read; never shorten|reuse|invent a link; no link line -> title only
-  max 3 sources; nothing from vault -> no Sources line
+  max 3 sources; nothing from the memory -> no Sources line
 
 VOICE AND PHOTOS:
   "[transcription: …]"       -> what they said aloud; act on it like typed text
@@ -56,16 +58,14 @@ LISTS:
   "belongs here|rename|new order|new sections" -> op=set list=<slug> with only what changes
   "delete|drop list X|don't need X any more" -> op=delete list=X; never empty it item by item
   delete answer "Not deleted" -> ask whether the open items go too; their yes -> op=delete confirmed=true
-  never exec rm|mv on vault files; the list store is the only way to change a list
+  the list store is the only way to change a list
   add to a list with sections    -> section = one of the list's own
   "for <name>" | "by <day>"      -> add with people=[name] | due=YYYY-MM-DD; never guess either
   two items fit what was said    -> ask which one, never pick
   answer "ambiguous|no item|no section|no list|nobody called"
                                  -> pick from the named choices, retry once
-  restructure set cannot do (merge two lists, split a section)
-                                 -> read_file then write_file(complete page)
-     keep: frontmatter verbatim at column one, every [x], their order, their words
-  write answer reports unintended unticked|REMOVED -> restore now, then say so
+  merge two lists                -> add the other list's open items here, then op=delete the other
+  split a section                -> op=set sections=[..], then op=move each item to its section
   edit answer = the truth -> relay it in one line, naming the list and the item
   edit answer prints a link line -> that page goes in Sources
   no tool call + answer read -> nothing happened, whatever I believe

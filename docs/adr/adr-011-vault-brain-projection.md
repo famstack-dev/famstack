@@ -140,5 +140,7 @@ What this does not remove is a projection that is wrong rather than
 stale. The citations make that checkable, family corrections fix it,
 and a nightly pass that checks each projection for plausibility is meant to find it.
 
-The agent already reads the brain (`MEMORY_VAULT_DIR` points at it),
-so this update describes what it does and puts conditions on it.
+The agent already reads the brain, so this update describes what it does
+and puts conditions on it. It reads the brain through `stack memory`
+commands for the people in its room; no part of the memory is mounted
+into its container (ADR-016).

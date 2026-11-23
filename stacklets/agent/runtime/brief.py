@@ -1,4 +1,4 @@
-"""Assemble a compact, per-turn "family briefing" from the vault.
+"""Assemble a compact, per-turn "family briefing" from the family memory.
 
 This is the *content* half of the runtime-context shim (see README.md). Given
 an inbound message, it produces a few short lines telling the agent WHO it is
@@ -7,13 +7,25 @@ so a family room with several people works correctly (Homer's turn is primed
 with Homer, Marge's with Marge) instead of leaning on nanobot's single-user
 USER.md.
 
+Two runtimes read the memory two ways:
+
+    brief_lines(msg)          nanobot: `stack memory` commands, for the room's people
+    brief_for(msg, vault)     a runtime with the memory on disk (the bot runner)
+
+No part of the memory is mounted into nanobot's container, because its file tools and
+exec read every file in the container around every audience rule. So
+`brief_lines` reads through `room_reads.RoomReads`: the speaker's page only
+where the room's people may all read it (in their own chat), the topic and
+its lists from the shared folder. `brief_for` and `topic_for_room_label`
+keep their names and arguments, because the bot runner's agent imports them.
+
 Design constraints that shaped this:
 - **Compact.** These lines are recomputed on every turn (they vary per speaker,
   so they sit past the KV-cache boundary). Keep them to ~150 tokens: short
-  summaries plus pointers, never full pages. The agent reads the full page via
-  its file tools only if it needs depth.
-- **Pointers, not dumps.** We hand it the essence + the vault path, not the
-  whole profile.
+  summaries plus pointers, never full pages. The agent reads the full page
+  through its memory tools only if it needs depth.
+- **Pointers, not dumps.** We hand it the essence + where to read more, not
+  the whole profile.
 - **Read-only, best-effort.** Never raise: a missing page or an unmapped room
   just yields fewer lines. A briefing is an optimisation, not a dependency.
 """
@@ -23,6 +35,7 @@ from __future__ import annotations
 import re
 import subprocess
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -37,7 +50,11 @@ def _lead(path: Path, maxwords: int = 32) -> str:
     """A one-line essence of an about.md: its tagline plus the 'About' opener."""
     if not path.exists():
         return ""
-    txt = path.read_text(errors="ignore")
+    return _essence(path.read_text(errors="ignore"), maxwords)
+
+
+def _essence(txt: str, maxwords: int = 32) -> str:
+    """A one-line essence of a person's page text: its tagline plus the 'About' opener."""
     if txt.startswith("---"):  # drop YAML frontmatter
         txt = txt.split("---", 2)[-1]
     txt = txt.replace("<!-- begin: generated -->", "")
@@ -199,17 +216,75 @@ def when_sent(now: datetime) -> str:
 ANSWER_LANGUAGE = "Answer in the language this message is written in."
 
 
-def brief_lines(msg, workspace) -> list[str]:
-    """Return the briefing as a list of short runtime-context lines (may be empty).
+def brief_lines(msg) -> list[str]:
+    """nanobot's briefing for a message, read for the people in its room (may be empty).
 
-    nanobot's workspace holds the family memory as `vault/`.
+    `msg` needs `sender_id` (the Matrix id), `metadata["room"]` (the room's
+    display name) and `metadata["room_people"]` (`room_people.py`). A room
+    whose people are not known gets the speaker's name and nothing of the
+    memory.
     """
-    return brief_for(msg, Path(workspace) / "vault")
+    # Imported here, not above: `room_reads` needs `agent_audience`, which is
+    # on the path in nanobot's container only, and the bot runner's agent
+    # imports this module for `brief_for` and `topic_for_room_label`.
+    from room_reads import RoomReads
+
+    metadata = getattr(msg, "metadata", None) or {}
+    reads = RoomReads(metadata.get("room_people") or ())
+    lines: list[str] = []
+
+    localpart = person_of(getattr(msg, "sender_id", ""))
+    # Each read is a `./stack` run on the Mac: the profile and the room's
+    # topic are asked side by side, so a turn waits for the slower one only.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        profile = pool.submit(reads.profile, localpart) if localpart else None
+        topic = pool.submit(room_topic, metadata.get("room", ""), reads).result()
+        page = profile.result() if profile else ""
+
+    if localpart:
+        # SAFETY: the page is read for the room's people, so in a room with
+        # anyone else in it, a person's own page is not in the brief.
+        essence = _essence(page.partition("\n\n")[2])
+        head = f"You are speaking with {localpart} (@{localpart})."
+        lines.append(f"{head} {essence}" if essence else head)
+        if essence:
+            lines.append(f"(Their full profile: memory_person {localpart})")
+
+    if topic:
+        overview = topic in reads.topics()
+        lines.append(f"This room's topic is '{topic}'"
+                     + (f"; run `stack memory topic {topic}` for its overview." if overview else "."))
+        lists = [slug for slug, open_items in reads.lists_of(topic) if open_items]
+        if lists:
+            lines.append(f"This topic's lists with open items: {', '.join(lists)}; run "
+                         f"`stack memory list show <list>` to see one.")
+    return lines
+
+
+def room_topic(raw: str, reads) -> str:
+    """The topic a room label maps to, as the room's people may read the
+    memory, or "" when it maps to none.
+
+    `topic_for_room_label` for a runtime without the memory on disk, with
+    `reads` a `room_reads.RoomReads`: a topic is known by its page or by a
+    list that belongs to it. A topic
+    renamed since the room was named is not followed: no command the agent
+    may run reads a topic's former ids.
+    """
+    candidates = _slug_candidates(raw)
+    if not candidates:
+        # A label no topic could have, such as an empty one, costs no read.
+        return ""
+    pages = reads.topics()
+    for candidate in candidates:
+        if candidate in pages or reads.lists_of(candidate):
+            return candidate
+    return ""
 
 
 def brief_for(msg, vault: Path) -> list[str]:
     """The briefing for a message, read from the family memory at `vault`,
-    for a runtime that has the memory somewhere other than nanobot does.
+    for a runtime that has the memory on disk (the bot runner's agent).
 
     `msg` needs `sender_id` (the Matrix id) and `metadata["room"]` (the
     room's display name).

@@ -1,7 +1,7 @@
-"""Let the agent edit a vault page with the tool every model already knows.
+"""Let the agent edit a memory page with the tool every model already knows.
 
-The agent could read the family's vault with `read_file` and change nothing in
-it. Writing meant `stack memory topic <slug> todo strike "<item>" --by <person>`,
+The agent reads a page with `stack memory card <path>`; no part of the memory
+is mounted into its container. Writing once meant `stack memory topic <slug> todo strike "<item>" --by <person>`,
 once per item, matched by substring. Asked to tidy a list, a real agent produced
 the correct final document in chat, grouped and deduplicated exactly as asked,
 and then failed to perform the twenty calls that would have made it so. It
@@ -14,7 +14,7 @@ where the caller does not have to think about it.
 
 THE THREE WAYS A MODEL CHANGES A FILE
     nanobot offers `write_file`, `apply_patch` and `edit_file`, and shimming
-    only one leaves the others aimed at a read-only mount. So:
+    only one leaves the others writing a stray file in the workspace. So:
 
     `write_file` replaces the page. Right for a genuine rewrite -- splitting
     one list into two, tidying the lot -- where the change is the whole shape
@@ -35,6 +35,10 @@ WHY THE BUFFER FILE
     is already bind-mounted read-write, so the page is written there and the
     host command reads the same bytes off its side of the mount. No new
     transport, no quoting.
+
+    SAFETY: the buffer is removed as soon as the host command has run, also
+    when it failed. exec reads every file in the container, so a page left
+    there would reach the next room around its audience.
 
 WHAT THE MODEL READS BACK
     Whatever the CLI says, verbatim -- "ticked off 2: ..." or "REMOVED 1:
@@ -88,11 +92,15 @@ def _run(page: str, payload: str, *flags: str) -> str:
     """Hand the buffer to the memory stacklet and relay its answer verbatim."""
     _BUFFER.parent.mkdir(parents=True, exist_ok=True)
     _BUFFER.write_text(payload, encoding="utf-8")
-    result = subprocess.run(
-        ["stack", "memory", "write", page, "--by", _actor(), *flags],
-        capture_output=True, text=True, timeout=120,
-        env=audience_env(dict(os.environ), current_turn().people),
-    )
+    try:
+        result = subprocess.run(
+            ["stack", "memory", "write", page, "--by", _actor(), *flags],
+            capture_output=True, text=True, timeout=120,
+            env=audience_env(dict(os.environ), current_turn().people),
+        )
+    finally:
+        # SAFETY: no copy of a page stays where exec can read it (see header).
+        _BUFFER.unlink(missing_ok=True)
     return (result.stdout or result.stderr or "").strip() or "(no answer from memory)"
 
 
@@ -114,9 +122,10 @@ def patch_page(page: str, edits: list, *, dry_run: bool = False) -> str:
 
 
 def _patched_away(page: str) -> str:
-    """What a partial-edit tool answers when aimed at a vault page."""
-    return (f"{page} is a family memory page and is edited whole, not patched. "
-            f"Read it with read_file, then call write_file on the same path "
+    """What `edit_file` answers when aimed at a memory page."""
+    return (f"{page} is a family memory page, and edit_file does not change it. "
+            f"Change part of it with apply_patch, or read it with "
+            f"`stack memory card {page}` and call write_file on the same path "
             f"with the complete new contents.")
 
 
