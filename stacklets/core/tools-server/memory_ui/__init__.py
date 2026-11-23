@@ -19,7 +19,7 @@ The web server routes each address to one entry and sends its answer:
     card_types.py  what each card type shows at the top of its page
     file_notes.py  a note made from a file: its file, kind, text or caption
     lists.py       a list's body: its sections, items, archive months
-    entry.py       a diary entry's sections, in the order they were sent
+    entry/         the sections of a diary entry or a note: its own messages, in the order sent
     card_page.py   a card's page, one layout for every type
     preview.py     the line a chat app previews a card's link with
     notices.py     the pages in place of a card: removed, or no memory yet

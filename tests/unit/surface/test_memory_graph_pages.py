@@ -47,6 +47,7 @@ BOWLING_NOTE = "note-9a0b1c2d3e"      # in Homer's own bowling topic
 SCHOOL = "list-school"                # Lisa's list
 
 CAMPING = "topic-camping"
+GARDEN = "topic-garden"              # nothing filed in it yet
 BOWLING = "topic-bowling"             # in Homer's own folder
 KWIK = "correspondent-kwik-e-mart"
 BOOKIE = "correspondent-fat-tony"     # in Homer's own folder
@@ -82,6 +83,7 @@ CARDS = {
     "family/lists/school.md": (
         f"---\ntype: list\ncard_id: {SCHOOL}\ntitle: School things\npersons:\n  - lisa\n---\n\n"
         "- [ ] Reed for the sax\n"),
+    "family/garden/topic.md": f"---\ntype: topic\ncard_id: {GARDEN}\ntitle: Garden\n---\n\n# Garden\n",
     "homer/bowling/topic.md": f"---\ntype: topic\ncard_id: {BOWLING}\ntitle: Bowling\n---\n\n# Bowling\n",
     "homer/bowling/notes/2026/11/league.md": (
         f"---\ntype: note\ncard_id: {BOWLING_NOTE}\ntitle: League night\ndate: \"2026-11-04\"\n"
@@ -190,7 +192,8 @@ def test_a_topics_page_shows_its_cards_people_and_senders(tools):
     page = opens(phone(tools, person="marge"), f"/memory/topic/{CAMPING}")
 
     assert page.texts("title") == ["Camping"]
-    assert set(cards_in(page, "cards")) == {TENT, OLDER_RECEIPT}
+    assert cards_in(page, "cards") == [OLDER_RECEIPT], "the notes are the entries"
+    assert set(cards_in(page, "entries")) == {TENT}
     assert {"/memory/person/lisa", "/memory/person/marge", "/memory/person/homer"} <= hrefs(page, "links")
     assert f"/memory/sender/{KWIK}" in hrefs(page, "links")
     assert f"/memory/topic/{CAMPING}" not in hrefs(page, "links"), "the topic is not its own link"
@@ -269,17 +272,79 @@ def test_an_unknown_person_or_kind_is_the_same_not_found_page(tools, path):
     then each is the "not found" page every other missing thing gets, and
     the page does not repeat what was typed in the address."""
     marge = phone(tools, person="marge")
-    page, nothing = marge.opens(path), marge.opens("/memory/topic/topic-nowhere")
+    page, nothing = marge.opens(path), marge.opens("/memory/person/someone-else")
 
     assert page.status == 404
     assert page.body == nothing.body
     assert page.attribute("h1", "tabindex") == "-1"
 
 
+def test_a_topic_with_no_cards_says_how_to_fill_it(tools):
+    """Given a topic nothing is filed in, when its page opens, then it
+    shows the head and one sentence on what to do, and no empty section;
+    a topic with cards shows no such sentence."""
+    marge = phone(tools, person="marge")
+    page = opens(marge, f"/memory/topic/{GARDEN}")
+
+    assert page.texts("title") == ["Garden"]
+    assert page.texts("topic-empty") == [
+        "Nothing filed yet. Write in the room what you do and learn, with photos and links, "
+        "and famstack files it here."]
+    assert sections(page) == []
+    assert opens(marge, f"/memory/topic/{CAMPING}").texts("topic-empty") == []
+
+
+def test_another_persons_own_topic_says_what_to_do_instead(tools):
+    """Given Homer's own topic, when Marge's phone opens it, then the page
+    says it is not one of hers and what to do, names no owner and no title,
+    and is the page of a topic that does not exist."""
+    marge = phone(tools, person="marge")
+    page, nothing = marge.opens(f"/memory/topic/{BOWLING}"), marge.opens("/memory/topic/topic-nowhere")
+
+    assert page.status == 404 and page.body == nothing.body
+    assert page.texts("kicker") == ["Topic"]
+    assert page.texts("title") == ["Not one of your topics"]
+    assert page.texts("topic-refusal") == [
+        "This topic is someone's own. famstack shows an own topic only on its owner's devices.",
+        "Ask the person who sent you the link."]
+    assert ("Your topics ›", "/memory") in page.links()
+    assert "Homer" not in page.text and "Bowling" not in page.text
+
+
+def test_a_part_past_the_end_of_a_topic_says_it_has_no_more_entries(tools):
+    """Given Marge's camping topic of one part, when her phone opens part 2,
+    then the page says the topic has no more entries and leads back to it,
+    not that the topic is someone else's; Homer's own topic at part 2 is
+    still the page of a topic that does not exist, byte for byte."""
+    marge = phone(tools, person="marge")
+    past = marge.opens(f"/memory/topic/{CAMPING}?part=2")
+    hidden, nothing = marge.opens(f"/memory/topic/{BOWLING}?part=2"), marge.opens("/memory/topic/topic-nowhere?part=2")
+
+    assert past.status == 404
+    assert past.texts("title") == ["No more entries"] and past.texts("topic-refusal") == []
+    assert ("Back to the topic ›", f"/memory/topic/{CAMPING}") in past.links()
+    assert hidden.status == nothing.status == 404 and hidden.body == nothing.body
+    assert hidden.texts("title") == ["Not one of your topics"]
+
+
+def test_the_topics_style_and_script_load_on_its_pages_only(tools):
+    """Given Marge's phone, then a topic's page, and its refusal, load
+    `topic.css` and `topic.js`, and "My memory" and a person's page load
+    neither: a page fetches only what it draws."""
+    marge = phone(tools, person="marge")
+    topic_pages = [opens(marge, f"/memory/topic/{CAMPING}"), marge.opens(f"/memory/topic/{BOWLING}")]
+    other_pages = [opens(marge, "/memory"), opens(marge, "/memory/person/bart")]
+
+    for page in topic_pages:
+        assert any(s.endswith("/topic.js") for s in page.scripts()) and "/topic.css" in page.body
+    for page in other_pages:
+        assert not any(s.endswith("/topic.js") for s in page.scripts()) and "/topic.css" not in page.body
+
+
 def test_the_mac_reads_homers_own_topic(tools):
     page = opens(this_mac(tools), f"/memory/topic/{BOWLING}")
 
-    assert cards_in(page, "cards") == [BOWLING_NOTE]
+    assert set(cards_in(page, "entries")) == {BOWLING_NOTE}
 
 
 # ── The menu, German, navigation ──────────────────────────────────────────

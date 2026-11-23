@@ -222,9 +222,11 @@ def test_the_diary_shows_only_what_the_device_may_read(tools):
 def test_a_kind_the_device_has_no_card_of_is_not_found(tools, path):
     """Given lists only in Homer's own folder, when Marge's phone opens the
     lists, then it is the "not found" page, byte for byte the page of a
-    kind that does not exist, so it tells nothing about Homer's folder."""
+    kind that does not exist, so it tells nothing about Homer's folder.
+    (A missing topic has a page of its own, "Not one of your topics", so
+    the page to match is a kind's.)"""
     marge = phone(tools, person="marge")
-    page, nothing = marge.opens(path), marge.opens("/memory/topic/topic-nowhere")
+    page, nothing = marge.opens(path), marge.opens("/memory/kind/nothing-of-that-kind")
 
     assert page.status == 404
     assert page.body == nothing.body
@@ -325,9 +327,11 @@ def long_tools(long_memory, host, monkeypatch):
 
 
 def listed_cards(page: Page) -> list[int]:
-    """The numbers of the notes and receipts a page lists, in page order."""
-    return [int(href[-2:]) for _, href in page.links() if href.startswith(("/card/note-", "/card/document-"))
-            if href[-2:].isdigit()]
+    """The numbers of the notes and receipts a page lists, in page order,
+    each once: a topic's entry links its card twice (its title and its foot)."""
+    numbers = [int(href[-2:]) for _, href in page.links() if href.startswith(("/card/note-", "/card/document-"))
+               if href[-2:].isdigit()]
+    return list(dict.fromkeys(numbers))
 
 
 @pytest.mark.parametrize("path", LONG_PAGES)

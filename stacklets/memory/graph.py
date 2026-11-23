@@ -150,10 +150,16 @@ class Change:
     trailers: dict[str, str] = field(default_factory=dict, hash=False, compare=False)
 
     @property
+    def kind(self) -> str:
+        """What the change was, in one plain word (`stack.cards.commits.kind_of`):
+        "filed", "replied", "edited"."""
+        return kind_of(self.subject, self.trailers)
+
+    @property
     def machine(self) -> bool:
         """Whether no person made the change: a bot's, the admin's, or a
         bot's rebuild in a person's name (`stack.cards.commits.is_machine`)."""
-        return is_machine(self.who, self.committer, kind_of(self.subject, self.trailers))
+        return is_machine(self.who, self.committer, self.kind)
 
 
 @dataclass

@@ -662,7 +662,8 @@ async def card_text(card_id: str, request: Request):
 async def card_page(ref: str, request: Request):
     return _answer(await memory_home.open_card(ref, _reads(request), await memory_home.card_looking(request),
                                                now=_now(), language=_language(request),
-                                               paperless=DOCS_PUBLIC_URL, never_set_up=_memory_never_set_up))
+                                               paperless=DOCS_PUBLIC_URL, never_set_up=_memory_never_set_up,
+                                               ai_plan=_ai_route_plan))
 
 
 # ── The memory's pages (`/memory`, on the network) ───────────────────────
@@ -674,7 +675,7 @@ async def card_page(ref: str, request: Request):
 
 memory_home.routes(app, reads=lambda request: _reads(request), language=lambda request: _language(request),
                    never_set_up=lambda: _memory_never_set_up(), answer=lambda answer: _answer(answer),
-                   today=lambda: _now().date())
+                   today=lambda: _now().date(), ai_plan=lambda: _ai_route_plan())
 
 
 def _reads(request: Request) -> memory_ui.Reads:
@@ -942,13 +943,19 @@ async def _nothing(value):
     return value
 
 
-async def _ai_plan() -> dict | None:
+async def _ai_plan(timeout: float = STACK_API_TIMEOUT_SECS) -> dict | None:
     """`stack ai recommended show` through the host API: the settings
     recommended for this Mac and the AI server `[ai]` names; None when it
-    did not answer."""
-    plan = await asyncio.to_thread(client.call, {"cmd": "ai_recommended"},
-                                   timeout=STACK_API_TIMEOUT_SECS)
+    did not answer within `timeout` seconds."""
+    plan = await asyncio.to_thread(client.call, {"cmd": "ai_recommended"}, timeout=timeout)
     return plan if "models" in plan else None
+
+
+async def _ai_route_plan() -> dict | None:
+    """`_ai_plan` for a memory page's ✦, which waits only
+    `memory_ui.ai_route.READ_SECS`: the host call gives up as soon as the
+    page does, so a hanging host API holds no thread for 30 s."""
+    return await _ai_plan(timeout=memory_ui.ai_route.READ_SECS)
 
 
 async def _ai_answer() -> dict | None:

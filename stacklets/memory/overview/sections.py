@@ -142,7 +142,8 @@ def open_lists(lists: list[ListCard]) -> list[dict]:
 
 def changed(cards: list[Card], today: date, *, limit: int = 8) -> dict:
     """The cards of `cards` a person changed in the last `CHANGED_DAYS` days,
-    newest first, each with `by` and `on` of that person's newest change.
+    newest first, each with `by`, `on` and `what` (the kind of change:
+    "filed", "replied", "edited") of that person's newest change.
 
     A bot's change (a migration, a rebuild in a person's name) does not
     count (`Change.machine`, the rule `/history` reads too): a card only a
@@ -154,7 +155,7 @@ def changed(cards: list[Card], today: date, *, limit: int = 8) -> dict:
     for card in cards:
         change = next((c for c in card.changes if since <= c.day <= until and not c.machine), None)
         if change is not None:
-            found.append(((change.day, change.at), item(card, by=change.who, on=change.day)))
+            found.append(((change.day, change.at), item(card, by=change.who, on=change.day, what=change.kind)))
     found.sort(key=lambda f: f[0], reverse=True)
     return {"count": len(found), "items": [i for _, i in found[:limit]]}
 

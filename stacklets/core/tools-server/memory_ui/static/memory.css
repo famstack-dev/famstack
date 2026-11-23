@@ -407,7 +407,13 @@ p.notice { margin: 0; color: var(--darkgray); }
 .body li.task.done { color: var(--gray); }
 .body li.task.done .box { background: var(--secondary); border-color: var(--secondary); }
 
-/* ── 6. A diary entry: its sections (memory_ui/entry.py) ───────────── */
+/* ── 6. A diary entry or a note: its own messages (memory_ui/entry/) ── */
+
+/* ✦ marks a text the AI wrote; the key says so once, the correction says how to fix it. */
+.ai-mark { color: var(--secondary); cursor: help; }
+.ai-key { margin: 0.7rem 0 0.9rem; font-size: 0.88rem; color: var(--gray); }
+.correction { margin: 0.4rem 0 1.2rem; font-size: 0.9rem; color: var(--gray); }
+.correction p { margin: 0.2rem 0 0; }
 
 /* Each section: its small icon in a column on the left, then the section.
    The summary above stays plain text; the family's words are quotes. */

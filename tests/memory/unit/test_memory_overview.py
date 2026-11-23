@@ -15,144 +15,11 @@ folder reaches Marge: not as an item, not as a link, not in a count.
 from __future__ import annotations
 
 import json
-import urllib.error
 import urllib.request
-from collections.abc import Iterator
 
 import pytest
 
-from tests.memory.unit.instance import RunningMemory, running_memory
-
-TODAY = "2026-10-01"
-SEEDED = "2026-09-01T10:00:00"
-
-
-def person(slug: str, title: str) -> str:
-    return f"---\ntype: person\ncard_id: person-{slug}\ntitle: {title}\naccount: {slug}\n---\n\n# {title}\n"
-
-
-def topic(slug: str, title: str) -> str:
-    return f"---\ntype: topic\ncard_id: topic-{slug}\ntitle: {title}\n---\n\n# {title}\n"
-
-
-def card(kind: str, card_id: str, title: str, day: str, persons: list[str], **fields: str) -> str:
-    people = "".join(f"\n  - {p}" for p in persons)
-    extra = "".join(f"\n{k}: \"{v}\"" for k, v in fields.items())
-    return (f"---\ntype: {kind}\ncard_id: {card_id}\ntitle: {title}\ndate: \"{day}\"\n"
-            f"persons:{people or ' []'}{extra}\n---\n\n# {title}\n")
-
-
-def correspondent(slug: str, title: str) -> str:
-    return f"---\ntype: correspondent\ncard_id: correspondent-{slug}\ntitle: {title}\n---\n\n# {title}\n"
-
-
-GROCERIES = ("---\ntype: list\ncard_id: list-groceries\ntitle: Groceries\n---\n\n"
-             "- [ ] Milk\n- [ ] Pumpkin for the party 📅 2026-10-05\n- [ ] Eggs\n- [x] Duff\n")
-# One list, items for two people: each one's items are theirs alone.
-PARTY = ("---\ntype: list\ncard_id: list-party\ntitle: Party\n---\n\n"
-         "- [ ] Cake [Marge](../people/marge.md) 📅 2026-10-08\n"
-         "- [ ] Balloons [Bart](../people/bart.md) 📅 2026-10-09\n")
-CHORES = ("---\ntype: list\ncard_id: list-chores\ntitle: Bart's chores\n---\n\n"
-          "- [ ] Clean the room [Bart](../people/bart.md)\n")
-
-SIMPSONS = {
-    "family/people/homer.md": person("homer", "Homer Simpson"),
-    "family/people/marge.md": person("marge", "Marge Simpson"),
-    "family/people/bart.md": person("bart", "Bart Simpson"),
-    "family/people/lisa.md": person("lisa", "Lisa Simpson"),
-    "family/camping/topic.md": topic("camping", "Camping"),
-    "family/camping/notes/tent.md": card("note", "note-tent", "The tent is torn", "2026-09-03", ["marge"]),
-    "family/camping/notes/stove.md": card("note", "note-stove", "Gas for the stove", "2026-09-04", ["homer"]),
-    "family/lists/groceries.md": GROCERIES,
-    "family/lists/chores.md": CHORES,
-    "family/lists/party.md": PARTY,
-    "family/notes/school-play.md": card("note", "note-play", "Lisa's school play", "2026-10-20",
-                                        ["lisa", "marge"]),
-    "family/documents/insurance.md": card("document", "document-insurance", "Car insurance",
-                                          "2026-09-02", ["marge"], document_type="Policy",
-                                          correspondent="Springfield Insurance"),
-    "family/documents/receipt.md": card("document", "document-receipt", "Groceries receipt",
-                                        "2026-09-05", ["marge"], document_type="Receipt",
-                                        correspondent="Kwik-E-Mart"),
-    "family/correspondents/springfield-insurance.md": correspondent("springfield-insurance",
-                                                                    "Springfield Insurance"),
-    "family/correspondents/kwik-e-mart.md": correspondent("kwik-e-mart", "Kwik-E-Mart"),
-    "family/correspondents/power-plant.md": correspondent("power-plant", "Power Plant"),
-    "family/bookmarks/pie.md": card("bookmark", "bookmark-pie", "Pumpkin pie", "2026-09-06", ["marge"],
-                                    resource="https://example.org/pie"),
-    "marge/garden/topic.md": topic("garden", "Garden"),
-    "marge/garden/notes/roses.md": card("note", "note-roses", "Roses need cutting", "2026-09-07", []),
-    # Homer's own folder: never Marge's, though a card names her.
-    "homer/bowling/topic.md": topic("bowling", "Bowling"),
-    "homer/bowling/notes/league.md": card("note", "note-league", "Bowling league", "2026-09-08",
-                                          ["homer", "marge"]),
-    "homer/documents/payslip.md": card("document", "document-payslip", "Payslip September",
-                                       "2026-09-09", ["homer", "marge"], document_type="Payslip",
-                                       correspondent="Power Plant"),
-}
-# A note without a date of its own: the graph gives it the day it last changed.
-UNDATED = ("---\ntype: note\ncard_id: note-undated\ntitle: Call the plumber\n"
-           "persons:\n  - marge\n---\n\n# Call the plumber\n")
-SURPRISE = {"homer/notes/surprise.md": card("note", "note-surprise", "Surprise party for Marge",
-                                            "2026-10-10", ["marge"])}
-# What of Homer's own folder must never reach anyone else, by id and by title.
-HOMERS_OWN = ["note-surprise", "Surprise party", "note-league", "Bowling league",
-              "document-payslip", "Payslip September", "topic-bowling", "Power Plant"]
-
-VIEWS = ["me", "family", "person/marge", "person/bart", "person/homer", "topic/topic-camping",
-         "sender/correspondent-kwik-e-mart", "documents",
-         "documents/Payslip", "everything", "kind/note", "kind/document", "senders"]
-
-
-@pytest.fixture(scope="module")
-def simpsons(tmp_path_factory) -> Iterator[RunningMemory]:
-    """The Simpsons' memory, seeded a month ago. Marge edited the tent note
-    three days ago, Homer filed the surprise party in his own folder two
-    days ago. Yesterday the memory bot tidied the chores, and rebuilt
-    Marge's roses note in her name. Today Marge ticked the milk and wrote
-    down an undated note."""
-    with pytest.MonkeyPatch.context() as clock, \
-            running_memory(tmp_path_factory.mktemp("overview"), SIMPSONS, seeded_at=SEEDED) as memory:
-        clock.setenv("STACK_TODAY", TODAY)
-        memory.edited_in_forgejo({"family/camping/notes/tent.md":
-                                  SIMPSONS["family/camping/notes/tent.md"] + "\nIt rained in.\n"},
-                                 by="marge", at="2026-09-28T10:00:00")
-        memory.edited_in_forgejo(SURPRISE, by="homer", at="2026-09-29T10:00:00")
-        memory.edited_in_forgejo({"family/lists/chores.md": CHORES + "\n"},
-                                 by="memory-bot", subject="cards: tidy", at="2026-09-30T10:00:00")
-        memory.edited_in_forgejo({"marge/garden/notes/roses.md":
-                                  SIMPSONS["marge/garden/notes/roses.md"] + "\nRebuilt.\n"},
-                                 by="marge", committer="memory-bot",
-                                 subject="update: diary entry rebuilt", at="2026-09-30T11:00:00")
-        memory.edited_in_forgejo({"family/lists/groceries.md": GROCERIES.replace("- [ ] Milk", "- [x] Milk"),
-                                  "family/notes/undated.md": UNDATED},
-                                 by="marge", at=f"{TODAY}T09:00:00")
-        yield memory
-
-
-def ask(memory: RunningMemory, view: str, audience: str = "marge") -> tuple[int, dict]:
-    """(status, answer) of `GET /overview/<view>?audience=<audience>`;
-    `view` may carry its own query (`kind/note?part=2`)."""
-    joined = "&" if "?" in view else "?"
-    url = f"{memory.curator}/overview/{view}" + (f"{joined}audience={audience}" if audience else "")
-    try:
-        with urllib.request.urlopen(url) as r:
-            return r.status, json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
-
-
-def overview(memory: RunningMemory, view: str, audience: str = "marge") -> dict:
-    status, answer = ask(memory, view, audience)
-    assert status == 200, answer
-    return answer
-
-
-def ids(part: dict | list) -> list[str]:
-    """The card ids of a section's items, in order."""
-    items = part["items"] if isinstance(part, dict) else part
-    return [i["id"] for i in items]
-
+from tests.memory.unit.overview_world import HOMERS_OWN, TODAY, VIEWS, ask, ids, overview
 
 # ── My memory ─────────────────────────────────────────────────────────────
 
@@ -176,6 +43,8 @@ def test_my_memory_holds_marges_sections(simpsons):
                                                           ("topic-garden", True)]
     assert [(i["id"], i["by"], i["on"]) for i in me["changed"]["items"]] == [
         ("note-undated", "marge", TODAY), ("note-tent", "marge", "2026-09-28")]
+    # What each change was: a hand edit reads "changed", as `stack.cards.commits.kind_of` says.
+    assert {i["what"] for i in me["changed"]["items"]} == {"changed"}
     assert ids(me["bookmarks"]) == ["bookmark-pie"]
     assert [(k["kind"], k["count"]) for k in me["documents"]["kinds"]] == [("Policy", 1), ("Receipt", 1)]
     assert {s["id"] for s in me["senders"]} == {"correspondent-springfield-insurance",
@@ -330,7 +199,8 @@ SECTIONS = {
     "family": {"people", "up_next", "lists", "changed", "documents", "links", "counts"},
     "person/bart": {"person", "up_next", "lists", "topics", "changed", "documents", "cards", "links",
                     "counts"},
-    "topic/topic-camping": {"topic", "up_next", "cards", "links", "counts"},
+    "topic/topic-camping": {"topic", "up_next", "cards", "links", "counts", "bookmarks", "documents",
+                            "lists", "changed", "entries"},
     "sender/correspondent-kwik-e-mart": {"sender", "cards", "links", "counts"},
     "documents": {"documents", "senders", "links", "counts"},
     "everything": {"kinds", "senders", "counts"},
@@ -471,153 +341,6 @@ def items_of(answer: dict) -> list[dict]:
     return found
 
 
-# ── Where a name leads ────────────────────────────────────────────────────
-
-# A family note names Marge by her alias, Homer, and Grampa, whose person
-# card is in Homer's own folder; a receipt names its sender.
-NAMED = {
-    "family/people/homer.md": person("homer", "Homer Simpson"),
-    "family/people/marge.md": person("marge", "Marge Simpson").replace(
-        "account: marge", "aliases:\n  - Mom\naccount: marge"),
-    "homer/people/grampa.md": person("grampa", "Abe Simpson"),
-    "family/notes/pot-roast.md": card("note", "note-pot-roast", "Pot roast", "2026-09-20",
-                                      ["Mom", "homer", "grampa"]),
-    "family/documents/receipt.md": card("document", "document-receipt", "Groceries receipt",
-                                        "2026-09-05", ["marge"], document_type="Receipt",
-                                        correspondent="Kwik-E-Mart"),
-    "family/correspondents/kwik-e-mart.md": correspondent("kwik-e-mart", "Kwik-E-Mart"),
-}
-
-
-@pytest.fixture(scope="module")
-def named(tmp_path_factory) -> Iterator[RunningMemory]:
-    with pytest.MonkeyPatch.context() as clock, \
-            running_memory(tmp_path_factory.mktemp("named"), NAMED, seeded_at=SEEDED) as memory:
-        clock.setenv("STACK_TODAY", TODAY)
-        yield memory
-
-
-def test_an_item_names_the_page_of_each_person_the_audience_may_read(named):
-    """Given a note naming "Mom", Homer and Grampa, then each item of it
-    names the page each name opens: Marge's for "Mom", as the memory links
-    the note to her, Homer's, and none for Grampa, whose card Marge may not
-    read. On Homer's audience, Grampa's page is there."""
-    for_marge = next(i for i in overview(named, "person/marge")["cards"]["items"]
-                     if i["id"] == "note-pot-roast")
-    for_homer = next(i for i in overview(named, "person/homer", audience="homer")["cards"]["items"]
-                     if i["id"] == "note-pot-roast")
-
-    assert for_marge["person_pages"] == {"Mom": "marge", "homer": "homer", "grampa": ""}
-    assert for_homer["person_pages"]["grampa"] == "grampa"
-
-
-def test_a_documents_item_names_its_senders_page(named):
-    """Given a receipt from the Kwik-E-Mart, which has a sender card, then
-    its item names the sender's page by the card's id."""
-    receipt = overview(named, "documents")["documents"]["items"][0]
-
-    assert (receipt["sender"], receipt["sender_page"]) == ("Kwik-E-Mart", "correspondent-kwik-e-mart")
-
-
-# ── A long list, part by part ─────────────────────────────────────────────
-
-# 45 notes in the garden topic and 45 receipts from the Kwik-E-Mart, one
-# a day, all naming Marge: more than a page lists at once (40), so each
-# long list has two parts, and Marge's 90 cards three. Homer keeps one
-# note in his own folder, the newest, which Marge may not read.
-MANY = 45
-
-
-def day(n: int) -> str:
-    return f"2026-0{7 + n // 30}-{1 + n % 30:02d}"
-
-
-LONG_LISTS = {
-    "family/people/marge.md": person("marge", "Marge Simpson"),
-    "family/correspondents/kwik-e-mart.md": correspondent("kwik-e-mart", "Kwik-E-Mart"),
-    "family/garden/topic.md": topic("garden", "Garden"),
-    "homer/notes/bet.md": card("note", "note-bet", "A bet on the game", "2026-09-30", ["homer"]),
-    **{f"family/garden/notes/{n:02d}.md": card("note", f"note-{n:02d}", f"Note {n}", day(n), ["marge"])
-       for n in range(MANY)},
-    **{f"family/documents/{n:02d}.md": card("document", f"document-{n:02d}", f"Receipt {n}", day(n),
-                                            ["marge"], document_type="Receipt", correspondent="Kwik-E-Mart")
-       for n in range(MANY)},
-}
-
-LONG_VIEWS = {"kind/note": "cards", "topic/topic-garden": "cards", "documents": "documents",
-              "documents/Receipt": "documents", "sender/correspondent-kwik-e-mart": "cards"}
-
-
-@pytest.fixture(scope="module")
-def long_lists(tmp_path_factory) -> Iterator[RunningMemory]:
-    with pytest.MonkeyPatch.context() as clock, \
-            running_memory(tmp_path_factory.mktemp("long"), LONG_LISTS, seeded_at=SEEDED) as memory:
-        clock.setenv("STACK_TODAY", TODAY)
-        yield memory
-
-
-@pytest.mark.parametrize("view", LONG_VIEWS)
-def test_a_long_list_comes_in_parts_newest_first(long_lists, view):
-    """Given 45 notes in a topic and 45 receipts from one sender, then the
-    page of the notes, of the topic, of the documents, of the receipts and
-    of the sender each answer
-    the newest 40 as part 1 of 2, and `part=2` the 5 oldest; the count is
-    every card on both parts, so the page says how many there are."""
-    first = overview(long_lists, view)[LONG_VIEWS[view]]
-    second = overview(long_lists, f"{view}?part=2")[LONG_VIEWS[view]]
-
-    newest = sorted(range(MANY), reverse=True)
-    assert [int(i["id"][-2:]) for i in first["items"]] == newest[:40]
-    assert [int(i["id"][-2:]) for i in second["items"]] == newest[40:]
-    assert (first["part"], first["parts"], second["part"], second["parts"]) == (1, 2, 2, 2)
-    assert first["count"] == second["count"] == MANY
-
-
-@pytest.mark.parametrize("query", ["part=3", "part=0", "part=-1", "part=abc", "part=%C2%B2",
-                                   "part=%D9%A3", pytest.param("part=" + "9" * 5000, id="part=5000-digits")])
-def test_a_part_past_the_list_is_not_found(long_lists, query):
-    """Given two parts of notes, then a part before the first or after the
-    last is no page: 404, as an address that names nothing. So is a part
-    that is no number in ASCII digits (`abc`, `²`, `٣`) or too long to be
-    one: never part 1 or part 3 under a second address."""
-    assert ask(long_lists, f"kind/note?{query}")[0] == 404
-
-
-def test_the_parts_leave_out_what_the_audience_may_not_read(long_lists):
-    """Given 45 family notes and Homer's own newest note, then Marge's
-    notes come in two parts that count 45 and never hold Homer's note;
-    Homer's count 46, his note first, so his parts are cut from his
-    own, larger list."""
-    marge = [overview(long_lists, f"kind/note?part={n}")["cards"] for n in (1, 2)]
-    homer = [overview(long_lists, f"kind/note?part={n}", audience="homer")["cards"] for n in (1, 2)]
-
-    assert {(p["count"], p["parts"]) for p in marge} == {(MANY, 2)}
-    assert "note-bet" not in [i["id"] for p in marge for i in p["items"]]
-    assert [len(p["items"]) for p in marge] == [40, 5]
-    assert {(p["count"], p["parts"]) for p in homer} == {(MANY + 1, 2)}
-    assert homer[0]["items"][0]["id"] == "note-bet" and len(homer[1]["items"]) == 6
-
-
-def test_a_persons_cards_come_in_parts_and_the_rest_of_the_page_stays_whole(long_lists):
-    """Given 90 cards naming Marge, then her page answers them in three
-    parts, the last holding the 10 oldest, and every part keeps the
-    page's other sections, so each part still shows her documents."""
-    parts = [overview(long_lists, f"person/marge?part={n}") for n in (1, 2, 3)]
-
-    assert [len(p["cards"]["items"]) for p in parts] == [40, 40, 10]
-    assert {(p["cards"]["count"], p["cards"]["parts"]) for p in parts} == {(2 * MANY, 3)}
-    assert len({i["id"] for p in parts for i in p["cards"]["items"]}) == 2 * MANY
-    assert parts[0]["documents"] == parts[2]["documents"]
-    assert ask(long_lists, "person/marge?part=4")[0] == 404
-
-
-@pytest.mark.parametrize("view", ["me", "family", "senders", "everything"])
-def test_a_page_that_is_not_one_list_has_no_second_part(long_lists, view):
-    """Given a page that shows a few of many things, then it has no parts:
-    `part=2` is not found, so no address shows the same page twice."""
-    assert ask(long_lists, f"{view}?part=2")[0] == 404
-
-
 def test_a_short_list_is_one_part(simpsons):
     """Given five notes, then their page is part 1 of 1."""
     notes = overview(simpsons, "kind/note")["cards"]
@@ -625,25 +348,6 @@ def test_a_short_list_is_one_part(simpsons):
     assert (notes["part"], notes["parts"]) == (1, 1)
 
 
-# ── Nothing in it ─────────────────────────────────────────────────────────
-
-def test_an_empty_memory_answers_empty_sections(tmp_path, monkeypatch):
-    """Given a memory with only Marge's person card and a topic without
-    cards, then "My memory", the topic's page, "Everything" and the
-    senders answer every section empty, not an error."""
-    monkeypatch.setenv("STACK_TODAY", TODAY)
-    files = {"family/people/marge.md": person("marge", "Marge Simpson"),
-             "family/camping/topic.md": topic("camping", "Camping")}
-    with running_memory(tmp_path, files) as memory:
-        me = overview(memory, "me")
-        camping = overview(memory, "topic/topic-camping")
-        everything = overview(memory, "everything")
-        senders = overview(memory, "senders")
-
-    assert everything["kinds"] == [] and everything["senders"] == {"count": 0}
-    assert senders["senders"] == [] and senders["total"] == 0
-    assert me["lists"] == me["topics"] == me["senders"] == []
-    assert me["counts"] == {} and me["links"] == {"people": [], "topics": [], "senders": []}
-    assert me["up_next"] == me["changed"] == me["bookmarks"] == {"count": 0, "items": []}
-    assert me["documents"] == {"count": 0, "total": 0, "kinds": [], "items": []}
-    assert camping["cards"] == {"count": 0, "items": [], "part": 1, "parts": 1}
+def test_a_topic_in_anothers_own_folder_is_refused(simpsons):
+    """Given Homer's own topic, when Marge asks, then it is not found."""
+    assert ask(simpsons, "topic/topic-bowling")[0] == 404
