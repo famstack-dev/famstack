@@ -187,13 +187,13 @@ def test_a_data_folder_that_is_not_there_keeps_the_secrets(checkout, tmp_path, i
     that folder is not there (its disk is not mounted, or it was moved)
     and the admin uninstalls, then the secrets stay and the output names
     the missing folder and the secrets file: the data comes back with its
-    disk, and its databases need their passwords."""
-    password = _db_password(checkout)
+    disk, and its databases need their passwords. The setup markers are
+    the one sign here that something was set up."""
     (tmp_path / "data").rename(tmp_path / "unmounted")
 
     run = _uninstall(checkout, answer="no")
 
-    assert _secrets(instance).get("photos", "DB_PASSWORD") == password
+    assert _secrets(instance).get("global", "ADMIN_PASSWORD") == "donuts"
     assert "~/data" in run.stdout
     assert "~/instance/.stack/secrets.toml" in run.stdout
 
@@ -204,15 +204,20 @@ def test_a_stack_toml_that_names_no_data_folder_keeps_the_secrets(
         checkout, tmp_path, instance, config):
     """Given photos set up with data, when stack.toml does not parse or
     names no `[core] data_dir` and the admin uninstalls, then the data and
-    the secrets stay: the default folder the stack would use instead is a
-    guess at where the data is, and an empty one says nothing."""
+    the secrets stay, and so does the default data folder the stack would
+    use instead (`~/stack-data`): it is a guess at where the data is, so
+    it is neither asked about nor deleted."""
     password = _db_password(checkout)
     (instance / "stack.toml").write_text(config)
+    default = tmp_path / "stack-data" / "photos" / "someone-elses.jpg"
+    default.parent.mkdir(parents=True)
+    default.write_text("not this instance's")
 
     _uninstall(checkout, answer="delete")
 
     assert _family_files(tmp_path) == _as_written()
     assert _secrets(instance).get("photos", "DB_PASSWORD") == password
+    assert default.read_text() == "not this instance's"
 
 
 def test_nothing_set_up_removes_the_secrets(checkout, tmp_path, instance):
