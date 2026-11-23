@@ -53,6 +53,7 @@ units = [
     "postgres",
     "profile",
     "prompt",
+    "removal",
     "run_log",
     "runs",
     "said",
