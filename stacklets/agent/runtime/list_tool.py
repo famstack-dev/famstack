@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.schema import (
@@ -22,6 +23,8 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+from agent_audience import AUDIENCE_KEY
+from agent_confirm import CONFIRM_ENV, confirm_delete
 from room_people import audience_env
 from turn import Turn, current as current_turn
 
@@ -192,11 +195,17 @@ class ListEditTool(Tool):
             args = _item_args(op, list, items, topic, section, people, due, to)
         args += ["--as", actor]
 
+        env = audience_env(dict(os.environ), current_turn().people)
+        if "--yes" in args:
+            # SAFETY: the host API runs `--yes` only with this signature, for
+            # this list; the model's shell has no key to make one.
+            env[CONFIRM_ENV] = confirm_delete(slug, os.environ.get(AUDIENCE_KEY, ""),
+                                              now=time.time())
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=audience_env(dict(os.environ), current_turn().people),
+            env=env,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
         out = stdout.decode(errors="replace").strip()

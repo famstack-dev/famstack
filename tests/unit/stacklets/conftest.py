@@ -42,6 +42,7 @@ for _runtime_dir in sorted(REPO_ROOT.glob("stacklets/*/runtime")):
 # The agent's container mounts single framework files into `/app/shared`
 # under their own names (compose); here they are the same modules of `lib/stack`.
 sys.modules.setdefault("agent_audience", importlib.import_module("stack.agent_audience"))
+sys.modules.setdefault("agent_confirm", importlib.import_module("stack.agent_confirm"))
 
 
 @pytest.fixture
@@ -156,6 +157,26 @@ def nanobot_stub():
                     if (val := os.environ.get(key)) is not None:
                         env[key] = val
                 return env
+
+        # own_chat's symbols (nanobot 0.3.5): the store consolidation writes
+        # the shared history through, the error a tool answers with, and the
+        # path check of the file and message tools.
+        class MemoryStore:
+            def append_history(self, entry, *, max_chars=None, session_key=None):
+                return 1
+
+        class ToolResult(str):
+            @classmethod
+            def error(cls, content):
+                return cls(content)
+
+        class WorkspaceBoundaryError(PermissionError):
+            pass
+
+        def resolve_workspace_path(path, workspace=None, allowed_dir=None,
+                                   extra_allowed_dirs=None, extra_allowed_files=None,
+                                   include_media_dir=True):
+            return path
 
         class MatrixChannel:
             def __init__(self):
@@ -311,7 +332,13 @@ def nanobot_stub():
         mod("nanobot.runtime_context", RuntimeContextBlock=RuntimeContextBlock,
             wrap_runtime_context_lines=wrap_runtime_context_lines)
         mod("nanobot.agent.tools")
-        mod("nanobot.agent.tools.base", Tool=Tool, tool_parameters=tool_parameters)
+        mod("nanobot.agent.tools.base", Tool=Tool, ToolResult=ToolResult,
+            tool_parameters=tool_parameters)
+        mod("nanobot.agent.memory", MemoryStore=MemoryStore)
+        mod("nanobot.agent.tools.path_utils", resolve_workspace_path=resolve_workspace_path)
+        mod("nanobot.agent.tools.message", resolve_workspace_path=resolve_workspace_path)
+        mod("nanobot.security")
+        mod("nanobot.security.workspace_policy", WorkspaceBoundaryError=WorkspaceBoundaryError)
         mod("nanobot.agent.tools.schema",
             StringSchema=_Schema, IntegerSchema=IntegerSchema, ArraySchema=_Schema,
             BooleanSchema=_Schema,
@@ -321,7 +348,8 @@ def nanobot_stub():
         mod("nanobot.agent.tools.context", current_request_context=lambda: None)
         mod("nanobot.agent.tools.registry", ToolRegistry=ToolRegistry)
         mod("nanobot.agent.tools.filesystem",
-            WriteFileTool=WriteFileTool, EditFileTool=EditFileTool)
+            WriteFileTool=WriteFileTool, EditFileTool=EditFileTool,
+            resolve_workspace_path=resolve_workspace_path)
         mod("nanobot.agent.tools.apply_patch", ApplyPatchTool=ApplyPatchTool)
         mod("nanobot.agent.tools.shell", ExecTool=ExecTool)
         mod("nanobot.channels")
@@ -339,7 +367,8 @@ SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
                    "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
                    "list_tool", "tool_trim", "voice_trigger", "open_question",
-                   "status_trace", "turn", "photo_before", "room_people", "room_reads")
+                   "status_trace", "turn", "photo_before", "room_people", "room_reads",
+                   "own_chat")
 
 
 @pytest.fixture

@@ -8,6 +8,7 @@ metadata: {"nanobot": {"always": true}}
 ```
 "say|tell <someone> aloud|announce|out loud" -> exec `stack ai say "<text>"`
   text   -> plain spoken sentences in the language they asked for
+            in "double quotes"; text with $, a backquote or a backslash in 'single quotes'
             no markdown, lists, links, emoji; numbers as people say them
   voice  -> leave out; `--voice <name>` only when they name one
   language -> `--language <code>` (en, de) when the text is not in the house's language
