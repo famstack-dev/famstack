@@ -46,6 +46,7 @@ def _set_up(cli: StackCLI) -> bool:
 # The one secret a declined start leaves: the agent's token for the host
 # API, generated when `stack up` renders the agent's environment.
 AGENT_TOKEN_SECRET = "agent__STACK_API_TOKEN"
+AGENT_GENERATED_SECRETS = {AGENT_TOKEN_SECRET, "agent__STACK_AUDIENCE_KEY"}
 
 
 def _secrets(cli: StackCLI) -> dict:
@@ -54,9 +55,12 @@ def _secrets(cli: StackCLI) -> dict:
 
 
 def _only_the_agents_token_added(before: dict, after: dict) -> bool:
-    """`after` is `before` plus the agent's generated token, and nothing else."""
-    return (set(after) - set(before) == {AGENT_TOKEN_SECRET}
-            and {k: after[k] for k in before} == before and bool(after[AGENT_TOKEN_SECRET]))
+    """`after` is `before` plus the agent's generated secrets (`generate` in
+    its stacklet.toml: the host API token and the key that signs a room's
+    audience), each with a value, and nothing else."""
+    added = set(after) - set(before)
+    return (added == AGENT_GENERATED_SECRETS
+            and {k: after[k] for k in before} == before and all(after[k] for k in added))
 
 
 # ── On a small Mac ───────────────────────────────────────────────────────
