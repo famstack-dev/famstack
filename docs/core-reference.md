@@ -733,7 +733,8 @@ There is no `enabled` file. The state of a stacklet is derived from its Docker c
 The record of which migrations ran is not here. It is with the data, in `<data_dir>/<id>/.migrations.json`, because
 then it travels with a backup. See [Migrations](stack-reference.md#migrations).
 
-`stack uninstall` deletes `.stack/` entirely.
+`stack uninstall` deletes `.stack/`, except `secrets.toml` when the data stays. The secrets hold the passwords of the
+databases in the data folder. See [stack uninstall](stack-reference.md#stack-uninstall).
 
 ---
 
