@@ -34,13 +34,19 @@ def host_api(tmp_path, monkeypatch):
     host.close()
 
 
-def search(path: str, query: str) -> dict:
-    """`GET <path>?query=<query>` on the tools server's internal listener."""
+def ask(path: str, query: str):
+    """`GET <path>?query=<query>` on the tools server's internal listener;
+    the response."""
     from fastapi.testclient import TestClient
     server = tools_server("server")
     access = tools_server("access")
     client = TestClient(server.app, base_url=f"http://stack-core-tools:{access.INTERNAL_PORT}")
-    response = client.get(path, params={"query": query})
+    return client.get(path, params={"query": query})
+
+
+def search(path: str, query: str) -> dict:
+    """`ask`, for a search that must succeed; its answer."""
+    response = ask(path, query)
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -77,3 +83,20 @@ def test_a_photo_search_sends_the_key_written_after_the_server_started(
     found = search("/tools/photos/search", "beach")
 
     assert [photo["id"] for photo in found["results"]] == ["beach-1"]
+
+
+@pytest.mark.parametrize("path, address", [("/tools/documents/search", "PAPERLESS_URL"),
+                                           ("/tools/photos/search", "IMMICH_URL")])
+def test_a_search_while_the_host_api_does_not_answer_does_not_ask_for_an_install(
+        monkeypatch, path, address):
+    """Given the service is installed, and the host API does not answer
+    (the conftest points it at a closed port),
+    when a search comes in,
+    then the server answers that it cannot search right now, and names no
+    install to run: the service is there, only its token could not be read."""
+    monkeypatch.setenv(address, "http://127.0.0.1:1")
+
+    response = ask(path, "tent")
+
+    assert response.status_code == 503
+    assert "install" not in response.json()["error"]

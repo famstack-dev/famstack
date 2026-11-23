@@ -445,16 +445,26 @@ async def stack_list():
     return client.call({"cmd": "list"}, timeout=STACK_API_TIMEOUT_SECS)
 
 
-async def _core_value(key: str) -> str:
+async def _core_value(key: str) -> str | None:
     """The value `key` has in core's env now, from the host API (`stack
-    env core`), or "" when it has none or the host API does not answer.
+    env core`): "" when core's env has none, None when the host API does
+    not answer.
 
     Used for the service tokens a first run writes after this server
-    started (see "Config from environment").
+    started (see "Config from environment"). The two cases differ for
+    the family: no token means the service is not installed, no answer
+    means the search may work again in a moment.
     """
     answer = await asyncio.to_thread(client.call, {"cmd": "env", "stacklet": "core"},
                                      timeout=STACK_API_TIMEOUT_SECS)
-    return str((answer.get("env") or {}).get(key, ""))
+    if "env" not in answer:
+        return None
+    return str(answer["env"].get(key, ""))
+
+
+# A search whose token could not be read: the service is installed, so the
+# family is told to try again, not to install it.
+NO_TOKEN_NOW = "Cannot reach the stack to read the {service} token right now. Try again in a moment."
 
 
 # ── Document search (Paperless-ngx) ──────────────────────────────────────
@@ -467,6 +477,8 @@ async def search_documents(query: str, limit: int = 5):
     """Search the family document archive for matching documents."""
     paperless_url = os.environ.get("PAPERLESS_URL", "")
     token = await _core_value("PAPERLESS_TOKEN")
+    if paperless_url and token is None:
+        return _error(NO_TOKEN_NOW.format(service="Paperless"))
     if not paperless_url or not token:
         return _error("Documents service is not configured — install docs first")
 
@@ -515,6 +527,8 @@ async def search_photos(query: str, limit: int = 10):
     """Search family photos using natural language descriptions."""
     immich_url = os.environ.get("IMMICH_URL", "")
     key = await _core_value("IMMICH_API_KEY")
+    if immich_url and key is None:
+        return _error(NO_TOKEN_NOW.format(service="Immich"))
     if not immich_url or not key:
         return _error("Photos service is not configured — install photos first")
 
