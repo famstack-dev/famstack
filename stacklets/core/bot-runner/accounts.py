@@ -8,6 +8,8 @@ Documents Room), anything else the admins only (the Server Room).
 
 Idempotent, so it is safe on every restart: people are only added, never
 removed, and a room whose members are already right gets no new event.
+A member who left a room for everyone, or was banned from it, stays out:
+only the bot and the admins are joined again.
 """
 
 import json
@@ -119,6 +121,9 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
 
     It only adds: nobody is removed, and a person already in the room is
     not joined again, so a restart with the right members writes nothing.
+    A member who left the room or was banned from it is not joined again,
+    because that was their choice or an admin's. The bot and the admins
+    are, as the room does not work without them.
     """
     # Only process bots that declare a room
     bots_with_rooms = [b for b in bots if b.get("room") or b.get("join_rooms")]
@@ -154,26 +159,46 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
             continue
 
         people = everyone if bot.get("room_members") == "everyone" else []
-        _join_missing(base, token, room_id, [bot_user, *admins, *people])
+        _join_missing(base, token, room_id, [bot_user, *admins],
+                      [p for p in people if p not in admins])
         # The tech admin created the room and is otherwise the only
         # account with power there.
         for admin in admins:
             _ensure_admin_power(base, token, room_id, admin)
 
 
-def _join_missing(base, token, room_id, users):
-    """Force-join each of `users` that is not in the room yet.
+def _join_missing(base, token, room_id, required, optional=()):
+    """Force-join each user who is not in the room yet.
 
-    The members are read first, because a join of a member who is
+    `required` users are joined whatever their membership. `optional`
+    users are joined only when they never were in the room: one who left
+    or was banned stays out.
+
+    The memberships are read first, because a join of a member who is
     already in the room can still write a membership event. When the
-    read fails, every user is joined: a join that may repeat is better
-    than a person left out.
+    read fails, every required user is joined (a join that may repeat is
+    better than a bot or an admin left out) and no optional one, as
+    nothing says whether they left.
     """
-    status, resp = _api("GET", f"{base}/_synapse/admin/v1/rooms/{room_id}/members", token=token)
-    present = set(resp.get("members") or []) if status == 200 else set()
-    for user in dict.fromkeys(users):
-        if user not in present:
+    memberships = _memberships(base, token, room_id)
+    for user in dict.fromkeys(required):
+        if memberships is None or memberships.get(user) != "join":
             _join_user(base, token, room_id, user)
+    if memberships is None:
+        return
+    for user in dict.fromkeys(optional):
+        if user not in memberships:
+            _join_user(base, token, room_id, user)
+
+
+def _memberships(base, token, room_id):
+    """Each user's membership in the room (`"join"`, `"leave"`, `"ban"`,
+    `"invite"`), from its state; None when the state cannot be read."""
+    status, resp = _api("GET", f"{base}/_synapse/admin/v1/rooms/{room_id}/state", token=token)
+    if status != 200:
+        return None
+    return {e["state_key"]: (e.get("content") or {}).get("membership")
+            for e in resp.get("state") or [] if e.get("type") == "m.room.member"}
 
 
 def _ensure_admin_power(base, token, room_id, full_user):

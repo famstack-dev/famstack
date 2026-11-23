@@ -39,7 +39,8 @@ class Synapse:
 
     `passwords` maps a full user id to its password, `logouts` a full user
     id to how many times its devices were signed out, `rooms` an alias to
-    its room id, `members` a room id to the full user ids in it, `writes`
+    its room id, `members` a room id to the full user ids in it, `departed`
+    a room id to who left (`"leave"`) or was banned (`"ban"`), `writes`
     holds `(room id, what)` for every admin join and power-level write,
     and `posted` holds `(room id, sender, body)` for every message sent.
     """
@@ -51,6 +52,7 @@ class Synapse:
         self.logouts: dict[str, int] = {}
         self.rooms: dict[str, str] = {}
         self.members: dict[str, set[str]] = {}
+        self.departed: dict[str, dict[str, str]] = {}
         self.power_levels: dict[str, dict] = {}
         self.writes: list[tuple[str, str]] = []
         self.posted: list[tuple[str, str, str]] = []
@@ -68,6 +70,13 @@ class Synapse:
         self.rooms[f"#{alias}:{self.server}"] = rid
         self.members[rid] = {f"@stackadmin:{self.server}",
                              *(f"@{n}:{self.server}" for n in names)}
+
+    def left(self, alias, name, membership="leave"):
+        """`name` left the room `#<alias>` (`"leave"`) or was banned (`"ban"`)."""
+        rid = self.rooms[f"#{alias}:{self.server}"]
+        full = f"@{name}:{self.server}"
+        self.members[rid].discard(full)
+        self.departed.setdefault(rid, {})[full] = membership
 
     def members_of(self, alias: str) -> set[str]:
         """The names of the accounts in the room `#<alias>`, without the server."""
@@ -111,11 +120,16 @@ class Synapse:
             return _json({"room_id": self.rooms[alias]})
         if m := re.fullmatch(r"/_synapse/admin/v1/join/([^/]+)", path):
             self.members.setdefault(m.group(1), set()).add(body["user_id"])
+            self.departed.get(m.group(1), {}).pop(body["user_id"], None)
             self.writes.append((m.group(1), f"join {body['user_id']}"))
             return _json({"room_id": m.group(1)})
-        if m := re.fullmatch(r"/_synapse/admin/v1/rooms/([^/]+)/members", path):
-            members = sorted(self.members.get(m.group(1), set()))
-            return _json({"members": members, "total": len(members)})
+        if m := re.fullmatch(r"/_synapse/admin/v1/rooms/([^/]+)/state", path):
+            rid = m.group(1)
+            held = {**self.departed.get(rid, {}),
+                    **dict.fromkeys(self.members.get(rid, set()), "join")}
+            return _json({"state": [
+                {"type": "m.room.member", "state_key": user, "content": {"membership": how}}
+                for user, how in sorted(held.items())]})
         if path == "/_matrix/client/v3/joined_rooms":
             return _json({"joined_rooms": list(self.rooms.values())})
         if re.fullmatch(r"/_matrix/client/v3/rooms/[^/]+/state", path):
