@@ -19,7 +19,7 @@ from stack.cards.links import About
 from stack.people import Person
 from stack.filing.topic_list import chosen
 from stack.tags import card_tags
-from stack.household_people import named_in
+from stack.people.names import named_in
 
 # ── What a model reads out of an entry ────────────────────────────────
 

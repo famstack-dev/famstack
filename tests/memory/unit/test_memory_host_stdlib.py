@@ -36,7 +36,7 @@ from stacklets.memory.lib import (  # noqa: E402
     correspondent_titles_for,
     load_correspondents_from_vault,
 )
-from stack.household_people import load_persons_from_vault  # noqa: E402
+from stack.people.names import load_persons_from_vault  # noqa: E402
 
 
 @pytest.fixture
@@ -229,7 +229,7 @@ def test_a_push_that_leaves_a_broken_card_alone_reports_nothing(tmp_path, capsys
 
 def test_a_topic_card_whose_frontmatter_does_not_parse_is_named_and_left_out(tmp_path, capsys):
     """The broken card declares no topic, and the log says which file."""
-    from stack.household_topics import topic_card_titles
+    from stack.topics import topic_card_titles
 
     broken = _write(tmp_path / "family" / "taxes" / "topic.md",
                     "---\ntype: topic\ntitle: Taxes\n  indented: nope\n---\n")

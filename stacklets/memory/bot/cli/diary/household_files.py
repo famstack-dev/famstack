@@ -1,7 +1,7 @@
 """What the diary command knows of the household, read from its files.
 
     household_vocabulary()    # "The people in this family are Homer and Maggie. ..."
-    household_people()        # ["Homer", "Marge", "Maggie"]
+    known_names()             # ["Homer", "Marge", "Maggie"]
     bucket_vocabulary("family")      # the bucket's topics, the names, the prompt's family block, ...
 
 The person files (`stack.people`), the wiki's person pages, the ontology
@@ -20,8 +20,8 @@ from stack.ai.language import LANGUAGES, language_code
 from stack.tags import tag_label
 from stack.vault import DEFAULT_SHARED_BUCKET
 
-from stack.household_people import (card_people, declared_as_persons, declared_people,
-                              household_people, load_persons_from_vault, persons_prompt_section)
+from stack.people.names import (card_people, declared_as_persons, declared_people,
+                              known_names, load_persons_from_vault, persons_prompt_section)
 
 from stack.filing.vocabulary import Vocabulary
 
@@ -45,7 +45,7 @@ def household_vocabulary() -> str:
     Best-effort: a vault that has not been generated yet simply yields
     nothing, and transcription proceeds exactly as it did before.
     """
-    people = household_people()
+    people = known_names()
 
     topics: list[str] = []
     vault = Path(os.environ.get("MEMORY_VAULT_DIR", ""))
@@ -111,7 +111,7 @@ def bucket_vocabulary(bucket: str):
     declared = declared_people()
     if declared is not None:
         persons = declared_as_persons(declared, persons)
-    people = card_people(persons, household_people())
+    people = card_people(persons, known_names())
     # The pages describe the people they know; the rest of the household
     # joins the list by name, so the model can still say a note is about them.
     others = sorted(set(people.values()) - {p.canonical for p in persons})

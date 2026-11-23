@@ -1,48 +1,54 @@
-"""The people a capture's card names: each name placed against the household's people.
+"""The people that a capture's card names: each name that the model gave, placed against the known people.
 
-    people = People.of(vault, pages=brain, family_names="Homer,Marge,Bart,Lisa")
-    placed = people.place(["Homer", "Mr. Burns"], said="Lisa came along.", sender="Marge")
-    placed.names        # ['Homer', 'Lisa']: what the card is about
-    placed.unplaced     # ['Mr. Burns']: nobody in the household goes by it
+    people = People.of(vault, pages=brain, account_names="Alex,Sam,Jo")
+    placed = people.place(["Alex", "Mr. Gray"], said="Jo came along.", sender="Sam")
+    placed.names        # ['Alex', 'Jo']: what the card is about
+    placed.unplaced     # ['Mr. Gray']: nobody goes by it
 
-A model asked who a note is about answers with names. A card's `persons`
-holds person ids (ADR-017 §4), and its About line links each person's card,
-so a writer has to place every name the model gave. A name has one of three
-outcomes:
+A model that is asked who a note is about answers with names.
+A card's `persons` holds person ids (ADR-017 §4).
+The About line of the card links the card of each person.
+The writer therefore places every name that the model gave.
+A name has one of three outcomes:
 
-    the name             the household knows it as      on the card
-    "Mr. Simpson"        an alias of Homer's file        persons: [homer], a link
-    "Lisa"               a name in FAMILY_NAMES only     a plain name in the About line
-    "Mr. Burns"          nobody                          nothing; the text keeps it
+    the name             the people know it as           on the card
+    "Mr. Doe"            an alias of alex                persons: [alex], a link
+    "Jo"                 a name in FAMILY_NAMES only     a plain name in the About line
+    "Mr. Gray"           nobody                          nothing, the text keeps it
 
-A name nobody goes by stays off the card: a misheard or a stranger's name
-never becomes a person, and the person pages and the search do not grow a
-"Mr. Burns". It stays in the note's words and sources, and the writer
-reports it in its log. The second outcome is a household that has no
-person files yet: its people are known by the names the accounts give
-(`FAMILY_NAMES`, from `users.toml`), and a card names them without an id.
+A name that nobody goes by stays off the card.
+A misheard name or a stranger's name then never becomes a person.
+The person pages and the search do not grow a "Mr. Gray".
+The name stays in the words and the sources of the note, and the writer reports it in its log.
 
-The household's names come from the same files the diary reads
-(`stack.household_people`): the person files with their aliases, the
-wiki's person pages with the spellings documents used
-(`<id>/about.md` in the wiki's copy), and `FAMILY_NAMES` before any person file
-exists. A known person the model's title, description or summary names
-joins the card although the model left them out of its list, as on a
-diary entry (`stack.household_people.named_in`): only the household's own
-names match, written as names, so "Lisa came along." gives Lisa and "Will
-it rain in May?" gives nobody unless someone is called Will or May.
-`place` reads that text only when the caller passes it: the capture passes
-it for a note, never for a bookmark or an email.
+The second outcome applies when no person file exists yet.
+The accounts then name the people (`FAMILY_NAMES` from `users.toml`).
+A card names them without an id.
 
-When no name is left, the card is about the one who sent it: a note from
-Homer that names only Mr. Burns is Homer's ("Mr. Burns called about the
-plant"). The sender always counts as known, also in a household that has
-no person files and no `FAMILY_NAMES`.
+The names come from the same files that the diary reads (`stack.people.names`):
 
-Pure file reads and string rules, stdlib only, like
-`stack.filing.vocabulary`: the archivist's capture and `stack memory
-capture` call it before the mirror writes the card. Documents and email
-keep their own rule (`stack.cards.links.About`, names kept as written).
+- the person files with their aliases,
+- the person pages of the wiki with the spellings that documents used (`<id>/about.md` in the copy of the wiki),
+- `FAMILY_NAMES`, before any person file exists.
+
+The model can leave a known person out of its list although its title, description or summary names them.
+That person still joins the card, as on a diary entry (`stack.people.names.named_in`).
+Only known names match, and only when they are written as names.
+
+- "Jo came along." gives Jo.
+- "Will it rain in May?" gives nobody unless someone is called Will or May.
+
+`place` reads that text only when the caller passes it.
+The capture passes it for a note, never for a bookmark or an email.
+
+When no name is left, the card is about the sender.
+A note from alex that names only Mr. Gray is alex's note ("Mr. Gray called about the plant").
+The sender always counts as known, also when no person file and no `FAMILY_NAMES` exist.
+
+The module reads files and applies string rules.
+It uses only the standard library, like `stack.filing.vocabulary`.
+The capture of the archivist and `stack memory capture` call it before the mirror writes the card.
+Documents and email keep their own rule (`stack.cards.links.About`, names kept as written).
 """
 
 from __future__ import annotations
@@ -52,8 +58,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from ..household_people import card_people, declared_as_persons, household, load_persons_from_vault, named_in
 from ..people import Person, load_people
+from ..people.names import card_people, declared_as_persons, load_persons_from_vault, merge_names, named_in
 from ..vault import DEFAULT_SHARED_BUCKET
 
 __all__ = ["People", "Placed"]
@@ -61,10 +67,10 @@ __all__ = ["People", "Placed"]
 
 @dataclass(frozen=True)
 class Placed:
-    """The names a card is about, and the names nobody in the household goes by.
+    """The names a card is about, and the names that nobody goes by.
 
-        placed = People({"homer": "Homer"}).place(["Homer", "Mr. Burns"])
-        placed.names, placed.unplaced          # (['Homer'], ['Mr. Burns'])
+        placed = People({"alex": "Alex"}).place(["Alex", "Mr. Gray"])
+        placed.names, placed.unplaced          # (['Alex'], ['Mr. Gray'])
     """
 
     names: list[str] = field(default_factory=list)
@@ -73,55 +79,60 @@ class Placed:
 
 @dataclass(frozen=True)
 class People:
-    """The household's people as a capture places names: every name they
-    go by, lowercased, to the name a card writes for them. Build it with
-    `People.of`.
+    """The known people as a capture places names.
 
-        people = People({"homer": "Homer", "mr. simpson": "Homer", "lisa": "Lisa"})
-        people.place(["Mr. Simpson", "Mr. Burns"]).names    # ['Homer']
+    The mapping holds every name that a person goes by, lowercased, and the name that a card writes for them.
+    Build it with `People.of`.
+
+        people = People({"alex": "Alex", "mr. doe": "Alex", "jo": "Jo"})
+        people.place(["Mr. Doe", "Mr. Gray"]).names    # ['Alex']
     """
 
     names: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
-    def of(cls, vault: Optional[Path], *, pages: Optional[Path] = None, family_names: str = "",
+    def of(cls, vault: Optional[Path], *, pages: Optional[Path] = None, account_names: str = "",
            shared_bucket: str = DEFAULT_SHARED_BUCKET) -> "People":
-        """The people of the household whose memory is `vault`.
+        """The people of the memory in `vault`.
 
-        With person files (`<vault>/<shared_bucket>/people/<id>.md`): each
-        declared person by every name they go by, with the spellings of
-        their wiki page in `pages` (the wiki's copy of the memory,
-        `BRAIN_REPO_DIR`, where `<id>/about.md` is generated). Without
-        them: the names in `family_names` (comma-separated, `FAMILY_NAMES`)
-        and the wiki's person pages. No vault (`None`) reads no person file.
-        A file that does not read is left out, as everywhere they are read.
+        With person files (`<vault>/<shared_bucket>/people/<id>.md`), each declared person is known by every name they go by.
+        The spellings of their wiki page in `pages` are added.
+        `pages` is the copy of the memory for the wiki (`BRAIN_REPO_DIR`), where `<id>/about.md` is generated.
+        Without person files, the people are the names in `account_names` (comma-separated, `FAMILY_NAMES`)
+        and the person pages of the wiki.
+        With no vault (`None`), the function reads no person file.
+        The function leaves out a file that does not read, as every reader of these files does.
 
-            People.of(vault, pages=brain).place(["Mr. Simpson"]).names       # ['Homer']
-            People.of(None, family_names="Homer,Lisa").place(["lisa"]).names  # ['Lisa']
+            People.of(vault, pages=brain).place(["Mr. Doe"]).names            # ['Alex']
+            People.of(None, account_names="Alex,Jo").place(["jo"]).names      # ['Jo']
         """
         seen = load_persons_from_vault(pages, shared_bucket) if pages is not None else []
         declared = load_people(vault, shared_bucket) if vault is not None else None
         if declared is None:
-            return cls(card_people(seen, household(family_names, [])))
+            return cls(card_people(seen, merge_names(account_names, [])))
         return cls(card_people(declared_as_persons(declared, seen), _names_of(declared)))
 
     def place(self, given: Iterable[str] | str | None, *, said: str = "",
               sender: str = "") -> Placed:
-        """The names a card is about: each of `given` the household knows,
-        then each known person `said` names, once, in that order; else the
-        `sender`. Every name of `given` nobody goes by is in `unplaced`.
+        """The names a card is about, each once, in this order.
 
-        `given` is the model's list (a string or None from a careless
-        answer is read as one name or none). `said` is the model's title,
-        description and summary of a note; leave it empty for a bookmark
-        or an email. `sender` is the name of the person who sent the
-        capture ("Marge"); leave it empty where the sender is not a person
-        of the household (a bot that posted an attachment).
+        1. Each name of `given` that a known person goes by.
+        2. Each known person that `said` names.
+        3. The `sender`, when no name is left.
 
-            people = People({"homer": "Homer", "lisa": "Lisa"})
-            people.place(["homer"], said="Lisa came along.").names       # ['Homer', 'Lisa']
-            people.place(["Mr. Burns"], sender="Homer").names            # ['Homer']
-            people.place([], said="Will it rain in May?", sender="Lisa").names  # ['Lisa']
+        Every name of `given` that nobody goes by is in `unplaced`.
+
+        `given` is the list of the model.
+        A string or None from a careless answer counts as one name or none.
+        `said` is the title, the description and the summary of a note that the model wrote.
+        Leave it empty for a bookmark or an email.
+        `sender` is the name of the person who sent the capture ("Sam").
+        Leave it empty when the sender is not a person, for example a bot that posted an attachment.
+
+            people = People({"alex": "Alex", "jo": "Jo"})
+            people.place(["alex"], said="Jo came along.").names       # ['Alex', 'Jo']
+            people.place(["Mr. Gray"], sender="Alex").names           # ['Alex']
+            people.place([], said="Will it rain in May?", sender="Jo").names  # ['Jo']
         """
         names, unplaced = [], []
         for name in _names(given):
@@ -135,13 +146,15 @@ class People:
         return Placed(list(dict.fromkeys(names)), unplaced)
 
     def place_answer(self, answer: dict, *, note: bool, sender: str = "") -> Placed:
-        """`place` for a model's answer about a capture: its `persons`, and
-        for a `note` the people its title, description and summary name.
+        """`place` for the answer of a model about a capture.
 
-            people.place_answer({"title": "Lisa came along", "persons": ["Homer"]},
-                                note=True, sender="Marge").names         # ['Homer', 'Lisa']
-            people.place_answer({"title": "Lisa came along", "persons": []},
-                                note=False, sender="Marge").names        # ['Marge']
+        The answer's `persons` are placed.
+        For a `note`, the people that its title, description and summary name are placed too.
+
+            people.place_answer({"title": "Jo came along", "persons": ["Alex"]},
+                                note=True, sender="Sam").names           # ['Alex', 'Jo']
+            people.place_answer({"title": "Jo came along", "persons": []},
+                                note=False, sender="Sam").names          # ['Sam']
         """
         said = " ".join(str(answer.get(key) or "") for key in _SAID) if note else ""
         return self.place(answer.get("persons"), said=said, sender=sender)
@@ -160,5 +173,5 @@ def _names(given: Iterable[str] | str | None) -> list[str]:
 
 
 def _names_of(declared: list[Person]) -> list[str]:
-    """Every name the declared people go by, in the order of their files."""
+    """Every name that the declared people go by, in the order of their files."""
     return [name for person in declared for name in person.all_names()]

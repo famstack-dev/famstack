@@ -15,7 +15,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 from stacklets.memory.bot.diary.extraction import extraction_from
-from stack.household_people import card_people, household
+from stack.people.names import card_people, merge_names
 
 
 def _page(name: str, synonyms=()) -> dict:
@@ -25,19 +25,19 @@ def _page(name: str, synonyms=()) -> dict:
 class TestTheHouseholdTheDiaryKnows:
 
     def test_everyone_in_users_toml_before_any_filing_names_them(self):
-        assert household("Homer,Marge,Bart,Lisa", []) == ["Homer", "Marge", "Bart", "Lisa"]
+        assert merge_names("Homer,Marge,Bart,Lisa", []) == ["Homer", "Marge", "Bart", "Lisa"]
 
     def test_person_pages_add_nicknames_without_repeating_a_name(self):
-        assert household("Homer,Marge", [_page("Marge", ["Margie"])]) == ["Homer", "Marge", "Margie"]
+        assert merge_names("Homer,Marge", [_page("Marge", ["Margie"])]) == ["Homer", "Marge", "Margie"]
 
     def test_a_person_page_for_someone_without_an_account_counts(self):
-        assert household("Homer", [_page("Maggie")]) == ["Homer", "Maggie"]
+        assert merge_names("Homer", [_page("Maggie")]) == ["Homer", "Maggie"]
 
     def test_pages_that_are_not_people_add_nothing(self):
-        assert household("Homer", [{"type": "topic", "canonical": "Camping"}]) == ["Homer"]
+        assert merge_names("Homer", [{"type": "topic", "canonical": "Camping"}]) == ["Homer"]
 
     def test_no_names_and_no_pages_is_an_empty_household(self):
-        assert household("", []) == []
+        assert merge_names("", []) == []
 
 
 class TestThePeopleACardCanBeAbout:
@@ -97,17 +97,17 @@ class TestThePersonFilesDecideWhoTheDiaryKnows:
 
     def test_before_the_files_the_accounts_and_pages_as_before(self, tmp_path, monkeypatch):
         cli = self._instance(tmp_path, monkeypatch, None)
-        assert cli.household_people() == ["Homer Simpson", "Marge Simpson", "Margaret"]
+        assert cli.known_names() == ["Homer Simpson", "Marge Simpson", "Margaret"]
 
     def test_with_files_every_person_and_every_name_they_go_by(self, tmp_path, monkeypatch):
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
-        assert cli.household_people() == [
+        assert cli.known_names() == [
             "Homer Simpson", "Homer", "Maggie Simpson", "Maggie", "Margaret"]
 
     def test_a_page_left_over_for_a_folder_is_not_family(self, tmp_path, monkeypatch):
         """The old roster made `media/` a person page; it no longer counts."""
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER})
-        assert cli.household_people() == ["Homer Simpson", "Homer"]
+        assert cli.known_names() == ["Homer Simpson", "Homer"]
 
     def test_a_card_about_margaret_is_about_maggie(self, tmp_path, monkeypatch):
         cli = self._instance(tmp_path, monkeypatch, {"homer": HOMER, "maggie": MAGGIE})
@@ -152,11 +152,11 @@ class TestTheWikiPagesTheDiaryReads:
         cli = self._instance(tmp_path, monkeypatch, {"moe": (
             "---\ntype: person\ngenerated: true\ntitle: Moe Szyslak\n"
             "canonical: Moe Szyslak\nsynonyms: [Moe, Mo]\n---\n")})
-        assert cli.household_people() == ["Homer Simpson", "Moe Szyslak", "Moe", "Mo"]
+        assert cli.known_names() == ["Homer Simpson", "Moe Szyslak", "Moe", "Mo"]
 
     def test_a_page_whose_header_does_not_parse_is_skipped_and_named(
             self, tmp_path, monkeypatch, capsys):
         cli = self._instance(tmp_path, monkeypatch, {"barney": (
             "---\ntype: person\ngenerated: true\ncanonical: Barney #2\n---\n")})
-        assert cli.household_people() == ["Homer Simpson"]
+        assert cli.known_names() == ["Homer Simpson"]
         assert "barney/about.md: frontmatter does not parse" in capsys.readouterr().err

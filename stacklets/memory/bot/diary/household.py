@@ -4,7 +4,7 @@
 
 Whisper decodes against the household's vocabulary, so the names it would
 otherwise hear as ordinary words come back right. The household's names
-themselves (`household`, `card_people`) are read by `stack.household_people`.
+themselves (`merge_names`, `card_people`) are read by `stack.people.names`.
 """
 
 from __future__ import annotations

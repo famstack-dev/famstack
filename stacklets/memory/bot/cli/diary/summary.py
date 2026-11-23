@@ -18,7 +18,7 @@ from stack.ai.transcripts import TRANSCRIPTS
 
 from ... import call_costs
 from ...diary.pages import month_digest, month_key, pages_for, year_key
-from stack.household_people import household_people
+from stack.people.names import known_names
 
 from .household_files import household_language
 from .progress import err
@@ -178,7 +178,7 @@ async def _summarise(entries, llm, *, bucket: str) -> str:
     month = entries[0].on.strftime("%B %Y")
     prompt = SUMMARY_PROMPT.format(
         language=household_language(), month=month,
-        people=", ".join(household_people()) or "unknown",
+        people=", ".join(known_names()) or "unknown",
         evidence=_evidence(entries))
     try:
         text = await llm.complete("writer", prompt, temperature=0,

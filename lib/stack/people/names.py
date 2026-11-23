@@ -1,18 +1,18 @@
-"""The household's people, read from the memory's files.
+"""The names of the people, read from the person files and the wiki's person pages.
 
-The classifier, the diary and whisper name the same people. They are
-declared in the person files (`stack.people`) and described by the wiki's
-person pages (`<vault>/<member>/about.md`):
+The classifier, the diary and the transcription name the same people.
+The person files declare them (`stack.people.files`).
+The wiki's person pages (`<vault>/<member>/about.md`) add the spellings that documents used.
 
-    load_persons_from_vault(vault)         # [PersonPage("Homer", "homer", [...])]
-    household_people()                     # ["Homer", "Marge", "Maggie"], from the person files
-    card_people(persons, household)        # {"margaret": "Maggie", "homer": "Homer", ...}
+    load_persons_from_vault(vault)         # [PersonPage("Alex", "alex", ["Al"])]
+    known_names()                          # ["Alex", "Sam", "Jo"]
+    card_people(persons, known)            # {"al": "Alex", "alex": "Alex", ...}
 
-Lives in the framework because the readers span stacklets: the archivist
-and the diary read the same people, and a stacklet imports no other
-stacklet. File reads and environment variables, stdlib only. The memory
-stacklet re-exports these names. The household's topics are read by
-`stack.household_topics`.
+The module lives in the framework because several stacklets read the same people.
+A stacklet imports no other stacklet.
+The module reads files and environment variables and uses only the standard library.
+The memory stacklet re-exports these names.
+`stack.topics` reads the topics.
 """
 
 from __future__ import annotations
@@ -24,15 +24,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-from .frontmatter import FrontmatterError, card_fields, parse as _parse_frontmatter_new
-from .people import Person as DeclaredPerson
-from .people import find_people
-from .vault import DEFAULT_SHARED_BUCKET
+from ..frontmatter import FrontmatterError, card_fields, parse as _parse_frontmatter_new
+from .files import Person as DeclaredPerson
+from .files import find_people
+from ..vault import DEFAULT_SHARED_BUCKET
 
 # ─── People ──────────────────────────────────────────────────────────────
 
 # Skip set for `load_persons_from_vault`: top-level directories that
-# carry an `about.md` but are not a household member. Kept in sync
+# carry an `about.md` but are not a member. Keep in sync
 # with the `stack memory wiki` command's own skip set; both walk the
 # same vault structure.
 _NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_shared"}
@@ -40,8 +40,10 @@ _NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_share
 
 @dataclass
 class PersonPage:
-    """A person's wiki page (`<vault>/<id>/about.md`): the names it lists
-    for one member. The person the family declares is `stack.people.Person`."""
+    """A person's wiki page (`<vault>/<id>/about.md`): the names it lists for one member.
+
+    A declared person is a `stack.people.Person`.
+    """
 
     canonical: str
     slug: str
@@ -66,16 +68,12 @@ def load_persons_from_vault(
 ) -> List[PersonPage]:
     """Walk `<vault>/<slug>/about.md` and return the parsed entries.
 
-    Each entity bucket directly under the vault root is treated as a
-    potential household member. Buckets that are reserved for shared
-    content (the `shared_bucket`, `wiki/`, `.git/`, ...) are skipped
-    by name. A bucket without an `about.md` is also skipped -- a
-    member can exist on the file system (with captured notes) before
-    the wiki overview pass has generated their page.
-
-    Pages tagged with a `kind:` other than `person` are skipped --
-    leaves room for non-member entries to coexist under the same
-    directory shape without leaking into the classifier prompt.
+    Each bucket directly under the vault root can be a member.
+    The reader skips the reserved buckets (the `shared_bucket`, `wiki/`, `.git/`) by name.
+    The reader skips a bucket without an `about.md`,
+    because a member can have notes before the wiki writes their page.
+    The reader skips a page whose `kind:` is not `person`,
+    because other kinds of page can share the directory shape.
     """
     vault_path = Path(vault_path)
     if not vault_path.exists():
@@ -138,7 +136,7 @@ def fm_list(fm: dict, key: str) -> List[str]:
     return []
 
 
-# ─── The household's names ───────────────────────────────────────────────
+# ─── Known names ─────────────────────────────────────────────────────────
 
 def _say(message: str) -> None:
     """Report on stderr: a command's log, which a reader of files must not fail on."""
@@ -146,18 +144,16 @@ def _say(message: str) -> None:
 
 
 def persons_prompt_section(persons: List[PersonPage]) -> str:
-    """Render the persons block embedded in the classifier prompt.
+    """Render the persons block for the classifier prompt.
 
-    Output shape, mirroring `correspondents_prompt_section`:
+    The block has this shape, as in `correspondents_prompt_section`:
 
         Family members (canonical first name; synonyms in parens):
-          - Marge (Marjorie, Margaret, Marge Bouvier, Marge Simpson)
-          - Homer
-          - Bart (Bartholomew, Bart Simpson)
+          - Alex (Alexander, Alex Doe)
+          - Sam
 
-    Returns an empty string when no curated person pages exist yet --
-    the prompt builder falls back to the flat list of first names
-    pulled from Paperless Person tags in that case.
+    The function returns an empty string when no person page exists.
+    The prompt builder then uses the flat list of first names from the Paperless Person tags.
     """
     if not persons:
         return ""
@@ -170,16 +166,15 @@ def persons_prompt_section(persons: List[PersonPage]) -> str:
     return "\n".join(lines)
 
 
-def household(family_names: str, pages) -> list[str]:
-    """The names this family's people go by: users.toml, then the wiki.
+def merge_names(account_names: str, pages) -> list[str]:
+    """The names the people go by: the account names first, then the person pages.
 
-    `family_names` is the comma-separated FAMILY_NAMES from users.toml,
-    so everyone counts from the first day, before any filing names them.
-    The person pages (their frontmatter) add the family's own spellings,
-    nicknames and the people without an account. A name already listed is
-    not repeated, whatever its case.
+    `account_names` is the comma-separated FAMILY_NAMES from users.toml.
+    Everyone counts from the first day because of it, before any filing names them.
+    The frontmatter of the person pages adds spellings, nicknames and people without an account.
+    A name that is already listed is not repeated, whatever its case.
     """
-    names = [n.strip() for n in family_names.split(",") if n.strip()]
+    names = [n.strip() for n in account_names.split(",") if n.strip()]
     for page in pages:
         if page.get("type") != "person":
             continue
@@ -189,24 +184,24 @@ def household(family_names: str, pages) -> list[str]:
     return [n for n in names if not (n.lower() in seen or seen.add(n.lower()))]
 
 
-def card_people(persons, household) -> dict[str, str]:
-    """Every name a card may use, lower-cased, to the person it means.
+def card_people(persons, known: list[str]) -> dict[str, str]:
+    """Every name a card may use, lower-cased, mapped to the person it means.
 
-    The person pages map each known name to its canonical form; everyone
-    else in the household counts under their own name, so a member no
-    filing has named yet can still be who a note is about.
+    The person pages map each of their names to the canonical name.
+    Every other name in `known` maps to itself.
+    A member that no filing has named yet can then still be who a note is about.
     """
     people = {name.lower(): p.canonical for p in persons for name in p.all_known_names()}
-    for name in household:
+    for name in known:
         people.setdefault(name.lower(), name)
     return people
 
 
 def named_in(text: str, people: "dict[str, str]") -> list[str]:
-    """The household members `text` names, in the order it names them.
+    """The people that `text` names, in the order it names them.
 
-    A name counts as a whole word written as a name: "Will" in "Will and
-    Marge" is a person, "will" in "Marge will bake" is not.
+    A name counts as a whole word that is written as a name.
+    "Will" in "Will and Sam" is a person. "will" in "Sam will bake" is not.
     """
     found: list[tuple[int, str]] = []
     for name, canonical in people.items():
@@ -217,13 +212,13 @@ def named_in(text: str, people: "dict[str, str]") -> list[str]:
 
 
 def declared_people() -> list[DeclaredPerson] | None:
-    """The family's person files; None until `stack up memory` wrote them.
+    """The declared person files, or None until `stack up memory` has written them.
 
-    A file that does not read is logged with its path and left out.
+    The function logs a file that does not read with its path and leaves it out.
     """
     return find_people(
         (os.environ.get("MEMORY_VAULT_DIR"), os.environ.get("BRAIN_REPO_DIR")),
-        os.environ.get("SHARED_BUCKET") or "family",
+        os.environ.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET,
         report=lambda problem: _say(f"person file skipped: {problem}"),
     )
 
@@ -239,33 +234,31 @@ def _page_frontmatter(path: Path) -> dict:
         return {}
 
 
-def household_people() -> list[str]:
-    """The household's names: the person files, then the wiki's person pages.
+def known_names() -> list[str]:
+    """The names of the people: the person files first, then the wiki's person pages.
 
-    The person files declare everyone the family knows, a baby without
-    an account too, with every name the family uses for them. Until they
-    exist the accounts stand in (FAMILY_NAMES, from users.toml). The
-    pages add the spellings documents used. Best-effort: no brain means
-    the declared names alone.
+    The person files declare each person with every name they go by, also a person without an account.
+    Until the files exist, the account names stand in (FAMILY_NAMES from users.toml).
+    The person pages add the spellings that documents used.
+    The function reads what exists. Without a brain directory it returns the declared names alone.
     """
     brain = Path(os.environ.get("BRAIN_REPO_DIR", ""))
     abouts = sorted(brain.glob("*/about.md")) if brain.is_dir() else []
     declared = declared_people()
     if declared is None:
-        return household(os.environ.get("FAMILY_NAMES", ""), [_page_frontmatter(a) for a in abouts])
+        return merge_names(os.environ.get("FAMILY_NAMES", ""), [_page_frontmatter(a) for a in abouts])
     # A person's page is the folder named by their id (`<id>/about.md`).
     ids = {p.id for p in declared}
     names = ",".join(n for p in declared for n in p.all_names())
-    return household(names, [_page_frontmatter(a) for a in abouts if a.parent.name in ids])
+    return merge_names(names, [_page_frontmatter(a) for a in abouts if a.parent.name in ids])
 
 
 def declared_as_persons(declared: list[DeclaredPerson], learned: list[PersonPage]) -> list[PersonPage]:
-    """The person files as the classifier's persons: first name canonical.
+    """The person files as the classifier's persons, with the first name as canonical name.
 
-    The first name is the name cards carry and the `Person:` tag the
-    archivist files under, so a card about "Margaret" lists Maggie the
-    same way a document about her is tagged. The full name, the
-    family's aliases and the spellings documents used are the synonyms.
+    Cards carry the first name, and the archivist files the `Person:` tag under it.
+    A card about "Jo Roe" then lists Jo, as a document about Jo is tagged.
+    The full name, the aliases and the spellings that documents used are the synonyms.
     """
     by_slug = {p.slug: p for p in learned}
     persons = []

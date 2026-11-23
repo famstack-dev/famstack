@@ -37,7 +37,7 @@ from stacklets.docs.bot.extractors import TextExtractor
 from stacklets.docs.bot.git_mirror import GitMirror
 from stacklets.docs.bot.pipeline import Classifier
 from stacklets.docs.bot.vault_context import VaultContext
-from stack.household_topics import TopicCard, topic_card_titles, topic_cards
+from stack.topics import TopicCard, topic_card_titles, topic_cards
 from tests.household import HOUSEHOLD_FILES, PEOPLE, Household
 from tests.memory.unit.instance import running_memory
 

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 
-from stack.household_people import (  # noqa: E402
+from stack.people.names import (  # noqa: E402
     PersonPage,
     load_persons_from_vault,
     persons_prompt_section,

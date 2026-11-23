@@ -1,60 +1,73 @@
-"""The vocabulary of a place in the memory: the topics a card filed there may carry.
+"""The vocabulary of a place in the memory: the topics that a card filed there may carry.
 
-    vocabulary = Vocabulary.of("family/notes", vault, seed=SEED, shared_bucket="family")
-    vocabulary.topics(["Camper Van", "Homers 40th", "Person: Homer"])
-                                # ['van', 'homers-40th']: no private topic of Marge's
-    Vocabulary.of("marge", vault, seed=SEED).topics(["Homers 40th"])
-                                # ['surprise-party']: Marge's own topic, in her bucket
+    vocab = Vocabulary.of("shared/notes", vault, seed=SEED, shared_bucket="shared")
+    vocab.topics(["Garden", "Sam's 40th", "Person: Sam"])
+                                # ['garden', 'sams-40th']: no private topic of alex
+    Vocabulary.of("alex", vault, seed=SEED).topics(["Sam's 40th"])
+                                # ['surprise']: the own topic of alex, in the bucket of alex
 
-A household names its topics with topic cards (`<bucket>/<topic>/topic.md`,
-`stack.household_topics`). A topic card in a person's bucket is that
-person's alone: Marge's "Homers 40th" is a surprise for Homer. A writer
-that tagged every card with every bucket's topics would put her topic's id
-on Homer's note as soon as the model said "Homers 40th", and the card,
-its page and its search label would show it to him.
+Topic cards (`<bucket>/<topic>/topic.md`, `stack.topics`) name the topics.
+A topic card in the bucket of a person belongs to that person alone.
+Take the topic "Sam's 40th" of alex, a surprise for sam.
+A writer that tagged every card with the topics of every bucket would put the id of that topic on the note of sam.
+This happens as soon as the model says "Sam's 40th".
+The card, its page and its search label would then show the topic to sam.
 
-So a card's topics are read for its place, never for a person: the
-vocabulary of a folder is the ontology and the topic cards that everyone
-who may read the folder may read (`stack.cards.audience.readable`). The
-folder's readers are its bucket's: a person's bucket is read by that
-person, the shared bucket by everyone, which as an audience is the empty
-set and reads only the shared topic cards. A title the vocabulary does not
-hold is a plain keyword (`homers-40th`), never another bucket's topic id.
-Nor is the id itself a keyword there (`withheld`): search reads every
-bucket's topics, so a family card tagged `surprise-party` would be listed
-under Marge's title. `topics` leaves such an id out, and the curator's
-check refuses it when a write adds it; a card that already carries it
-keeps it, so a keyword that later became someone's topic id does not lock
-the card.
+The topics of a card are therefore read for its place, never for a person.
+The vocabulary of a folder is the ontology plus the topic cards that everyone who may read the folder may read
+(`stack.cards.audience.readable`).
 
-Debt: every person's topic id is a reserved word for everyone else's new
-cards. A keyword that equals another bucket's topic id (`camping`, once
-Marge has `marge/camping/`) is left off a new family card without a word,
-and folder names are ordinary words. Trigger: the first report of a lost
-keyword, or a refused edit of a card. A reserved form for private topic
-ids would remove it.
+The readers of a folder are the readers of its bucket.
+The person of a bucket reads that bucket.
+Everyone reads the shared bucket.
+As an audience, everyone is the empty set.
+That audience reads only the shared topic cards.
+
+A title that the vocabulary does not hold is a plain keyword (`sams-40th`).
+It is never the topic id of another bucket.
+
+The id itself is not a keyword there either (`withheld`).
+The search reads the topics of every bucket.
+A shared card tagged `surprise` would then be listed under the private title of alex.
+`topics` leaves such an id out, and the check of the curator refuses it when a write adds it.
+A card that already carries the id keeps it.
+A keyword that later became the topic id of someone therefore does not lock the card.
+
+Debt: the topic id of every person is a reserved word for the new cards of everyone else.
+A keyword that equals the topic id of another bucket is left off a new shared card without a word.
+An example is `camping`, once alex has `alex/camping/`.
+Folder names are ordinary words.
+Trigger: the first report of a lost keyword, or a refused edit of a card.
+A reserved form for private topic ids would remove the debt.
 
     folder              readers        topic cards it holds
-    family/notes        everyone       family/*
-    marge/notes         {marge}        family/*, marge/*
-    homer               {homer}        family/*, homer/*
+    shared/notes        everyone       shared/*
+    alex/notes          {alex}         shared/*, alex/*
+    sam                 {sam}          shared/*, sam/*
 
-The same vocabulary serves every step that tags one card: the model's
-prompt, the archivist's write and its corrections, `stack memory
-reprocess`, the diary, the curator's check of a written card and the card
-editor. A reply in a room, and the capture event it carries, show a card's
-tags only as far as the room's vocabulary holds them (`RoomView`,
-`Vocabulary.shown`), the topics by their names.
+The same vocabulary serves every step that tags one card:
 
-A keyword becomes a tag by `topics`: a topic by its id or name, the rest
-as a keyword, never through a synonym ("Gas" stays `gas`). A topic the
-model chose from a list is read by `stack.filing.topic_list.chosen`,
-which also reads synonyms. A topic's former id (`former_topic_ids`, after
-`stack memory topic rename`) is read as the topic's id by both.
+- the prompt of the model,
+- the write of the archivist and its corrections,
+- `stack memory reprocess`,
+- the diary,
+- the check of the curator for a written card,
+- the card editor.
 
-Pure file reads, stdlib only, like `stack.household_topics`: the archivist,
-the diary and the curator, each in its own container, import it. The
-admin's view over every bucket stays `stack.household_topics.get_ontology`.
+A reply in a room shows the tags of a card only as far as the vocabulary of the room holds them (`RoomView`, `Vocabulary.shown`).
+It shows the topics by their names.
+The capture event of the reply follows the same rule.
+
+`topics` turns a keyword into a tag.
+A topic becomes its id when the keyword is its id or its name.
+Every other keyword stays a keyword.
+A synonym never applies ("Gas" stays `gas`).
+`stack.filing.topic_list.chosen` reads a topic that the model chose from a list, and it reads synonyms too.
+Both read the former id of a topic (`former_topic_ids`, after `stack memory topic rename`) as the id of the topic.
+
+The module reads files and uses only the standard library, like `stack.topics`.
+The archivist, the diary and the curator import it, each in its own container.
+The admin's view over every bucket stays `stack.topics.get_ontology`.
 """
 
 from __future__ import annotations
@@ -66,27 +79,27 @@ from typing import Optional
 
 from ..cards.audience import readable
 from ..cards.links import without_person_tags
-from ..household_topics import TopicCard, load_ontology_from_vault, topic_cards
 from ..ontology import Ontology
 from ..tags import card_tags, tag_for, with_declared_topics
+from ..topics import TopicCard, load_ontology_from_vault, topic_cards
 from ..vault import DEFAULT_SHARED_BUCKET
 
 __all__ = ["RoomView", "Vocabulary"]
 
 @dataclass(frozen=True)
 class Vocabulary:
-    """The topics a card at one place may carry: the ontology's and the
-    readable topic cards'. Build it with `Vocabulary.of`.
+    """The topics that a card at one place may carry: the topics of the ontology and the readable topic cards.
 
-        family = Vocabulary.of("family/notes", vault, seed=SEED)
-        family.topics(["Camper Van", "LLMs"])          # ['van', 'llms']
-        family.labels(["van", "llms"], "en")           # ['Camper Van', 'llms']
-        family.ontology.topic_ids                      # what the card check allows
+    Build it with `Vocabulary.of`.
 
-    `topic_cards` are the ids of the readable topic cards, the place's own
-    bucket's first; `renamed` maps a former topic id to the id it has now;
-    `withheld` are the ids of the topic cards this place may not read, which
-    no tag here may be.
+        shared = Vocabulary.of("shared/notes", vault, seed=SEED)
+        shared.topics(["Garden", "LLMs"])              # ['garden', 'llms']
+        shared.labels(["garden", "llms"], "en")        # ['Garden', 'llms']
+        shared.ontology.topic_ids                      # what the card check allows
+
+    - `topic_cards` holds the ids of the readable topic cards, the cards of the own bucket of the place first.
+    - `renamed` maps the former id of a topic to its current id.
+    - `withheld` holds the ids of the topic cards that this place may not read. No tag here may be one of them.
     """
 
     ontology: Ontology
@@ -97,35 +110,35 @@ class Vocabulary:
     @classmethod
     def of(cls, folder: str, vault: Optional[Path], *, seed: Path,
            shared_bucket: str = DEFAULT_SHARED_BUCKET, read_in: str | None = None) -> "Vocabulary":
-        """The vocabulary of `folder`, a vault path, a folder or a bare bucket.
+        """The vocabulary of `folder`, which is a vault path, a folder or a bare bucket.
 
-        Reads the vault's ontology (else the shipped `seed`) and its topic
-        cards, and keeps the topic cards everyone who may read `folder` may
-        read. No vault (`None`) gives the seed alone. Only the first folder
-        of `folder` counts, so the bucket is enough before the card's path is
-        known: `"marge"`, `"marge/notes"` and `"marge/notes/2026/11/cake.md"`
-        have one vocabulary.
+        The function reads the ontology of the vault, else the shipped `seed`, and the topic cards of the vault.
+        It keeps the topic cards that everyone who may read `folder` may read.
+        With no vault (`None`), it returns the seed alone.
+        Only the first folder of `folder` counts.
+        The bucket is therefore enough before the path of the card is known.
+        `"alex"`, `"alex/notes"` and `"alex/notes/2026/11/cake.md"` have one vocabulary.
 
-        `read_in` is the bucket of a room whose people also read what is
-        written with the vocabulary, such as a model's summary in a reply:
-        a topic card is then kept only when the room's people may read it
-        too. A note Marge sends to #family files into her bucket, but the
-        model writing it is shown only the family's topics. A family card
-        sent from Marge's own room is shown the family's topics only, not
-        hers: offering fewer topics is the safe side.
+        `read_in` is the bucket of a room whose people also read what the writer writes with the vocabulary.
+        An example is the summary of a model in a reply.
+        A topic card is then kept only when the people of the room may read it too.
+        A note that alex sends to a shared room files into the bucket of alex.
+        The model that writes it is shown only the shared topics.
+        A shared card that is sent from the own room of alex is shown the shared topics only, not the topics of alex.
+        Offering fewer topics is the safe side.
 
-            Vocabulary.of("family", vault, seed=SEED).topics(["Homers 40th"])   # ['homers-40th']
-            Vocabulary.of("marge", vault, seed=SEED).topics(["Homers 40th"])    # ['surprise-party']
-            Vocabulary.of("marge", vault, seed=SEED, read_in="family").topics(["Homers 40th"])
-                                                                                # ['homers-40th']
+            Vocabulary.of("shared", vault, seed=SEED).topics(["Sam's 40th"])    # ['sams-40th']
+            Vocabulary.of("alex", vault, seed=SEED).topics(["Sam's 40th"])      # ['surprise']
+            Vocabulary.of("alex", vault, seed=SEED, read_in="shared").topics(["Sam's 40th"])
+                                                                                # ['sams-40th']
         """
         if vault is None:
             return cls(Ontology.load(seed))
         ontology = load_ontology_from_vault(vault) or Ontology.load(seed)
         readers = _readers(folder, shared_bucket)
         if read_in is not None:
-            # SAFETY: a room's people read what the model writes; a topic
-            # card is offered only when they may read it too.
+            # SAFETY: the people of a room read what the model writes.
+            # A topic card is offered only when they may read it too.
             room = _readers(read_in, shared_bucket)
             readers = room | readers if room and readers else frozenset()
         every_card = topic_cards(vault, shared_bucket=shared_bucket)
@@ -141,53 +154,58 @@ class Vocabulary:
                    _renamed(cards, ontology), withheld)
 
     def topics(self, raw: Iterable[str]) -> list[str]:
-        """The tags a card here is written with for the model's `raw` tags:
-        topics by id or name, the rest as keywords, each once, no `Person:`
-        tags (ADR-017 §4, `stack.tags.card_tags`). No synonyms: a keyword
-        stays a keyword. A renamed topic's former id becomes its id. The id
-        of a topic this place may not read is left out (`withheld`).
+        """The tags that a card here is written with, for the `raw` tags of the model, each once.
 
-            family.topics(["Camper Van", "Homers 40th", "Person: Homer", "2026"])
-                                                       # ['van', 'homers-40th']
-            family.topics(["Gas", "quilt-for-lisa"])   # ['gas', 'lisas-quilt'] after a rename
-            family.topics(["surprise-party", "camping"])   # ['camping']
+        A topic becomes its id when the tag is its id or its name.
+        Every other tag stays a keyword.
+        The result holds no `Person:` tag (ADR-017 §4, `stack.tags.card_tags`).
+        A synonym never applies, so a keyword stays a keyword.
+        The former id of a renamed topic becomes its current id.
+        The function leaves out the id of a topic that this place may not read (`withheld`).
+
+            shared.topics(["Garden", "Sam's 40th", "Person: Sam", "2026"])
+                                                       # ['garden', 'sams-40th']
+            shared.topics(["Gas", "cycling-trip"])     # ['gas', 'bike-trip'] after a rename
+            shared.topics(["surprise", "camping"])     # ['camping']
         """
         written = card_tags(without_person_tags(raw), self.ontology)
-        # SAFETY: another bucket's topic id on this card would show the card
-        # under that topic's title wherever every bucket's topics are read.
+        # SAFETY: the topic id of another bucket on this card would show the card
+        # under the title of that topic wherever the topics of every bucket are read.
         return list(dict.fromkeys(self.current(tag) for tag in written
                                   if self.current(tag) not in self.withheld))
 
     def shown(self, tags: Iterable[str], *, card: "Vocabulary") -> list[str]:
-        """The tags of a card written with the vocabulary `card` that this
-        vocabulary's readers may see, in their order.
+        """The tags of a card that the readers of this vocabulary may see, in their order.
 
-        A tag is left out when `card` reads it as a topic this vocabulary
-        does not hold: a room shows a card's own topic only when everyone
-        in the room may read it. Keywords and shared topics stay.
+        The card was written with the vocabulary `card`.
+        The function leaves out a tag when `card` reads it as a topic that this vocabulary does not hold.
+        A room therefore shows a topic of the card only when everyone in the room may read it.
+        Keywords and shared topics stay.
 
-            homers = Vocabulary.of("homer", vault, seed=SEED)
-            family.shown(["Garage Project", "Camper Van", "llms"], card=homers)
-                                                       # ['Camper Van', 'llms']
+            sams = Vocabulary.of("sam", vault, seed=SEED)
+            shared.shown(["Workshop", "Garden", "llms"], card=sams)
+                                                       # ['Garden', 'llms']
         """
-        # SAFETY: a person's topic on their own card stays off a reply in a
+        # SAFETY: a topic of a person on their own card stays off a reply in a
         # room that other people read, also when that person sent it there.
         return [tag for tag in tags if self._holds_topic_of(str(tag), card)]
 
     def labels(self, tags: Iterable[str], language: str) -> list[str]:
-        """`tags` as a person reads them: a topic by its name in `language`
-        (a topic card by its title), a keyword as it is written; each once.
+        """`tags` as a person reads them, each once.
 
-            family.labels(["van", "Camper Van", "llms", "health"], "en")
-                                                       # ['Camper Van', 'llms', 'Health']
+        A topic shows its name in `language`, and a topic card shows its title.
+        A keyword shows as it is written.
+
+            shared.labels(["garden", "Garden", "llms", "health"], "en")
+                                                       # ['Garden', 'llms', 'Health']
         """
         return list(dict.fromkeys(self._label(str(tag), language) for tag in tags))
 
     def current(self, tag: str) -> str:
-        """`tag`, or the id a renamed topic has now when `tag` is a former id of it.
+        """`tag`, or the current id of a renamed topic when `tag` is a former id of it.
 
-            family.current("quilt-for-lisa")    # 'lisas-quilt' after the rename
-            family.current("llms")              # 'llms'
+            shared.current("cycling-trip")      # 'bike-trip' after the rename
+            shared.current("llms")              # 'llms'
         """
         return tag if self.ontology.topic(tag) is not None else self.renamed.get(tag, tag)
 
@@ -207,14 +225,16 @@ class Vocabulary:
 
 @dataclass(frozen=True)
 class RoomView:
-    """What a room may read of one card's tags: the room's vocabulary and
-    the card's. A room of several people has the shared vocabulary, a
-    person's room with the archivist that person's. A reply names a topic
-    by its name in `language`, the event keeps the tags as they are.
+    """What a room may read of the tags of one card: the vocabulary of the room and the vocabulary of the card.
 
-        view = RoomView(room=family, card=marges, language="en")
-        view.of({"title": "Cake", "tags": ["Homers 40th", "van"]})
-                                    # {'title': 'Cake', 'tags': ['Camper Van']}
+    A room of several people has the shared vocabulary.
+    The room of one person with the archivist has the vocabulary of that person.
+    A reply names a topic by its name in `language`.
+    The event keeps the tags as they are.
+
+        view = RoomView(room=shared, card=alexs, language="en")
+        view.of({"title": "Cake", "tags": ["surprise", "garden"]})
+                                    # {'title': 'Cake', 'tags': ['Garden']}
     """
 
     room: Vocabulary
@@ -223,35 +243,36 @@ class RoomView:
 
     @classmethod
     def between(cls, places, card_path: str, *, room: str, language: str = "en") -> "RoomView":
-        """The view of the card at `card_path` from a room whose bucket is
-        `room`, naming topics in `language`. `places` gives a folder's
-        vocabulary (`places.vocabulary(folder)`, as the archivist's vault
-        context does).
+        """The view of the card at `card_path` from a room whose bucket is `room`, with topics named in `language`.
 
-        The room's bucket is its one person's, or the shared bucket when it
-        has more than one person or is not known, so a reply never shows
-        more than the shared topics where someone else could read it.
+        `places` gives the vocabulary of a folder (`places.vocabulary(folder)`, as the vault context of the archivist does).
 
-            RoomView.between(vault, "marge/notes/2026/11/cake.md", room="family", language="en")
+        The bucket of a room is the bucket of its one person.
+        It is the shared bucket when the room has more than one person or the person is not known.
+        A reply therefore never shows more than the shared topics where someone else could read it.
+
+            RoomView.between(vault, "alex/notes/2026/11/cake.md", room="shared", language="en")
         """
         return cls(room=places.vocabulary(room), card=places.vocabulary(card_path), language=language)
 
     def of(self, view: dict) -> dict:
-        """`view`, a classification as a reply shows it, with only the tags
-        the room may read, a topic by its name; a new dict, `view` is not
-        changed."""
-        # SAFETY: a topic of the card's bucket that the room's people may not
-        # all read stays on the card and off the reply.
+        """`view`, a classification as a reply shows it, as a new dict that holds only the tags the room may read.
+
+        A topic shows its name. The function does not change `view`.
+        """
+        # SAFETY: a topic of the bucket of the card that not all people of the room may read
+        # stays on the card and off the reply.
         shown = self.room.shown(view.get("tags") or [], card=self.card)
         return {**view, "tags": self.room.labels(shown, self.language)}
 
     def of_changes(self, changes):
-        """A correction's changes (dataclasses with `field` and `value`)
-        without a tag the room may not read, a topic by its name; None (the
-        writer did not say) stays None.
+        """The changes of a correction (dataclasses with `field` and `value`) without a tag that the room may not read.
 
-            view.of_changes([Change(field="tag", kind="added", value="van")])
-            # [Change(field='tag', kind='added', value='Camper Van')]
+        A topic shows its name.
+        `None` (the writer did not say) stays `None`.
+
+            view.of_changes([Change(field="tag", kind="added", value="garden")])
+            # [Change(field='tag', kind='added', value='Garden')]
         """
         if changes is None:
             return None
@@ -265,14 +286,15 @@ class RoomView:
         return replace(change, value=self.room.labels([change.value], self.language)[0])
 
     def event(self, envelope: dict) -> dict:
-        """A `dev.famstack.event` envelope as the room may receive it: its
-        `data` with only the tags the room may read, as they are; a new dict.
+        """A `dev.famstack.event` envelope as the room may receive it, as a new dict.
 
-            view.event({"type": "capture.filed", "data": {"tags": ["Homers 40th"]}})
+        Its `data` holds only the tags that the room may read, as they are.
+
+            view.event({"type": "capture.filed", "data": {"tags": ["surprise"]}})
                                     # {'type': 'capture.filed', 'data': {'tags': []}}
         """
-        # SAFETY: every client and bot in the room reads the event, not only
-        # the reply's text, so it carries no more than the text shows.
+        # SAFETY: every client and bot in the room reads the event, not only the text of the reply.
+        # The event therefore carries no more than the text shows.
         data = envelope.get("data")
         if not isinstance(data, dict) or "tags" not in data:
             return envelope
@@ -282,12 +304,13 @@ class RoomView:
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 def _readers(folder: str, shared_bucket: str) -> frozenset[str]:
-    """Who reads `folder`: its bucket's person, or everyone (the empty set)
-    for the shared bucket and the vault's top level.
+    """Who reads `folder`: the person of its bucket.
 
-    >>> sorted(_readers("marge/notes/2026/11/cake.md", "family"))
-    ['marge']
-    >>> _readers("family/van", "family")
+    Everyone (the empty set) reads the shared bucket and the top level of the vault.
+
+    >>> sorted(_readers("alex/notes/2026/11/cake.md", "shared"))
+    ['alex']
+    >>> _readers("shared/garden", "shared")
     frozenset()
     """
     bucket = _bucket(folder)
@@ -295,16 +318,18 @@ def _readers(folder: str, shared_bucket: str) -> frozenset[str]:
 
 
 def _bucket(path: str) -> str:
-    """The first folder of `path`, a vault path, a folder or a bare bucket:
-    `"marge/notes/2026/11/cake.md"` and `"marge"` give `"marge"`."""
+    """The first folder of `path`, which is a vault path, a folder or a bare bucket.
+
+    `"alex/notes/2026/11/cake.md"` and `"alex"` give `"alex"`.
+    """
     return path.strip("/").partition("/")[0]
 
 
 def _renamed(cards: list[TopicCard], ontology: Ontology) -> dict[str, str]:
-    """Each former id of a readable topic card to the id the card has now.
+    """Map each former id of a readable topic card to the current id of the card.
 
-    A former id that is a topic again (a new card took the old name) stays
-    that topic's, and the first card to list an id keeps it.
+    A former id that is a topic again stays the id of that topic, because a new card took the old name.
+    The first card that lists an id keeps it.
     """
     renamed: dict[str, str] = {}
     for card in cards:

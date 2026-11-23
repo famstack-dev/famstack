@@ -18,7 +18,7 @@ from stack.ai.client import LLMError
 from stack.ai.transcripts import TRANSCRIPTS
 
 from ... import call_costs
-from stack.household_people import household_people
+from stack.people.names import known_names
 
 from .household_files import household_vocabulary
 from .progress import err
@@ -125,7 +125,7 @@ async def decode_room(messages, *, session, homeserver, token, transcriber, llm,
     its place and its audio, with no words.
     """
     vocabulary = household_vocabulary()
-    people = household_people()
+    people = known_names()
     if vocabulary:
         err(f"  decoding against: {vocabulary[:90]}...")
 

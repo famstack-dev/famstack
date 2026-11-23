@@ -26,7 +26,7 @@ from stacklets.memory.lib import (
 )
 from stack.filing.people import People
 from stack.filing.vocabulary import Vocabulary
-from stack.household_people import load_persons_from_vault, persons_prompt_section
+from stack.people.names import load_persons_from_vault, persons_prompt_section
 from stack.cards.lookup import find_card
 from stack.lists import CALENDAR, LISTS_DIR, ListError, read_list
 from stack.people import Person, load_people
@@ -123,7 +123,7 @@ class VaultContext:
         Read fresh on every call, like the rest of this context."""
         pages = os.environ.get("BRAIN_REPO_DIR", "")
         return People.of(self._vault_path(), pages=Path(pages) if pages else None,
-                         family_names=os.environ.get("FAMILY_NAMES", ""),
+                         account_names=os.environ.get("FAMILY_NAMES", ""),
                          shared_bucket=self.shared_bucket)
 
     def persons_section(self) -> str:

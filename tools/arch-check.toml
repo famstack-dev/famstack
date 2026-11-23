@@ -76,8 +76,6 @@ units = [
     "digest",
     "email_message",
     "filing",
-    "household_people",
-    "household_topics",
     "links",
     "list_doc",
     "lists",
@@ -88,6 +86,7 @@ units = [
     "page_patch",
     "people",
     "tags",
+    "topics",
     "vault",
 ]
 

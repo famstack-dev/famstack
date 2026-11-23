@@ -91,7 +91,7 @@ from stack.lists import list_path
 from stack.ontology import Ontology
 from stack.tags import tag_words
 
-from stack.household_topics import TOPIC_CARDS
+from stack.topics import TOPIC_CARDS
 
 from .lib import get_ontology
 

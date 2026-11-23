@@ -1,36 +1,38 @@
-"""The list of topics a model chooses from, and reading its choice back as topic ids.
+"""The list of topics that a model chooses from, and the reading of its choice as topic ids.
 
-    names = topics_to_choose(family, "en")    # ['Camper Van', 'Quilt for Lisa', 'Health', ...]
-    # ... the model answers {"topics": ["camper van", "Gesundheit", "Mars"]}
-    chosen(family, ["camper van", "Gesundheit", "Mars"])    # ['van', 'health']
+    names = topics_to_choose(vocab, "en")    # ['Garden', 'Bike Trip', 'Health', ...]
+    # ... the model answers {"topics": ["garden", "Gesundheit", "Mars"]}
+    chosen(vocab, ["garden", "Gesundheit", "Mars"])    # ['garden', 'health']
 
-A note and a diary entry are shown the topics of the card's place
-(`stack.filing.vocabulary.Vocabulary`) and answer the ones they are about.
-This module builds that list and reads the answer back.
+A note and a diary entry are shown the topics of the place of the card (`stack.filing.vocabulary.Vocabulary`).
+They answer with the topics that they are about.
+This module builds the list and reads the answer back.
 
-The list puts the household's topic cards first, the place's own bucket
-before the shared one, then the ontology's topics. It holds at most
-`TOPICS_SHOWN` names, so the 42 topics of the shipped ontology never push
-a household's own topics out, and each name is cut at `TOPIC_NAME_CHARS`.
+The list holds the topic cards first.
+The topic cards of the own bucket of the place come before the shared ones.
+The topics of the ontology follow.
+The list holds at most `TOPICS_SHOWN` names.
+The 42 topics of the shipped ontology therefore never push the topic cards out.
+Each name is cut at `TOPIC_NAME_CHARS`.
 
-Reading the answer back uses more than the keyword rule
-(`Vocabulary.topics`), because a word in it was picked from a list of
-topics:
+The reading of the answer uses more than the keyword rule (`Vocabulary.topics`),
+because the model picked each word from a list of topics:
 
-    the model's word          read as                 why
-    "van", "Camper Van"       van                     a topic card's id or title
-    "Gesundheit"              health                  a topic's name, any language
-    "quilt-for-lisa"          lisas-quilt             a renamed topic's former id
-    "holiday"                 travel                  an ontology synonym, last
+    the word of the model     read as                 why
+    "garden", "Bike Trip"     garden, bike-trip       the id or the title of a topic card
+    "Gesundheit"              health                  the name of a topic, in any language
+    "cycling-trip"            bike-trip               the former id of a renamed topic
+    "holiday"                 travel                  a synonym of the ontology, last
     "Schule"                  kita                    a topic card titled "Schule"
                                                       wins over the synonym
     "Mars", "Invoice"         (left out)              no topic, or a document type
 
-A synonym is a hint only here. On a free keyword it would turn a
-camping-gas note into `utility`, so `Vocabulary.topics` never uses one.
+Here a synonym is a hint only.
+On a free keyword it would turn a note about camping gas into `utility`.
+`Vocabulary.topics` therefore never uses a synonym.
 
-Pure, stdlib only, like `stack.filing.vocabulary`: the archivist and the
-diary, each in its own container, import it.
+The module uses only the standard library and has no side effects.
+The archivist and the diary import it, each in its own container.
 """
 
 from __future__ import annotations
@@ -44,26 +46,26 @@ from .vocabulary import Vocabulary
 
 __all__ = ["TOPICS_SHOWN", "TOPIC_NAME_CHARS", "chosen", "prompt_section", "topics_to_choose"]
 
-# How many topics a prompt lists, and how long one name may be there. Both
-# keep the prompt short enough for a small model on a 16 GB Mac, and the
-# length limit keeps a long title, which a family member wrote, from
-# carrying a paragraph into the prompt.
+# How many topics a prompt lists, and how long one name may be there.
+# Both limits keep the prompt short enough for a small model on a 16 GB Mac.
+# The length limit also keeps a long title that a person wrote from carrying a paragraph into the prompt.
 TOPICS_SHOWN = 60
 TOPIC_NAME_CHARS = 80
 
 
 def topics_to_choose(vocabulary: Vocabulary, language: str) -> list[str]:
-    """The names of the topics a model is shown to choose from: the
-    place's own topic cards, then the shared ones, then the ontology's,
-    in `language`, each once. At most `TOPICS_SHOWN`, each cut at
-    `TOPIC_NAME_CHARS`.
+    """The names of the topics that a model is shown to choose from, in `language`, each once.
 
-    A title longer than `TOPIC_NAME_CHARS` is listed cut, and the cut name
-    does not read back as its topic (`chosen`): such a topic can be chosen
-    only by its id. Family titles are short; the cut protects the prompt.
+    The order is: the topic cards of the own bucket of the place, the shared topic cards, the topics of the ontology.
+    The list holds at most `TOPICS_SHOWN` names, and each name is cut at `TOPIC_NAME_CHARS`.
 
-        topics_to_choose(Vocabulary.of("marge", vault, seed=SEED), "de")[:3]
-        # ['Homers 40th', 'Camper Van', 'Quilt for Lisa']
+    The list shows a title longer than `TOPIC_NAME_CHARS` cut.
+    The cut name does not read back as its topic (`chosen`).
+    Such a topic can be chosen only by its id.
+    Titles are short, and the cut protects the prompt.
+
+        topics_to_choose(Vocabulary.of("alex", vault, seed=SEED), "de")[:3]
+        # ['Surprise', 'Garden', 'Bike Trip']
     """
     ontology = vocabulary.ontology
     topics = [*(ontology.declared_topics[i] for i in vocabulary.topic_cards), *ontology.topics.values()]
@@ -72,35 +74,38 @@ def topics_to_choose(vocabulary: Vocabulary, language: str) -> list[str]:
 
 
 def prompt_section(vocabulary: Vocabulary, language: str) -> str:
-    """The vocabulary a classifier is offered as prompt text: the
-    ontology's topics with their synonyms and its document types
-    (`Ontology.classifier_prompt_section`), then the place's topic cards'
-    titles as a JSON list.
+    """The vocabulary that a classifier is offered as prompt text.
+
+    The text holds the topics of the ontology with their synonyms and its document types
+    (`Ontology.classifier_prompt_section`).
+    The titles of the topic cards of the place follow as a JSON list.
 
         Topics (pick the best match; synonyms in parentheses):
           - Health
         ...
-        The household's own topics: ["Camper Van", "Quilt for Lisa"]
+        The memory's own topics: ["Garden", "Bike Trip"]
     """
     ontology = vocabulary.ontology
     section = ontology.classifier_prompt_section(language)
     names = [_cut(ontology.declared_topics[i].name(language)) for i in vocabulary.topic_cards]
     if not names:
         return section
-    return f"{section}\n\nThe household's own topics: {json.dumps(names, ensure_ascii=False)}"
+    return f"{section}\n\nThe memory's own topics: {json.dumps(names, ensure_ascii=False)}"
 
 
 def chosen(vocabulary: Vocabulary, raw: Iterable) -> list[str]:
-    """The ids of the topics the model chose from its list, in its order,
-    each once; a word that names no topic of `vocabulary` is left out, and
-    so is anything that is not a string.
+    """The ids of the topics that the model chose from its list, in its order, each once.
 
-    A topic is named by its id or name in any language, a topic card by
-    its id or title, a renamed topic by a former id, and an ontology
-    topic, last, by a synonym in any language.
+    The function leaves out a word that names no topic of `vocabulary`.
+    It also leaves out anything that is not a string.
 
-        chosen(family, ["camper van", "Gesundheit", "Gas", "Mars", 3])
-        # ['van', 'health', 'utility']
+    A topic is named by its id or its name in any language.
+    A topic card is named by its id or its title.
+    A renamed topic is named by a former id.
+    A topic of the ontology is named, last, by a synonym in any language.
+
+        chosen(vocab, ["garden", "Gesundheit", "Gas", "Mars", 3])
+        # ['garden', 'health', 'utility']
     """
     found = (_topic_named(vocabulary, text) for text in raw if isinstance(text, str))
     return list(dict.fromkeys(topic for topic in found if topic))

@@ -77,7 +77,7 @@ def test_without_person_files_the_family_names_are_known(tmp_path):
     """Given a vault without person files and the accounts Homer and Lisa,
     then Lisa is known by name and Mr. Burns is not."""
     (tmp_path / "vault").mkdir()
-    placed = People.of(tmp_path / "vault", family_names="Homer,Lisa").place(["lisa", "Mr. Burns"])
+    placed = People.of(tmp_path / "vault", account_names="Homer,Lisa").place(["lisa", "Mr. Burns"])
 
     assert (placed.names, placed.unplaced) == (["Lisa"], ["Mr. Burns"])
 

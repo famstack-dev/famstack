@@ -64,14 +64,14 @@ from stack.ontology import Ontology
 # Re-exported for the host commands (`cli/`), which import no framework domain
 # module directly: `load_persons_from_vault`, `persons_prompt_section`,
 # `ONTOLOGY_PATH_IN_REPO`.
-from stack.household_people import (
+from stack.people.names import (
     fm_list as _fm_list,
     load_persons_from_vault as load_persons_from_vault,
     parse_frontmatter as _parse_frontmatter,
     persons_prompt_section as persons_prompt_section,
 )
-from stack.household_topics import ONTOLOGY_PATH_IN_REPO as ONTOLOGY_PATH_IN_REPO
-from stack.household_topics import get_ontology as _get_ontology
+from stack.topics import ONTOLOGY_PATH_IN_REPO as ONTOLOGY_PATH_IN_REPO
+from stack.topics import get_ontology as _get_ontology
 
 if TYPE_CHECKING:
     # Type-only: `stack.ai.client` pulls in the OpenAI SDK, which the
@@ -171,7 +171,7 @@ def load_seed_ontology() -> Ontology:
 
 def get_ontology(vault_path: Optional[Path] = None, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> Ontology:
     """The live ontology from the vault, else the shipped seed, with the
-    vault's topic cards on top (`stack.household_topics.get_ontology`); a
+    vault's topic cards on top (`stack.topics.get_ontology`); a
     topic id two buckets share takes the title of `shared_bucket`'s card."""
     return _get_ontology(vault_path, SEED_ONTOLOGY_PATH, shared_bucket=shared_bucket)
 
