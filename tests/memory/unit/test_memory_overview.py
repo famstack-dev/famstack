@@ -176,6 +176,8 @@ def test_my_memory_holds_marges_sections(simpsons):
                                                           ("topic-garden", True)]
     assert [(i["id"], i["by"], i["on"]) for i in me["changed"]["items"]] == [
         ("note-undated", "marge", TODAY), ("note-tent", "marge", "2026-09-28")]
+    # What each change was: a hand edit reads "changed", as `stack.cards.commits.kind_of` says.
+    assert {i["what"] for i in me["changed"]["items"]} == {"changed"}
     assert ids(me["bookmarks"]) == ["bookmark-pie"]
     assert [(k["kind"], k["count"]) for k in me["documents"]["kinds"]] == [("Policy", 1), ("Receipt", 1)]
     assert {s["id"] for s in me["senders"]} == {"correspondent-springfield-insurance",

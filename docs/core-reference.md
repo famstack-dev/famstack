@@ -74,7 +74,7 @@ The memory's pages are read only. Each address shows one page:
 | `/memory` | The page of the person that the device is paired to: what comes up, their lists, topics, bookmarks and documents, and what changed. A household device gets the family's page. The Mac's address gets the admin's page. |
 | `/memory/family` | The family's page, for every device |
 | `/memory/person/<id>` | One person |
-| `/memory/topic/<card_id>` | One topic: its head, two chips that open its bookmarks and documents, its newest 10 notes in full (each with the AI mark when the AI wrote its text, its messages folded under "show the original messages") and its other cards. Older notes are rows. A topic of mostly bookmarks or documents opens on that list. |
+| `/memory/topic/<card_id>` | One topic: its head, two chips that open its bookmarks and documents, a rail with its lists and what changed in the last two weeks (beside the sections from 1100 px, after the chips on a phone), its newest 10 notes in full (each with the AI mark when the AI wrote its text, its messages folded under "show the original messages") and its other cards. Older notes are rows. A topic of mostly bookmarks or documents opens on that list. |
 | `/memory/sender/<card_id>` | One sender |
 | `/memory/documents`, `/memory/documents/<kind>` | The documents, by kind |
 | `/memory/kind/<type>` | The cards of one card type, newest first |

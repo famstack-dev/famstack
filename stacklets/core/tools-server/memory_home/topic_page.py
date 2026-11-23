@@ -9,7 +9,8 @@ The page names the topic and whose it is (the family's, the person's
 looking, or another person's, by the memory's `owner`), says how many cards it holds and how many of those are about the
 person looking, and explains ✦ (`topic.head`). Two chips open its bookmarks
 and documents (`topic.chips`); a topic of mostly one of them shows that list
-after Up next. Then the sections: Up next, its cards newest first
+after Up next. A rail (`topic.rail`) holds its lists and what changed lately: after
+the chips on a phone, beside the sections from 1100 px. Then the sections: Up next, its cards newest first
 (40 at a time, with "Newer" and "Older" between the parts, `paging`),
 and the people and senders its cards name.
 
@@ -56,7 +57,7 @@ def sheet(answer: dict, context: Context, *, about: int | None, media: Mapping |
             + pager(answer.get("cards") or {}, addresses.topic(about_topic.get("id", "")), context)
             + sections.links(shown, context))
     return title, (f'<article class="sheet home">{head}{topic_parts.chips(answer, context)}{topic_parts.panels(answer, context)}'
-                   f'<div class="sections">{body}</div></article>')
+                   f'<div class="topic-body">{topic_parts.rail(answer, context)}<div class="sections">{body}</div></div></article>')
 
 
 def _cards(answer: dict, context: Context, *, has_notes: bool) -> str:

@@ -1,4 +1,4 @@
-"""The parts of a topic's page: its compact head and the lists behind two chips.
+"""The parts of a topic's page: its compact head, the lists behind two chips and its rail.
 
     from memory_home import topic
 
@@ -7,6 +7,7 @@
     main = topic.main_list(answer, context)        # "" unless links or documents fill the topic
     under = topic.panels(answer, context)
     notes = topic.entries.section(answer, context, media=records, names=names)   # "" unless a note
+    beside = topic.rail(answer, context)           # the lists and what changed lately
 
 `topic_page.sheet` composes them. The head is the kicker, the title, the
 facts and, when a model summarised an entry, the key that explains ✦. The
@@ -23,5 +24,6 @@ from memory_home.topic import entries
 from memory_home.topic.chips import chips, main_kind, main_list, panels
 from memory_home.topic.head import head
 from memory_home.topic import states
+from memory_home.topic.rail import rail
 
-__all__ = ["states", "head", "chips", "panels", "main_list", "main_kind", "entries"]
+__all__ = ["states", "head", "chips", "panels", "main_list", "main_kind", "entries", "rail"]

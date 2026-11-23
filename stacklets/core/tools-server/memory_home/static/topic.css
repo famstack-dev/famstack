@@ -41,3 +41,25 @@
 .entry-messages[open] { flex: 1 1 100%; order: 2; }
 .show-messages { min-height: var(--tap); display: inline-flex; align-items: center; color: var(--secondary); cursor: pointer; }
 .entry-open { min-height: var(--tap); display: inline-flex; align-items: center; }
+
+/* The rail: the lists, then Recent. After the chips on a phone; from 1100 px in a column beside the sections. */
+.topic-rail .fl-section h2 { font-size: 1.05rem; margin-top: 1.4rem; }
+.topic-rail .fl-rows li { grid-template-columns: 1.6rem minmax(0, 1fr); }
+.topic-rail .fl-rows .fl-date { display: none; }
+.topic-rail .todo-title, .topic-rail .rail-list { display: flex; align-items: center; gap: 0.45rem; margin: 0.6rem 0 0.1rem; font-weight: 600; }
+.topic-rail .todo-title a, .topic-rail .rail-list a { color: var(--dark); }
+.topic-rail .fl-count { margin-left: auto; }
+.topic-rail .tasks { margin: 0 0 0.2rem; }
+.topic-rail .tasks li { flex-wrap: nowrap; }
+.topic-rail .item-text { min-width: 0; overflow-wrap: anywhere; }
+.topic-rail .all-items { display: inline-flex; align-items: center; min-height: var(--tap); font-weight: 600; font-size: 0.9rem; }
+@media (min-width: 1100px) {
+  .sheet.home:has(.topic-rail) { max-width: 1040px; }
+  .topic-body { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 0 2.2rem; align-items: start; }
+  .topic-rail { grid-column: 2; grid-row: 1; padding-left: 1.2rem; border-left: 1px solid var(--fs-border-light); }
+  .topic-body > .sections { grid-column: 1; grid-row: 1; }
+  .topic-rail .all-items.phone-only { display: none; }
+}
+@media (max-width: 1099.98px) {
+  .topic-rail .rail-more { display: none; }
+}
