@@ -118,6 +118,14 @@ def nanobot_stub():
                     self._runtime_context_providers.append(provider)
                 return lambda: None
 
+            # The turn stage own_chat records a message's files at.
+            async def _restore_turn(self, ctx):
+                pass
+
+        class TurnKind:
+            USER = "user"
+            SYSTEM = "system"
+
         class ToolLoader:
             def discover(self):
                 return []
@@ -304,7 +312,7 @@ def nanobot_stub():
         mod("nanobot")
         mod("nanobot.agent")
         mod("nanobot.agent.context", ContextBuilder=ContextBuilder)
-        mod("nanobot.agent.loop", AgentLoop=AgentLoop)
+        mod("nanobot.agent.loop", AgentLoop=AgentLoop, TurnKind=TurnKind)
 
         @dataclasses.dataclass(frozen=True)
         class ProgressEvent:
@@ -382,8 +390,12 @@ def nanobot(monkeypatch, nanobot_stub):
     def _load(drop: str | None = None):
         mods = nanobot_stub()
         if drop:
-            module_name, _, attr = drop.rpartition(".")
-            delattr(mods[module_name], attr)
+            # A module's attribute, or a class's (`module.Class.method`).
+            owner_name, _, attr = drop.rpartition(".")
+            module_name, _, class_name = owner_name.rpartition(".")
+            owner = (mods[owner_name] if owner_name in mods
+                     else getattr(mods[module_name], class_name))
+            delattr(owner, attr)
         for name, module in mods.items():
             monkeypatch.setitem(sys.modules, name, module)
         for name in SHIMMED_MODULES:

@@ -28,8 +28,8 @@ as the container does before `nanobot gateway`.
 
 Two stand-ins, both at a boundary: `stack` on `PATH` is a script that prints
 the line it was given (the real one forwards it to the host API on the Mac),
-and the model is never called (a test names the tool call the model would
-make).
+and the model is never called: a test names the tool call the model would
+make, and a message a person sends runs nanobot's turn up to the model.
 """
 
 from __future__ import annotations
@@ -113,9 +113,15 @@ class RunningAgent:
         """A turn of `person` in `room`, whose members are `people`."""
         return Turn(self, room, person, people)
 
-    def said(self, room: str, person: str, text: str, media: list[str] | None = None) -> None:
+    def said(self, room: str, person: str, text: str) -> None:
         """A message in `room`, kept in that room's session as nanobot keeps a turn."""
-        self.request(op="said", room=room, person=person, text=text, media=media or [])
+        self.request(op="said", room=room, person=person, text=text)
+
+    def received(self, room: str, person: str, text: str, media: list[str]) -> None:
+        """A message with the files the Matrix channel downloaded for it, taken
+        in by nanobot's loop as a turn is, up to the model: the turn's stages
+        restore, compact, command, build and save run, its run stage does not."""
+        self.request(op="received", room=room, person=person, text=text, media=media)
 
     def summarised(self, room: str, text: str) -> None:
         """nanobot's consolidation archives a summary of `room`'s older turns."""
@@ -247,10 +253,12 @@ async def _serve(nanobot: Path) -> None:
             return {"tools": sorted(loop.tools.tool_names)}
         if op == "said":
             session = loop.sessions.get_or_create(key(request["room"]))
-            extra = {"media": request["media"]} if request["media"] else {}
             session.add_message("user", request["text"],
-                                sender_id=f"@{request['person']}:{SERVER}", **extra)
+                                sender_id=f"@{request['person']}:{SERVER}")
             loop.sessions.save(session)
+            return {}
+        if op == "received":
+            await _take_in(loop, request)
             return {}
         if op == "history":
             session = loop.sessions.get_or_create(key(request["room"]))
@@ -277,6 +285,28 @@ async def _serve(nanobot: Path) -> None:
             answer = {"crash": "".join(traceback.format_exception(error))}
         sys.stdout.write(json.dumps(answer) + "\n")
         sys.stdout.flush()
+
+
+async def _take_in(loop, request: dict) -> None:
+    """One inbound message through the stages of nanobot's turn
+    (`AgentLoop._process_message`) but the model's: the run stage would ask
+    the model, and offline nanobot cannot count the prompt's tokens."""
+    import time
+
+    from nanobot.agent.loop import TurnContext, TurnKind
+    from nanobot.bus.events import InboundMessage
+
+    msg = InboundMessage(channel="matrix", sender_id=f"@{request['person']}:{SERVER}",
+                         chat_id=request["room"], content=request["text"],
+                         media=request["media"])
+    ctx = TurnContext(msg=msg, session_key=msg.session_key, turn_id=f"{msg.session_key}:{time.time_ns()}",
+                      runtime=None, kind=TurnKind.USER,
+                      delivery=loop.turn_delivery_factory.create(msg, msg.session_key),
+                      original_user_text=msg.content)
+    for stage, step in (("restore", loop._restore_turn), ("compact", loop._compact_session),
+                        ("command", loop._dispatch_command), ("build", loop._build_turn),
+                        ("save", loop._persist_turn)):
+        await loop._run_turn_stage(ctx, stage, step)
 
 
 def _main() -> None:

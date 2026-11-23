@@ -98,8 +98,11 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  imported by name into `nanobot.agent.tools.filesystem` and `.message`
                  (from `nanobot.agent.tools.path_utils`), raising
                  `nanobot.security.workspace_policy.WorkspaceBoundaryError`;
-                 `AgentLoop.__init__` and `AgentLoop.sessions.get_or_create(key).messages`
-                 with each message's `media`; `nanobot.agent.tools.base.ToolResult.error`;
+                 `AgentLoop.__init__`; `AgentLoop._restore_turn(self, ctx)` before it
+                 turns `ctx.msg.media` into `[Attachment: ...]` text, with `ctx.kind`
+                 (`nanobot.agent.loop.TurnKind.USER`) and `ctx.session` set after it;
+                 `AgentLoop.sessions.get_or_create(key).metadata`, saved with the session;
+                 `nanobot.agent.tools.base.ToolResult.error`;
                  the three write tools below. Also that `tools.restrict_to_workspace`
                  still turns on exec's `_guard_command` (allow_patterns are matched only then).
     vault_write: `nanobot.agent.tools.filesystem.WriteFileTool.execute(self, path, content) -> str`
