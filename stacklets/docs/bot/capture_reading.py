@@ -13,8 +13,10 @@ the topic list go into the capture prompt (`Classifier.classify_capture`),
 and the answer comes back as a `stack.filing.file.Reading`.
 
 A note in its writer's own words (``clean_words``) is asked for a clean
-version of them and no summary or facts; a summary it writes anyway is
-dropped, and a clean version that fails the check (`clean_words.kept`) is
+version of them and no summary or facts. A summary it writes anyway is
+dropped from the card and handed to the core as `Reading.said`, because
+the note still names the people in it, as a diary entry from the same
+words does. A clean version that fails the check (`clean_words.kept`) is
 dropped with why. A corrected or edited note (``rebuild``) gets its clean
 version from the card conversation or the correction prompt first
 (`_rebuilt`); the capture prompt then reads that version and is asked for
@@ -85,7 +87,7 @@ class CaptureReader:
         that fails gives a degraded reading."""
         source, rebuild, clean_words = self._source, self._rebuild, self._clean_words
         current_list = await self._current_list(entity) if self._extract else ""
-        clean, clean_rejected, rebuilt_by = None, "", {}
+        clean, clean_rejected, rebuilt_by, said = None, "", {}, ""
         events = rebuild.said() if rebuild else ""
         if rebuild:
             clean, clean_rejected, rebuilt_by = await self._rebuilt(source.text, rebuild)
@@ -94,6 +96,7 @@ class CaptureReader:
             current_list=current_list, clean_words=clean_words and not rebuild,
             classify_only=bool(rebuild), topics=topics)
         if clean_words:
+            said = str(classification.get("summary") or "")
             classification["summary"], classification["facts"] = "", []
             answered = str(classification.pop("clean", "") or "")
             if not rebuild:
@@ -105,7 +108,7 @@ class CaptureReader:
             model = resolve_model(f"{self._name}/classifier")
         except ValueError:
             model = None
-        return Reading(classification, clean, clean_rejected, rebuilt_by, model, template, degraded)
+        return Reading(classification, clean, clean_rejected, rebuilt_by, model, template, degraded, said)
 
     # ── What the model is shown ──────────────────────────────────────
 

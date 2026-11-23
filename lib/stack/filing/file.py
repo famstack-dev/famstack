@@ -79,6 +79,9 @@ class Reading:
     dropped. ``made_by`` is the sidecar's `made` entries the reader adds
     (the template that rebuilt a note). ``model`` and ``template`` name what
     made the answer. ``degraded`` says why it is not the model's ("" when it is).
+    ``said`` is what the model wrote about the capture that the card does not
+    keep (a clean note's summary): the people it names are on the card all the
+    same, as they are on a diary entry from the same words.
 
         Reading({"title": "Grill charcoal", "tags": ["grill"]}, model="qwen3")
     """
@@ -90,6 +93,7 @@ class Reading:
     model: str | None = None
     template: str = ""
     degraded: str = ""
+    said: str = ""
 
 
 class Reader(Protocol):
@@ -211,7 +215,7 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
         entity=entity,
         topics=topics_to_choose(shown, directory.language) if shown is not None and directory else None)
     classification = reading.classification
-    unplaced = _place_people(capture, classification, directory, refile)
+    unplaced = _place_people(capture, classification, directory, refile, said=reading.said)
     if reading.clean_rejected:
         logger.warning("[capture] clean version not filed, it {}: the card shows the words",
                        reading.clean_rejected)
@@ -281,9 +285,12 @@ def _vocabularies(capture: Capture, policy: Policy, directory: Directory | None,
 
 
 def _place_people(capture: Capture, classification: dict, directory: Directory | None,
-                  refile: Refile | None = None) -> list[str]:
+                  refile: Refile | None = None, *, said: str = "") -> list[str]:
     """Put who the card is about into ``classification["persons"]``, by
-    the known people's ids; returns the names nobody goes by. A card naming
+    the known people's ids; returns the names nobody goes by. A note's
+    people include those its title, description and summary name, and
+    those named in ``said``, the words of the answer the card does not keep
+    (`Reading.said`). A card naming
     nobody is about its sender (`default_person`). A correction whose
     answer names nobody keeps the people the card is about
     (`Refile.people`): a reply that fixes a title does not drop them. An
@@ -294,7 +301,7 @@ def _place_people(capture: Capture, classification: dict, directory: Directory |
         classification["persons"] = list(refile.people)
     sender = capture.origin.person.capitalize() if capture.default_person else ""
     placed = (directory.known_people() if directory else People()).place_answer(
-        classification, note=capture.kind == "note", sender=sender)
+        classification, note=capture.kind == "note", sender=sender, said=said)
     classification["persons"] = placed.names
     return placed.unplaced
 
