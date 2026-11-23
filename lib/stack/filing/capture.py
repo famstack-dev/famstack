@@ -119,7 +119,9 @@ class Refile:
     card's own tags as the correction's room may see them, put back where
     the reading was not shown them; ``ops`` a person's field edits,
     applied again; ``requested_by`` who asked for this interpretation;
-    ``words`` what the person wrote, which an email's correction reads.
+    ``words`` what the person wrote, which an email's correction reads;
+    ``people`` who the card is about now, kept when the correction's
+    answer names nobody.
 
         Refile(existing_path="marge/notes/2026/11/grill-0c401e.md", by="@marge:simpson")
     """
@@ -130,6 +132,7 @@ class Refile:
     ops: "Sequence[FieldOp]" = field(default_factory=tuple)
     requested_by: str = ""
     words: str = ""
+    people: "Sequence[str]" = ()
 
 
 def original_of(capture: Capture) -> Source:

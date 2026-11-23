@@ -5,6 +5,7 @@
     await pipeline.capture_text(text="Buy charcoal", sender_mxid="@homer:simpson")
     mirror.captures[-1]["kind"]          # 'note': what the pipeline asked to write
     mirror._stored = {path: raw}         # what `read_capture` answers, for a correction
+    FakeMirror(history=CardHistory(...)) # what `card_history` answers
 
 It answers the filing core's `Writer` (`stack.filing.file`) without a
 memory: nothing is on file, every write lands at a fixed path, and what was
@@ -16,16 +17,18 @@ their branching; the filing into a real curator is tested through
 from __future__ import annotations
 
 from stack.filing.write import Filed
+from stack.memory import File
 
 
 class FakeMirror:
-    def __init__(self):
+    def __init__(self, history=None):
+        self.history = history
         self.captures: list[dict] = []
         self.emails: list[dict] = []
 
     async def card_history(self, card_id):
-        """No history read: the note is refiled from the card as it reads now."""
-        return None
+        """The card's history the test gave (`history`), else none."""
+        return self.history
 
     async def capture_on_file(self, **_):
         """No note is on file here: every capture is a first filing."""
@@ -50,5 +53,10 @@ class FakeMirror:
     async def read_capture(self, path):
         # The simplest re-readable shape for reprocess tests.
         return self._stored.get(path)
+
+    async def read_file(self, path):
+        """What `read_capture` answers, as a file with no version: written on the one read now."""
+        text = self._stored.get(path)
+        return File(path, text, "") if text is not None else None
 
     _stored: dict = {}

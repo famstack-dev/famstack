@@ -21,6 +21,7 @@ import contextlib
 import functools
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -200,11 +201,20 @@ def curator_serving(store, token: str, *,
         stop(server)
 
 
+# A card's history at the curator: `cards/<card id>/versions`.
+_HISTORY = re.compile(r"^cards/[^/]+/versions$")
+
+
 @contextlib.contextmanager
-def door_serving(curator: str) -> Iterator[int]:
+def door_serving(curator: str, faults: set[str] | None = None) -> Iterator[int]:
     """Core's card door on this Mac: `/cards/api/<path>` passed on to the
     curator's API at `curator` by core's own rules (`cards_page`: which
-    paths go through and which headers go with them). Its port."""
+    paths go through and which headers go with them). Its port.
+
+    `faults` names the curator's answers that are a server fault while the
+    name is in it: `"versions"` for a card's history
+    (`RunningMemory.history_fails`)."""
+    faults = set() if faults is None else faults
     cards_page = load(_REPO / "stacklets" / "core",
                       _REPO / "stacklets" / "core" / "tools-server" / "cards_page.py")
 
@@ -212,6 +222,9 @@ def door_serving(curator: str) -> Iterator[int]:
         def _pass_on(self) -> None:
             parts = urlsplit(self.path)
             path = parts.path.removeprefix("/cards/api/")
+            if "versions" in faults and self.command == "GET" and _HISTORY.match(path):
+                return self._answer(500, {"content-type": "application/json"},
+                                    b'{"reason": "unknown", "detail": "the history could not be read"}')
             url = (cards_page.upstream(path, dict(parse_qsl(parts.query)), curator,
                                        routes=cards_page.MAC_ROUTES)
                    if self.command == "GET" else
@@ -262,7 +275,7 @@ class RunningMemory:
     (`wait_until_pushed`), so it sees a write whose push load held past
     its budget. The states a test starts from are set through it too:
     `edited_in_forgejo`, and
-    `forgejo_down()` for the time a block runs.
+    `forgejo_down()` and `history_fails()` for the time a block runs.
 
     `config` is what `./stack` hands a host command (the data dir, stack.toml's
     `[core] cards_port` at core's door, the card write token); `environ` is
@@ -281,6 +294,8 @@ class RunningMemory:
         self.mirrored = mirrored
         self.history = Memory(forgejo.repo)
         self.curator = ""
+        # The answers core's door turns into a server fault (`history_fails`).
+        self.door_faults: set[str] = set()
         self.config: dict = {}
         self.environ: dict = {}
         # The model the curator's commands ask, and the day they read, if set.
@@ -490,6 +505,17 @@ class RunningMemory:
         self.today = day
 
     @contextlib.contextmanager
+    def history_fails(self) -> Iterator[None]:
+        """A card's history, asked on this Mac through core's door, is a
+        server fault (500) while the block runs; every other answer is as
+        the curator gives it."""
+        self.door_faults.add("versions")
+        try:
+            yield
+        finally:
+            self.door_faults.discard("versions")
+
+    @contextlib.contextmanager
     def forgejo_down(self) -> Iterator[None]:
         """Forgejo does not answer while the block runs; it is back after."""
         self.forgejo.goes_down()
@@ -621,7 +647,7 @@ def running_memory(root: Path, files: dict[str, str], *, server_name: str | None
     host = RunningMemory(root, forgejo, vault, store, server_name=server_name, mirrored=mirrored)
     with curator_serving(store, TOKEN, on_write=lambda commit: host.mirrored,
                          media=host.media) as curator, \
-            door_serving(curator) as port:
+            door_serving(curator, host.door_faults) as port:
         host.curator = curator
         forgejo.before_read = host.wait_until_pushed
         host.config = {

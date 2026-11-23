@@ -43,7 +43,7 @@ from stack.filing.file import Reading
 from stack.lists import list_path
 
 if TYPE_CHECKING:
-    from .capture_pipeline import Rebuild
+    from stack.filing.refile import Rebuild
 
 __all__ = ["DEGRADED", "CaptureReader"]
 

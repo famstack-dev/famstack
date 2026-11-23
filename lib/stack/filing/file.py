@@ -211,7 +211,7 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
         entity=entity,
         topics=topics_to_choose(shown, household.language) if shown is not None and household else None)
     classification = reading.classification
-    unplaced = _place_people(capture, classification, household)
+    unplaced = _place_people(capture, classification, household, refile)
     if reading.clean_rejected:
         logger.warning("[capture] clean version not filed, it {}: the card shows the words",
                        reading.clean_rejected)
@@ -280,13 +280,18 @@ def _vocabularies(capture: Capture, policy: Policy, household: Household | None,
     return household.vocabulary(folder), household.vocabulary(folder, read_in=policy.read_in)
 
 
-def _place_people(capture: Capture, classification: dict, household: Household | None) -> list[str]:
+def _place_people(capture: Capture, classification: dict, household: Household | None,
+                  refile: Refile | None = None) -> list[str]:
     """Put who the card is about into ``classification["persons"]``, by
     the household's ids; returns the names nobody goes by. A card naming
-    nobody is about its sender (`default_person`). An email keeps its names
-    as written, because its sender is the mail bot."""
+    nobody is about its sender (`default_person`). A correction whose
+    answer names nobody keeps the people the card is about
+    (`Refile.people`): a reply that fixes a title does not drop them. An
+    email keeps its names as written, because its sender is the mail bot."""
     if capture.kind == "email":
         return []
+    if refile and refile.people and not classification.get("persons"):
+        classification["persons"] = list(refile.people)
     sender = capture.origin.person.capitalize() if capture.default_person else ""
     placed = (household.known_people() if household else People()).place_answer(
         classification, note=capture.kind == "note", sender=sender)

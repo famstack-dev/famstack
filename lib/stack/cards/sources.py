@@ -296,8 +296,15 @@ def with_quote_edits(sources: Sequence[Source], quotes_as_sent: Iterable[tuple[s
 
 
 def words_of(sources: Sequence[Source]) -> str:
-    """The words of the note's original, "" when it has none."""
-    return next((s.words for s in sources if s.role == ORIGINAL), "")
+    """The words of every original of the note, in order, a blank line
+    between two; "" when they have none. A note sent as a photo, a voice
+    message and a line is read as the photo's caption, the transcript and
+    the line, never as its first message alone.
+
+        words_of([photo_with_caption, voice_memo, line])
+        # 'The tent Bart wants\n\nCall the camping shop on Monday.\n\nThe big one costs 120 dollars.'
+    """
+    return "\n\n".join(s.words for s in sources if s.role == ORIGINAL and s.words)
 
 
 def corrections_of(sources: Sequence[Source]) -> str:

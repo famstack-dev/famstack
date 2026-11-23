@@ -127,7 +127,7 @@ from stack.lists import (
     topic_list_description,
 )
 from stack.people import Person, resolve
-from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove
+from stack.memory import CuratorDown, File, MemoryAPI, Refused, put, remove
 from stack.vault import slug, topic_card_path, topic_of
 
 
@@ -794,13 +794,18 @@ class GitMirror:
     async def card_history(self, card_id: str) -> CardHistory | None:
         """What a refile of the note `card_id` applies again of its history
         (ADR-018 §7), as the curator reads it across the card's moves. None
-        when no card carries the id or the curator cannot be reached."""
+        for no id, and for an id no card carries (404). Any other failure,
+        a curator that does not answer too, raises (`Refused`,
+        `CuratorDown`): a refile without the history would drop a person's
+        edits, so its caller writes nothing then."""
+        if not card_id:
+            return None
         try:
             found = await asyncio.to_thread(self.memory.versions, card_id)
-        except (Refused, CuratorDown) as e:
-            if not (isinstance(e, Refused) and e.status == 404):
-                logger.warning("[git-mirror] history of {} not read: {}", card_id, e)
-            return None
+        except Refused as e:
+            if e.status == 404:
+                return None
+            raise
         return history_of([Version.from_json(v) for v in found.versions], read_sources=card_sources)
 
     def _vocabulary(self, target_path: str) -> Vocabulary:
@@ -812,19 +817,22 @@ class GitMirror:
         return Vocabulary.of(target_path, None, seed=SEED_ONTOLOGY_PATH)
 
     async def read_capture(self, path: str) -> str | None:
-        """Return the raw markdown of a capture entry, or None if missing.
+        """The text of the file at `path`, or None (`read_file`)."""
+        found = await self.read_file(path)
+        return found.text if found else None
 
-        Used by ``CapturePipeline.reprocess`` to re-classify an
-        already-filed capture without re-fetching the original binary.
-        Best-effort: a curator that cannot answer is logged and surfaced
-        as None so the caller can render a friendly "couldn't find it" reply.
+    async def read_file(self, path: str) -> File | None:
+        """The file at `path` with its version, as the curator's clone has it, or None.
+
+        A refile reads its card and sidecar once with this, and writes on
+        those versions. Best-effort: a curator that cannot answer is logged
+        and surfaced as None, so the caller can answer that it found nothing.
         """
         try:
-            found = await asyncio.to_thread(self.memory.file, path)
+            return await asyncio.to_thread(self.memory.file, path)
         except (Refused, CuratorDown) as e:
-            logger.warning("[git-mirror] read_capture {} failed: {}", path, e)
+            logger.warning("[git-mirror] reading {} failed: {}", path, e)
             return None
-        return found.text if found else None
 
     def card_context(self) -> CardContext:
         """What a capture's card is written against here (`stack.filing.cards.CardContext`):

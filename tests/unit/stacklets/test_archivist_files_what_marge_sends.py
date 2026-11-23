@@ -13,10 +13,6 @@ What a test asserts is what Marge sees (the notice and the reactions in the
 room) and what the memory holds (the card, its sources, its commits). The
 model, the homeserver, the media repository and the web stand in at the
 boundary. The household is the Simpsons.
-
-A row of the wanted behavior that does not hold yet is marked with
-`A_REFILE_READS_ALL_ITS_SOURCES`: a strict `xfail`, so the test fails
-the day the behavior arrives, and the marker is removed then.
 """
 
 from __future__ import annotations
@@ -34,10 +30,6 @@ from tests.model import Model
 PEOPLE = {f"family/people/{pid}.md": f"---\ntype: person\ncard_id: person-{pid}\ntitle: {name}\n---\n"
           for pid, name in (("homer", "Homer Simpson"), ("marge", "Marge Simpson"),
                             ("bart", "Bart Simpson"), ("lisa", "Lisa Simpson"))}
-# What the refile makes true: a refile reads every message a note is made of.
-A_REFILE_READS_ALL_ITS_SOURCES = pytest.mark.xfail(strict=True, reason=(
-    "a correction or a refile of a note made of several messages keeps every "
-    "message and adds the correction"))
 
 GRILL = ("The grill needs new charcoal before Saturday, and the propane tank is nearly empty "
          "too, so buy both on the way home.")
@@ -410,7 +402,6 @@ THREE = ("The grill needs new charcoal before Saturday and the propane tank is n
          "Lisa will make the salad.")
 
 
-@A_REFILE_READS_ALL_ITS_SOURCES
 async def test_a_correction_of_a_note_made_of_three_messages_keeps_all_three(chat, memory):
     """Given a note made of three messages, when Marge replies in its
     thread, then the rebuilt note's text has all three messages, and its
@@ -526,7 +517,6 @@ async def test_the_same_text_through_the_command_line_twice_is_two_notes(memory_
     assert len({sidecar(memory, n)["sources"][0]["id"] for n in notes}) == 2
 
 
-@A_REFILE_READS_ALL_ITS_SOURCES
 async def test_a_refile_of_a_note_made_of_three_messages_reads_all_three(
         tmp_path, memory_for_commands, model, httpserver):
     """Given a note made of three messages, when `stack memory reprocess`

@@ -1526,14 +1526,14 @@ class TestACorrectedNoteIsRefiledFromItsWords:
         card that shows the words alone is given a tidy one first, by the
         capture prompt, and the conversation starts from that."""
         tidy = "Homer calls the hotel on Thursday. Budget: at most 200."
-        mirror = FakeMirror()
+        edit = TextEdit("lisa", "2026-10-21T09:00:00+00:00", (("max 200", "max 220"),))
+        mirror = FakeMirror(history=CardHistory(edits=(edit,)))
         classifier = FakeClassifier(payload={**self.ANSWER, "clean": tidy}, corrected=self.CORRECTED)
         mirror._stored = {self.PATH: _old_note(
             "Trip", self.WORDS, capture_id="$n:s", path=self.PATH, persons=["homer"], tags=["hotel"])}
-        edit = TextEdit("lisa", "2026-10-21T09:00:00+00:00", (("max 200", "max 220"),))
         await _pipeline(mirror=mirror, classifier=classifier).reprocess(
             vault_path=self.PATH, user_hint="", sender_mxid="@marge:s",
-            reply_text="it is Friday, not Thursday", history=CardHistory(edits=(edit,)))
+            reply_text="it is Friday, not Thursday")
         assert classifier.saw_rebuild[1] == tidy
         assert classifier.saw_rebuild[2] == [edit.message(), "Marge: it is Friday, not Thursday"]
 
@@ -1544,16 +1544,15 @@ class TestACorrectedNoteIsRefiledFromItsWords:
         the card's history shows it, goes back to the words as sent, and her
         words are her note, a correction before the reply."""
         edited = "Homer calls the hotel on Thursday, budget max 200"
-        mirror = FakeMirror()
+        note = Source(NOTE, "lisa", "2026-10-21T09:00:00+00:00", "cards", "text",
+                      "cards:0a1b2c3d4e5f6a7b", quote=edited)
+        mirror = FakeMirror(history=CardHistory(quotes_as_sent=(("$n:s", self.WORDS),), quote_edits=(note,)))
         classifier = FakeClassifier(payload=dict(self.ANSWER), corrected=self.CORRECTED)
         mirror._stored = {self.PATH: _old_note(
             "Trip", edited, capture_id="$n:s", path=self.PATH, persons=["homer"], tags=["hotel"])}
-        note = Source(NOTE, "lisa", "2026-10-21T09:00:00+00:00", "cards", "text",
-                      "cards:0a1b2c3d4e5f6a7b", quote=edited)
         await _pipeline(mirror=mirror, classifier=classifier).reprocess(
             vault_path=self.PATH, user_hint="", sender_mxid="@marge:s",
-            reply_text="it is Friday, not Thursday",
-            history=CardHistory(quotes_as_sent=(("$n:s", self.WORDS),), quote_edits=(note,)))
+            reply_text="it is Friday, not Thursday")
         assert [(s.role, s.person, s.words) for s in mirror.captures[-1]["sources"]] == [
             ("original", "marge", self.WORDS), ("note", "lisa", edited),
             ("reply", "marge", "it is Friday, not Thursday")]

@@ -625,17 +625,38 @@ The check is the admin's. It reads every card and writes nothing. A vault that m
 
 ### What does the model read?
 
-The sources are `memory.note_card.note_sources`, in this order:
+A correction in the chat and `stack memory reprocess` build the sources in one place,
+`stack.filing.refile.refile_sources`, in this order:
 
 1. The sources that the card and its sidecar keep. An older note's sources are read the way migration `memory/0008`
    converts them.
-2. Each reply in its message's thread that the card does not hold yet. The bot runner reads them as the archivist. The
-   room is the one of its rooms that has the original's event. The thread is its `m.thread` relations. Bot accounts are
-   left out.
-3. `--msg`, as a `note` source.
+2. Each reply in the thread of each of the note's messages that the card does not hold yet. The bot runner reads them
+   as the archivist. The room is the one of its rooms that has the message's event. The thread is its `m.thread`
+   relations. Bot accounts are left out.
+3. The reply in the chat, or `--msg` as a `note` source.
 
-Sources are only appended: the chat replaces no quote. The model is given exactly this list. The preview returns it in
-`sources`, each record with its `quote`. Thus a surface that shows a card's sources shows what the model read.
+A source is added unless the note holds a source with its id. The words are not compared, because two replies with
+the same words are two messages. Sources are only appended: the chat replaces no quote. The model is given exactly
+this list. The preview returns it in `sources`, each record with its `quote`. Thus a surface that shows a card's
+sources shows what the model read.
+
+**Every original.** The model reads the words of every original, in order, and sees every photo. Thus a note of a
+photo, a voice message and a line is rebuilt from all three.
+
+**The form comes from the card.** A card whose text is a `> [!summary]` callout stays a summary. Any other card is a
+clean version, also an empty one, and is rebuilt as a clean version of any length.
+
+**The people.** A correction whose answer names nobody keeps the people that the card is about.
+
+### How does a correction in the chat refile a note?
+
+The archivist reads the card, its sidecar and the card's history once, with their versions, before it asks the model.
+It writes the rebuilt card and sidecar in one commit on those versions. When either file changed since (a person's
+edit while the model answers, a second correction at the same time), the curator refuses the commit. The reply then
+gets the failed mark, and nothing of the change is lost.
+
+When the history cannot be read (any failure but "no such card"), nothing is written, because the refile would drop a
+person's edits. The reply gets the failed mark with the reason.
 
 ### What does the preview do?
 
@@ -673,7 +694,8 @@ A refile keeps what people did to the note (ADR-018 §7).
 
 **The card's history.** The card's history has one reader, the curator's card store (`CardStore.history`, through
 `stack.cards.history.card_versions`). The host asks for it with `GET /cards/<card_id>/versions`. The archivist in the
-bot runner asks with `GitMirror.card_history`.
+bot runner asks with `GitMirror.card_history`, which answers None for a card that the curator does not know (404) and
+raises for any other failure.
 
 The history follows the card across moves by its `card_id`. A move is a person's rename or move in Forgejo or a clone.
 The archivist keeps a note at the path that it filed it under.

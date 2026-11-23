@@ -15,9 +15,9 @@ hands back the file it would write instead of writing it:
 `text` and `sidecar` are the card and its sidecar as the host read them
 from Forgejo; the proposal is made from them. The refile reads the note's
 sources, never its summary (ADR-018): the ones the card keeps, the
-replies in its message's thread the card does not hold yet, read from the
-chat as the archivist, and `msg`, a correction by `by`, appended as a
-`note` source. `prior`, `edits` and `ops` are what the card's history
+replies in the thread of each of its messages the card does not hold
+yet, read from the chat as the archivist, and `msg`, a correction by
+`by`, appended as a `note` source (`stack.filing.refile.refile_sources`). `prior`, `edits` and `ops` are what the card's history
 says (`stack.cards.history`, read by the host from the memory's git
 history): the clean version before the first correction or edit, each
 edit a person made to it, and each field edit. A note a person edited is
@@ -30,9 +30,8 @@ which are their correction (ADR-018 §4): the quote is put back to the
 words as sent, keyed by source id, and each edit is appended as their
 `note` source (a sidecar entry with its quote) before the replies the
 chat adds. `by` is who asked for the refile either way, and the sidecar's
-`made.requested_by` names them. `sources` is that list as
-`memory.note_card.note_sources` gives it, each with its quote, so what is
-shown is what the model read.
+`made.requested_by` names them. `sources` is that list, each with its
+quote, so what is shown is what the model read.
 
 Nothing here writes: the vault is reached through a mirror that only
 composes the files, with the topics of the card's place. Exit 0
@@ -49,42 +48,35 @@ from ..capture_pipeline import CapturePipeline, words_refusal
 from ..git_mirror import Filed
 from ..pipeline import Classifier, PaperlessAPI
 
-from ._chat import read_note_thread
+from ._chat import read_note_thread, source_of
 from ._mirror import build_mirror_like_bot, read_bot_toml_settings
 from ._shared import err
 from stack.cards.events import edit_from_json
 from stack.cards.fields import op_from_json
 from stack.cards.history import CardHistory
 from stack.cards.sources import (
-    ORIGINAL, UNKNOWN, Source, SourcesMismatch, read_sidecar, sidecar_path, source_from,
+    NOTE, ORIGINAL, REPLY, UNKNOWN, Source, SourcesMismatch, new_id, now, read_sidecar,
+    source_from, words_of,
 )
+from stack.filing.refile import NoteRead, originals, refile_sources
 
-from stacklets.memory.note_card import card_sources, note_sources
+from stacklets.memory.note_card import card_sources
 
 
 class _PreviewMirror:
     """A mirror that reads the one card it was given and composes, never writes.
 
         preview = _PreviewMirror(mirror, "marge/notes/2026/10/trip-3a338e.md", text)
-        await pipeline.reprocess(vault_path=preview.path, ...)
+        await pipeline.reprocess(vault_path=preview.path, note=note, ...)
         preview.entry.content     # the card the refile would write
         preview.entry.sidecar     # and its sidecar
     """
 
-    def __init__(self, mirror, path: str, text: str, sidecar: str = ""):
+    def __init__(self, mirror, path: str, text: str):
         self._mirror = mirror
         self.path = path
-        self._files = {path: text, sidecar_path(path): sidecar or None}
         self._text = text
         self.entry = None
-
-    async def read_capture(self, path: str) -> str | None:
-        return self._files.get(path)
-
-    async def card_history(self, card_id: str) -> None:
-        """The host reads the card's history and sends it with the request;
-        a request without one refiles from the card as it reads now."""
-        return None
 
     async def publish_capture(self, *, entity: str, existing_path: str | None = None,
                               changed_by: str | None = None, base: str | None = None,
@@ -140,19 +132,22 @@ def _history(request: dict) -> CardHistory | None:
                           for s in request.get("quote_edits") or [] if isinstance(s, dict)))
 
 
+async def _from_the_chat(held: list[Source]) -> tuple[list[Source], list[Source]]:
+    """Every original's message as the chat has it, and the replies in its
+    thread, as sources; none for a message the chat cannot give."""
+    messages, replies = [], []
+    for original in originals(held):
+        thread = await read_note_thread(original.id)
+        if thread is None:
+            continue
+        messages.append(source_of(thread.message, ORIGINAL))
+        replies.extend(source_of(event, REPLY) for event in thread.replies)
+    return [m for m in messages if m], [r for r in replies if r]
+
+
 def _refusal(sources: list[Source]) -> str:
     """Why the note cannot be refiled from these sources; "" when it can."""
-    original = next((s for s in sources if s.role == ORIGINAL), None)
-    if original is None:
-        return words_refusal("")
-    return words_refusal(original.words, has_file=bool(original.media_link))
-
-
-def _filer(sidecar: dict, sources: list[Source]) -> str:
-    """Who filed the note: its sidecar says so, else its original's sender."""
-    original = next((s for s in sources if s.role == ORIGINAL), None)
-    person = str(sidecar.get("filed_by") or (original.person if original else ""))
-    return "" if person == UNKNOWN else person
+    return words_refusal(words_of(sources), has_file=any(s.media_link for s in originals(sources)))
 
 
 async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) -> int:
@@ -173,19 +168,18 @@ async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) 
     except SourcesMismatch as e:
         print(json.dumps({"refused": f"its card and its sidecar do not pair up: {e}", "sources": []}))
         return 0
-    original = next((s for s in held if s.role == ORIGINAL), None)
-    chat = await read_note_thread(original.id if original else "")
-    sources = note_sources(text, sidecar, chat=chat.message if chat else None,
-                           thread=chat.replies if chat else (), msg=msg, by=by,
-                           quotes_as_sent=history.quotes_as_sent if history else (),
-                           quote_edits=history.quote_edits if history else ())
+    chat, replies = await _from_the_chat(held)
+    correction = [Source(NOTE, by.split(":")[0].lstrip("@").lower() or UNKNOWN, now(), "cli", "text",
+                         new_id("cli"), quote=msg)] if msg else []
+    added = [*replies, *correction]
+    sources = refile_sources(held, history=history, chat=chat, added=added)
     shown = [s.shown() for s in sources]
     if refused := _refusal(sources):
         print(json.dumps({"refused": refused, "sources": shown}))
         return 0
 
     mirror = build_mirror_like_bot()
-    preview = _PreviewMirror(mirror, path, text, side_text)
+    preview = _PreviewMirror(mirror, path, text)
     model = _AnsweredClassifier(classifier)
     settings = read_bot_toml_settings()
     pipeline = CapturePipeline(
@@ -196,11 +190,14 @@ async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) 
         capture_keep_body=bool(settings.get("capture_keep_body", False)),
         vault=mirror.vault,
     )
-    filer = _filer(sidecar, sources)
+    # The preview names no versions: the host's `--apply` writes on the
+    # ones it read (`base_sha`, `sidecar_sha`).
+    note = NoteRead(path, text, "", side_text, "", history)
+    filer = str(sidecar.get("filed_by") or "")
     outcome = await pipeline.reprocess(
-        vault_path=path, user_hint="", sender_mxid=filer or by or "archivist-bot",
-        sources=sources, requested_by=by.split(":")[0].lstrip("@") or filer,
-        history=history,
+        vault_path=path, user_hint="", sender_mxid=by or filer or "archivist-bot",
+        note=note, chat=chat, added=added,
+        requested_by=by.split(":")[0].lstrip("@") or filer,
     )
     if not model.answered or preview.entry is None:
         err(f"No proposal for {path}: the model gave no answer ({outcome.status}).")

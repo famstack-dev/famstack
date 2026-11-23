@@ -61,15 +61,14 @@ from .pipeline import (
     ImageAttachment,
 )
 from stack import media
-from stack.cards.events import Correction, Event, in_order, name_of
-from stack.cards.fields import FieldOp
-from stack.cards.history import CardHistory
 from stack.filing.capture import Capture, Origin, Refile
 from stack.filing.file import Filing, file
 from stack.filing.policy import Policy
+from stack.filing.refile import NoteRead, refile, refile_sources, refiling_of
+from stack.memory import CuratorDown, File, Refused
 from stack.cards.sources import (
-    NOTE, ORIGINAL, REPLY, Source, SourcesMismatch, corrections_of, new_id, now, read_sidecar,
-    sidecar_path, with_quote_edits, words_of,
+    REPLY, Source, SourcesMismatch, new_id, now, read_sidecar,
+    sidecar_path,
 )
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as parse_frontmatter
@@ -109,30 +108,6 @@ TEXT_EXTS = {"md", "markdown", "txt"}
 # (line joins, header normalisation) without letting a half-answer
 # replace the raw OCR.
 _REFORMAT_MIN_RATIO = 0.5
-
-
-@dataclass(frozen=True)
-class Rebuild:
-    """What a note's clean version is rebuilt from (ADR-018 §7): who wrote
-    the note, as a name; the clean version the events apply to; the
-    corrections and a person's edits, in time order (`stack.cards.events`).
-
-        Rebuild("Homer", "Camping trip next weekend: ...",
-                (Correction("homer", "2026-10-20T09:00:00+00:00", "we leave at 5, not 4"),))
-    """
-
-    writer: str
-    prior: str
-    events: tuple[Event, ...]
-
-    def said(self) -> str:
-        """Each event's message, one per line, as the model reads it."""
-        return "\n".join(e.message() for e in self.events)
-
-    @property
-    def edited(self) -> bool:
-        """Whether a person edited the clean version by hand."""
-        return any(e.edits_the_text for e in self.events)
 
 
 @dataclass
@@ -669,9 +644,10 @@ class CapturePipeline:
         capture_id: str | None = None,
         reply_id: str = "",
         reply_at: str = "",
-        sources: "list[Source] | None" = None,
+        note: NoteRead | None = None,
+        chat: "Sequence[Source]" = (),
+        added: "Sequence[Source]" = (),
         requested_by: str = "",
-        history: CardHistory | None = None,
     ) -> CaptureOutcome:
         """Re-classify an already-filed capture using a human note.
 
@@ -679,14 +655,14 @@ class CapturePipeline:
         sent as, the replies and notes added since, never its summary or
         its clean version (`_reprocess_note`). ``reply_text`` is the reply
         that asked for this refile, by the sender, sent as ``reply_id`` at
-        ``reply_at``: it is appended as a source first. ``sources`` are
-        the note's sources as a caller already gathered them (`stack
-        memory reprocess`), used as they are. ``requested_by`` is who asked
-        for the refile, the sender when not given. ``history`` is what the
-        card's history says (`stack.cards.history`): the clean version
-        before its first correction or edit, a person's edits of it and of
-        its fields. A caller that read none (a reply in the chat) passes
-        None, and the note's history is read through the mirror.
+        ``reply_at``: it is added as a source. ``note`` is the note as a
+        caller already read it (`stack memory reprocess`: the card, its
+        sidecar and its history, with their versions); without one it is
+        read here, once, through the mirror. ``chat`` are the note's
+        messages as the chat has them, ``added`` the replies and notes the
+        caller adds (`stack.filing.refile.refile_sources`).
+        ``requested_by`` is who asked for the refile, the sender when not
+        given.
         ``read_in`` is the bucket of the room the correction came from, as
         for ``capture_text``; None, for the CLI, shows the card's topics.
 
@@ -705,11 +681,12 @@ class CapturePipeline:
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
-        found = await self._find_capture(capture_id, vault_path)
-        if found is None:
+        card = File(note.path, note.text, note.version) if note else \
+            await self._find_capture(capture_id, vault_path)
+        if card is None:
             return CaptureOutcome(status="capture_missing",
                                   failure_reason="card_missing")
-        vault_path, raw = found
+        vault_path, raw = card.path, card.text
         try:
             meta, summary_text = _parse_capture_markdown(raw)
         except FrontmatterError as e:
@@ -724,14 +701,19 @@ class CapturePipeline:
         view = CorrectionView.of(self._vault.vocabulary if self._vault else None, vault_path, read_in=read_in)
         initial_classification, own_tags = view.anchor(initial_classification), view.own_tags(meta.get("tags"))
         if meta.get("type") == "note":
+            if note is None:
+                try:
+                    note = await self._note_read(card, meta)
+                except (Refused, CuratorDown) as e:
+                    logger.warning("[capture] {}: its history could not be read ({}), "
+                                   "reprocess skipped", vault_path, e)
+                    return CaptureOutcome(status="not_changed", failure_reason="history_unreadable")
+            reply = Source(REPLY, _localpart(sender_mxid), reply_at or now(), "chat", "text",
+                           reply_id or new_id("chat"), quote=reply_text.strip())
             return await self._reprocess_note(
-                vault_path=vault_path, raw=raw, meta=meta, sender_mxid=sender_mxid,
+                note, meta=meta, sender_mxid=sender_mxid, chat=chat, added=[*added, reply],
                 initial_classification=initial_classification, write_in=write_in, read_in=read_in,
-                own_tags=own_tags, reply=Source(REPLY, _localpart(sender_mxid), reply_at or now(), "chat", "text",
-                             reply_id or new_id("chat"), quote=reply_text.strip()),
-                sources=sources, requested_by=requested_by or _localpart(sender_mxid),
-                history=history,
-            )
+                own_tags=own_tags, requested_by=requested_by or _localpart(sender_mxid))
         caption = caption or _caption_from(raw)
         replies = _with_reply(_replies_from(raw), sender_mxid, reply_text)
         # The summary callout doesn't carry the frontmatter tag list,
@@ -758,12 +740,9 @@ class CapturePipeline:
         return await self._publish(
             # Filed under its first sender, as a note is: the one correcting
             # is not who a bookmark naming nobody is about.
-            source=source, kind=kind, sender_mxid=_filer([], meta) or sender_mxid,
+            source=source, kind=kind, sender_mxid=_filer(meta) or sender_mxid,
             display_link=meta.get("resource") or "(capture)",
             user_hint=user_hint,
-            # The one correcting an email is not what it is about, as the
-            # mail bot is not on its first filing (`capture_email`).
-            default_person=kind != "email",
             existing_path=vault_path,
             captured_at=str(captured_at),
             reclassified=True,
@@ -776,91 +755,78 @@ class CapturePipeline:
             correction_words=reply_text or user_hint,
         )
 
-    async def _reprocess_note(
-        self, *, vault_path: str, raw: str, meta: dict, sender_mxid: str,
-        initial_classification: dict | None, write_in: str | None, read_in: str | None,
-        own_tags: OwnTags, reply: Source, sources: "list[Source] | None", requested_by: str,
-        history: CardHistory | None = None,
-    ) -> CaptureOutcome:
-        """Refile a note from its sources, as it would be filed today.
+    async def _note_read(self, card: File, meta: dict) -> NoteRead:
+        """The note's card, its sidecar and its history, read once, with
+        their versions; the refile is written on them. Raises `Refused` or
+        `CuratorDown` when the history cannot be read (`GitMirror.card_history`)."""
+        side = await self._mirror.read_file(sidecar_path(card.path))
+        history = await self._mirror.card_history(str(meta.get("card_id") or ""))
+        return NoteRead(card.path, card.text, card.version, side.text if side else "",
+                        side.version if side else "", history)
 
-        The sources are the card's and its sidecar's (`memory.note_card`),
-        an old-format note read as the migration converts it, with a
-        person's hand edits of a quote undone and appended as their notes
-        (`with_quote_edits`, from the history), then the reply unless the
-        note holds it already. Sources a caller gathered (`stack memory
-        reprocess`, through `note_sources`) have that done. The classifier
-        reads the original's words, the replies and notes as corrections,
-        a photo from the media store, never the summary. A note whose
-        words are typed or spoken is refiled as a clean version of them
-        (`clean_words`); one with corrections or a person's edits is
-        rebuilt from its events (`_rebuild_of`). Any other note reads its
-        corrections as user context. Its tags and its topic are carried
-        over as tags, and a person's field edits are applied again
-        (`GitMirror.capture_entry`), so a reply in the chat keeps a tag
-        somebody added in the card editor.
+    async def _reprocess_note(
+        self, note: NoteRead, *, meta: dict, sender_mxid: str, chat: "Sequence[Source]",
+        added: "Sequence[Source]", initial_classification: dict | None, write_in: str | None,
+        read_in: str | None, own_tags: OwnTags, requested_by: str,
+    ) -> CaptureOutcome:
+        """Refile a note from all of its sources, as it would be filed today
+        (`stack.filing.refile`).
+
+        The sources are the card's and its sidecar's (`memory.note_card`), an
+        old-format note read as the migration converts it, with ``chat``
+        and ``added`` (`refile_sources`). The model reads every original's
+        words and photos, never the summary, and the replies and notes as
+        corrections. A note whose card shows a clean version is filed as one
+        again, rebuilt from its corrections and a person's edits; one that
+        shows a summary reads its corrections as user context. Its tags and
+        its topic are carried over, a person's field edits are applied
+        again, and it is written on the versions ``note`` was read at.
         """
-        if history is None:
-            history = await self._mirror.card_history(str(meta.get("card_id") or ""))
-        if sources is None:
-            side = await self._mirror.read_capture(sidecar_path(vault_path))
-            try:
-                sources = card_sources(raw, read_sidecar(side))
-            except SourcesMismatch as e:
-                logger.warning("[capture] {}: {}, reprocess skipped", vault_path, e)
-                return CaptureOutcome(status="capture_missing",
-                                      failure_reason="sources_mismatch")
-            if history is not None:
-                sources = with_quote_edits(sources, history.quotes_as_sent, history.quote_edits)
-            if reply.quote and (reply.person, reply.words) not in {
-                    (s.person, s.words) for s in sources}:
-                sources = [*sources, reply]
-        original = next((s for s in sources if s.role == ORIGINAL), None)
-        if original is None:
-            return CaptureOutcome(status="capture_missing",
-                                  failure_reason="no_original")
-        words = words_of(sources)
-        clean_words = original.kind in ("text", "voice") and is_cleanable(words)
-        corrections = corrections_of(sources)
-        rebuild = _rebuild_of(original, sources, history=history) if clean_words else None
-        found_topic = topic_of(vault_path)
-        return await self._publish(
-            source=SourceContent(text=words or str(meta.get("title") or ""),
-                                 title_hint=meta.get("title") or None),
-            kind="note", sender_mxid=_filer(sources, meta) or sender_mxid,
-            display_link="(capture)",
-            user_hint=None if clean_words else corrections or None,
-            rebuild=rebuild,
-            existing_path=vault_path,
-            captured_at=str(meta.get("date") or _dt.date.today().isoformat()),
-            reclassified=True,
-            actor=sender_mxid,
-            capture_id=original.id,
-            initial_classification=initial_classification,
-            images=self._images_of(original) if original.kind == "image" else None,
-            write_in=write_in, read_in=read_in,
-            clean_words=clean_words,
-            seed_topics=[found_topic[1]] if found_topic else None,
-            prefer_tags=list(own_tags.shown), own_tags=own_tags,
-            sources=sources,
-            requested_by=requested_by,
-            ops=history.ops if history else (),
-        )
+        try:
+            held = card_sources(note.text, read_sidecar(note.sidecar))
+        except SourcesMismatch as e:
+            logger.warning("[capture] {}: {}, reprocess skipped", note.path, e)
+            return CaptureOutcome(status="capture_missing", failure_reason="sources_mismatch")
+        refiling = refiling_of(note, refile_sources(held, history=note.history, chat=chat, added=added))
+        if refiling.refused:
+            return CaptureOutcome(status="capture_missing", failure_reason=refiling.refused)
+        title = meta.get("title") or None
+        content = SourceContent(text=refiling.words or str(title or ""), title_hint=title)
+        user_hint = None if refiling.clean else refiling.corrections or None
+        reader = CaptureReader(
+            content, classifier=self._classifier, vault=self._vault, paperless=self._paperless,
+            mirror=self._mirror, bot_name=self._name, max_chars=self.classify_max_chars,
+            kind="note", images=self._images_of(refiling.images), user_hint=user_hint,
+            initial_classification=initial_classification, write_in=write_in,
+            clean_words=refiling.clean, rebuild=refiling.rebuild, prefer_tags=list(own_tags.shown))
+        found_topic = topic_of(note.path)
+        policy = Policy(room_topics=(found_topic[1],) if found_topic else (), read_in=read_in,
+                        keep_body=self.capture_keep_body)
+        filing = await refile(note, refiling, policy, reader=reader, writer=self._mirror,
+                              household=self._vault, by=sender_mxid, content=content,
+                              requested_by=requested_by, own_tags=own_tags,
+                              channel=_channel_of(refiling.capture_id))
+        return self._outcome(filing, source=content, display_link="(capture)", kind="note",
+                             reclassified=True, actor=sender_mxid, capture_id=refiling.capture_id,
+                             user_hint=user_hint or (refiling.rebuild.said() if refiling.rebuild else ""),
+                             transcribed=False)
 
     @staticmethod
-    def _images_of(original: Source) -> list[ImageAttachment] | None:
-        """The photo a note was filed from, read back from the media store,
-        so a refile looks at it again instead of at its own summary."""
+    def _images_of(links: "Sequence[str]") -> list[ImageAttachment] | None:
+        """Every photo a note was filed from, read back from the media store,
+        so a refile looks at them again instead of at its own summary; None
+        when there is none to read."""
         root = media.open_archive()
-        link = original.media_link
-        if root is None or not link:
+        if root is None:
             return None
-        try:
-            data = (root / link.removeprefix("/media/")).read_bytes()
-        except OSError:
-            return None
-        mime = mimetypes.guess_type(link)[0] or "image/jpeg"
-        return [ImageAttachment(data=data, mime=mime)]
+        images = []
+        for link in links:
+            try:
+                data = (root / link.removeprefix("/media/")).read_bytes()
+            except OSError:
+                continue
+            images.append(ImageAttachment(data=data, mime=mimetypes.guess_type(link)[0] or "image/jpeg"))
+        return images or None
 
     async def _publish(
         self, *, source, kind: str, sender_mxid: str, display_link: str,
@@ -883,16 +849,12 @@ class CapturePipeline:
         caption: str = "",
         replies: "list[tuple[str, str]] | tuple" = (),
         clean_words: bool = False,
-        rebuild: "Rebuild | None" = None,
-        prefer_tags: list[str] | None = None,
         own_tags: OwnTags | None = None,
         read_in: str | None = None,
         sources: "list[Source] | None" = None,
-        ops: "Sequence[FieldOp]" = (),
         source_kind: str = "text",
         sent_at: str = "",
         media_hash: str = "",
-        requested_by: str = "",
         correction_words: str = "",
         channel: str = "",
     ) -> CaptureOutcome:
@@ -908,9 +870,10 @@ class CapturePipeline:
         A note is written as its card and its sidecar (ADR-018): what it
         was made from, ``sources``, and how. A new note's one source is its
         original (`stack.filing.capture.original_of`): ``source_kind`` says what it is,
-        ``sent_at`` when it was sent, ``media_hash`` the hash of its bytes. A
-        refile passes the note's sources. ``requested_by`` is who asked for
-        this interpretation, the sender when not given.
+        ``sent_at`` when it was sent, ``media_hash`` the hash of its bytes.
+        Only a caller that builds a note of several messages (a test, until
+        the chat files one) passes ``sources``; a refile of a note does not
+        come here (`stack.filing.refile`).
 
         ``clean_words`` marks a note in its writer's own words, filed as a
         clean version of them (`clean_words`). Only a caller holding the
@@ -920,15 +883,6 @@ class CapturePipeline:
         clean version that fails the check is dropped too, and the card
         shows the words alone.
 
-        ``rebuild`` is what such a note's corrections and a person's edits
-        rebuild it from (`Rebuild`). The clean version is then written
-        first, by the card conversation (`CaptureReader._rebuilt`), and the classifier
-        reads it as the note and is asked for no text, so the title and the
-        tags are taken from what the card shows. When it is refused, the
-        classifier reads the words, with the events as user context.
-
-        ``prefer_tags`` are tags the classifier is shown first in its
-        vocabulary: a refile's own, so it keeps them where they fit.
         ``own_tags`` are a refile's own tags as its room may see them
         (`note_topics.CorrectionView`); the card keeps those held back.
 
@@ -957,8 +911,7 @@ class CapturePipeline:
             source, classifier=self._classifier, vault=self._vault, paperless=self._paperless,
             mirror=self._mirror, bot_name=self._name, max_chars=self.classify_max_chars, kind=kind,
             images=images, user_hint=user_hint, initial_classification=initial_classification,
-            write_in=write_in, extract_action_items=extract_action_items, clean_words=clean_words,
-            rebuild=rebuild, prefer_tags=prefer_tags)
+            write_in=write_in, extract_action_items=extract_action_items, clean_words=clean_words)
         origin = Origin(channel=channel or _channel_of(capture_id), person=_localpart(sender_mxid),
                         account=sender_mxid, capture_id=capture_id, sent_at=sent_at)
         capture = Capture(kind=kind, content=source, origin=origin, source_kind=source_kind,
@@ -969,14 +922,13 @@ class CapturePipeline:
         # a memo in #Thema:Camping files under camping/ whoever sent it.
         policy = Policy(bucket=bucket, room_topics=tuple(seed_topics or ()), read_in=read_in,
                         keep_body=self.capture_keep_body)
-        refile = Refile(existing_path or "", by=actor or "", own_tags=own_tags, ops=ops,
-                        requested_by=requested_by, words=correction_words) if reclassified else None
+        refile = Refile(existing_path or "", by=actor or "", own_tags=own_tags,
+                        words=correction_words) if reclassified else None
         filing = await file(capture, policy, reader=reader, writer=self._mirror,
                             household=self._vault, refile=refile)
         return self._outcome(filing, source=source, display_link=display_link, kind=kind,
                              reclassified=reclassified, actor=actor, capture_id=capture_id,
-                             user_hint=user_hint or (rebuild.said() if rebuild else ""),
-                             transcribed=transcribed)
+                             user_hint=user_hint or "", transcribed=transcribed)
 
     @staticmethod
     def _outcome(filing: Filing, *, source, display_link: str, kind: str, reclassified: bool,
@@ -1024,8 +976,8 @@ class CapturePipeline:
 
     async def _find_capture(
         self, capture_id: str | None, recorded_path: str,
-    ) -> tuple[str, str] | None:
-        """The path and text of a filed capture, by its id where it can be.
+    ) -> File | None:
+        """A filed capture's file, with its path and version, by its id where it can be.
 
         The local copy of the family memory says where the id lives now.
         It can lag a write by minutes, so the path the filing message
@@ -1035,9 +987,8 @@ class CapturePipeline:
         by_id = (await asyncio.to_thread(self._vault.card_path, "capture", capture_id)
                  if self._vault is not None and capture_id else None)
         for path in dict.fromkeys(p for p in (by_id, recorded_path) if p):
-            raw = await self._mirror.read_capture(path)
-            if raw is not None:
-                return path, raw
+            if (found := await self._mirror.read_file(path)) is not None:
+                return found
         return None
 
 # ── Parsing for reprocess ──────────────────────────────────────────────
@@ -1135,32 +1086,9 @@ def _localpart(mxid: str) -> str:
     return mxid.split(":")[0].lstrip("@").strip().lower()
 
 
-def _rebuild_of(original: Source, sources: "list[Source]", *,
-                history: CardHistory | None) -> Rebuild | None:
-    """What a note in its writer's words is rebuilt from; None when nobody
-    corrected or edited it, and it is filed again from its words alone.
-
-    The events are every correction the sources hold and, from its history
-    (`stack.cards.history`), every person's edit of the clean version, from
-    the clean version before the first of them. Without the history
-    (Forgejo could not be read) there are no edits, and the corrections
-    alone are worked in. The clean version is "" for a note that shows
-    none (`CaptureReader._rebuilt` gives it one first).
-    """
-    said = [Correction(s.person, s.time, s.words) for s in sources
-            if s.role in (REPLY, NOTE) and s.words]
-    prior, edits = (history.prior, history.edits) if history else ("", ())
-    events = in_order([*said, *edits])
-    if not events:
-        return None
-    start = "" if prior.lstrip().startswith(">") else prior.strip()
-    return Rebuild(name_of(original.person), start, tuple(events))
-
-
-def _filer(sources: "list[Source]", meta: dict) -> str:
-    """Who filed a capture: a note's original's sender, else its `filed_by`."""
-    original = next((s for s in sources if s.role == ORIGINAL), None)
-    person = original.person if original else str(meta.get("filed_by") or "")
+def _filer(meta: dict) -> str:
+    """Who filed a bookmark: its `filed_by`."""
+    person = str(meta.get("filed_by") or "")
     return "" if person == "unknown" else person
 
 
