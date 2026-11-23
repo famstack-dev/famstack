@@ -25,6 +25,15 @@ Captures (URL bookmarks, pasted notes) route to the sender's entity:
     <sender>/bookmarks/YYYY/MM/<slug>-<hash>.md      (kind: bookmark)
     <sender>/notes/_unfiled/<slug>-<hash>.md         (no date)
 
+A note's and a bookmark's card, path and commit are the filing core's
+(`stack.filing.cards`, `stack.filing.write`); this mirror fills it with
+the people, the topics and the after-steps (`after_filing`), and keeps
+`publish_capture` and `capture_entry` as the archivist's entry points.
+
+Debt: `tests/unit/stacklets/test_git_mirror.py`
+imports `_filer_localpart` from here; it is the core's `filer_of`. Trigger:
+the next change to that test imports `stack.filing.cards.filer_of`.
+
 The deriver compiles a per-entity wiki by globbing the entity's own
 tree and grepping the others for cross-references (`persons:`).
 
@@ -54,19 +63,26 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from stack.cards.fields import FieldOp, FieldValues, apply_ops
+from stack.cards.fields import FieldOp
 from stack.cards.history import CardHistory, Version, history_of
-from stack.cards.links import About, correspondent_card, topic_card, without_person_tags
+from stack.cards.links import About, correspondent_card, topic_card
 from stack.cards.topic_names import name_of_topic
-from stack.cards.sources import Source, card_fields, sidecar_path, sidecar_text
+from stack.cards.sources import Source
 from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as frontmatter_parse
-from stack.tags import card_tags
+from stack.filing.cards import (
+    CaptureEntry, CardContext, capture_entry, capture_filepath, capture_hash, card_frontmatter,
+    classified_persons, identity_for,
+)
+from stack.filing.cards import filer_of as _filer_localpart  # noqa: F401  (named for its test, see Debt)
+from stack.filing.identity import OnFile, on_file
+from stack.filing.vocabulary import Vocabulary
+from stack.filing.write import Filed, NotFiled, not_written, write_capture
 
 from .diary_room import household_now
 
@@ -82,23 +98,16 @@ from stacklets.memory.note_card import card_sources
 # A note's card and sidecar are written by the memory's one card write,
 # called here in-process; `stack memory reprocess --apply` calls it on the host.
 from .vault_entry import (
-    slug,
-    capture_hash,
     document_filepath,
     document_resource_url,
-    capture_filepath,
-    identity_for,
     document_frontmatter,
-    capture_frontmatter,
     render_document,
-    render_capture,
-    render_note,
     render_email_message_section,
     email_sender,
     fold_email_message,
 )
 from .email_correction import card_view, correct_email_thread, corrected_fields
-from .card_changes import Change, changes_between
+from .card_changes import changes_between
 from stack.lists import (
     CALENDAR,
     Item,
@@ -117,8 +126,8 @@ from stack.lists import (
     topic_list_description,
 )
 from stack.people import Person, resolve
-from stack.memory import CuratorDown, MemoryAPI, Refused, put, remove, why_not_written
-from stack.vault import topic_card_path, topic_of
+from stack.memory import CuratorDown, File, MemoryAPI, Refused, put, remove
+from stack.vault import slug, topic_card_path, topic_of
 
 
 # The archivist's account, the author of its own changes (a declared
@@ -143,15 +152,6 @@ def _dates(raw) -> list[tuple[str, str]]:
     return out
 
 
-def code_commit() -> str:
-    """The famstack commit this process runs, as `stack up` stamped it.
-
-    `STACK_COMMIT` is rendered into every stacklet's env, the bot runner's
-    included; a process started some other way says `unknown`.
-    """
-    return os.environ.get("STACK_COMMIT", "").strip() or "unknown"
-
-
 def _by(submitter: str | None) -> str:
     """Who a filing's commit is by: the family member who filed or
     corrected it (Matrix id or localpart), else the archivist, whose own
@@ -173,14 +173,6 @@ def _card_id_in(content: str | None) -> str:
         return ""
 
 
-def _classified_persons(classification: dict) -> list[str]:
-    """The names of the people a classification says the record is about."""
-    raw = classification.get("persons") or classification.get("person") or []
-    if isinstance(raw, str):
-        raw = [raw]
-    return [p for p in raw if isinstance(p, str) and p]
-
-
 def _strings(value) -> list[str]:
     """`value` as a list of strings: a classifier may answer one, a list, or null."""
     values = [value] if isinstance(value, str) else value if isinstance(value, list) else []
@@ -192,70 +184,6 @@ def _report_unknown(path: str, about: About) -> None:
     if about.unknown:
         logger.info("[git-mirror] {}: no declared person goes by {}; kept as written",
                     path, ", ".join(about.unknown))
-
-
-def _filer_localpart(submitter: str | None) -> str | None:
-    """The submitter's Matrix localpart, for the `filed_by` frontmatter field."""
-    if not submitter:
-        return None
-    return submitter.split(":")[0].lstrip("@").strip().lower() or None
-
-
-class Filed(NamedTuple):
-    """Where a capture landed in the memory and the card id it carries there.
-
-        filed = await mirror.publish_capture(...)
-        filed.path, filed.card_id   # ('marge/notes/2026/10/tent-3a338e.md', 'note-7f3a9c21e4')
-    """
-
-    path: str
-    card_id: str
-    # What a correction changed on the card, read off it before and after;
-    # None when the writer does not say (every write but an email's correction).
-    changes: "tuple[Change, ...] | None" = None
-    # The card's title, people and tags as the memory has them after a
-    # correction (`email_correction.card_view`); None as for `changes`.
-    card: dict | None = None
-
-
-class NotFiled(NamedTuple):
-    """A capture the memory did not write, and why, as a code.
-
-        filed = await mirror.publish_capture(...)
-        if isinstance(filed, NotFiled):
-            filed.reason   # 'unreachable'
-
-    The code is one of `stack.memory.NOT_WRITTEN`, `stack.memory.UNKNOWN`,
-    or the mirror's own: `card_missing` (the card is gone) and `unreadable`
-    (its frontmatter does not parse). The archivist's answer in the chat
-    words it in the stack's language, so a refused write is never answered
-    "Captured" or "Reclassified". The curator's own words go to the log.
-    """
-
-    reason: str
-
-
-def _not_written(e: Refused | CuratorDown) -> NotFiled:
-    """Why the curator did not write a change, as its code. The caller has
-    logged the curator's own words."""
-    return NotFiled(why_not_written(e))
-
-
-class CaptureEntry(NamedTuple):
-    """A capture's file as it would be written, and the people it names.
-
-        entry = mirror.capture_entry(target_path=path, existing=text, ...)
-        entry.content                 # the whole file, frontmatter first
-        entry.frontmatter["card_id"]  # 'note-7f3a9c21e4'
-    """
-
-    frontmatter: dict
-    content: str
-    about: About
-    # A note's sidecar (`stack.cards.sources`), "" for every other capture.
-    sidecar: str = ""
-    # The field edits that no longer fit the card, each with why (`stack.cards.fields`).
-    left_out: tuple[str, ...] = ()
 
 
 @dataclass
@@ -327,29 +255,6 @@ class GitMirror:
                 return path
         return None
 
-    async def _lookup_capture_path(self, target_path: str) -> str | None:
-        """An existing capture with `target_path`'s identity, ignoring its title.
-
-        A capture's filename is `<title-slug>-<hash>.md`; the hash is stable
-        per URL/body, the slug is not. So the same link re-pasted with different
-        framing, or content re-classified to a different title, would otherwise
-        fork a near-duplicate. Match on the `<entity>/<kind>s/` folder + the
-        `-<hash>.md` suffix instead: return the exact path when it exists,
-        else a same-hash file under a different slug (which the caller then
-        updates where it is), else None.
-        """
-        parts = target_path.split("/")
-        if len(parts) < 2:
-            return None
-        folder = f"{parts[0]}/{parts[1]}"               # <entity>/<kind>s
-        suffix = "-" + target_path.rsplit("-", 1)[-1]   # -<hash>.md
-        match = None
-        for path in await asyncio.to_thread(self.memory.paths, folder):
-            if path.endswith(suffix):
-                if path == target_path:
-                    return path        # exact identity + title → update in place
-                match = path           # same identity, different title
-        return match
 
     # ── Filename, frontmatter, body ──────────────────────────────────────
 
@@ -414,31 +319,6 @@ class GitMirror:
             source_link=source_link, people=people,
         )
 
-    def _render_capture(
-        self, *,
-        frontmatter: dict,
-        kind: str,
-        captured_at: str | None,
-        source_uri: str | None,
-        persons: list[str],
-        from_path: str,
-        summary: str | None = None,
-        facts: list | None = None,
-        action_items: list | None = None,
-        kept_media: dict | None = None,
-        caption: str = "",
-        replies: "list[tuple[str, str]] | tuple" = (),
-        people: list[Person] | None = None,
-    ) -> str:
-        """Bookmark mirror markdown. Delegates to ``vault_entry.render_capture``."""
-        return render_capture(
-            frontmatter=frontmatter, kind=kind,
-            captured_at=captured_at, source_uri=source_uri, persons=persons,
-            from_path=from_path, shared_bucket=self.shared_bucket,
-            summary=summary, facts=facts, action_items=action_items,
-            kept_media=kept_media, caption=caption, replies=replies,
-            people=people,
-        )
 
     async def _fold_action_items_into_list(
         self,
@@ -623,6 +503,16 @@ class GitMirror:
             today=today,
         )
 
+    async def after_filing(self, path: str, classification: dict, *, by: str,
+                           previous_path: str) -> None:
+        """The after-steps of a capture's commit (`stack.filing.write.AfterSteps`):
+        its topic's card declared the first time, a note's to-dos folded
+        into a shared topic's list."""
+        await self._declare_topic(path)
+        await self._fold_capture_todos(target_path=path, classification=classification,
+                                       by=by, previous_path=previous_path)
+
+
     # ── Publish ──────────────────────────────────────────────────────────
 
     # ── The cards a record links ─────────────────────────────────────────
@@ -639,15 +529,18 @@ class GitMirror:
         """The declared people names resolve through; none without a local copy."""
         return (self.vault.people() if self.vault else None) or []
 
-    def _tags(self, tags: list[str] | None) -> list[str]:
-        """The tags a record is written with: topics by the ontology's id, the
-        rest as keywords, no `Person:` tags (ADR-017 §4, `stack.tags`)."""
-        if self.vault:
-            ontology = self.vault.ontology()
-        else:
-            from stacklets.memory.lib import get_ontology
-            ontology = get_ontology()
-        return card_tags(without_person_tags(tags or []), ontology)
+    def _tags(self, tags: list[str] | None, path: str) -> list[str]:
+        """The tags a document or an email at `path` is written with: the
+        topics of its place by id, the rest as keywords, no `Person:` tags
+        (ADR-017 §4, `Vocabulary.topics`), as a capture's.
+
+        The place's readers decide which topics there are: a private
+        topic's title on a card in another bucket stays a plain keyword,
+        and its id is left out (`Vocabulary.withheld`), because the curator
+        refuses it and the card would not be filed at all."""
+        # SAFETY: the vocabulary of every bucket would put a person's
+        # private topic id on a card that other people read.
+        return self._vocabulary(path).topics(tags or [])
 
     async def declare(self, path: str, text: str) -> None:
         """Write the card at `path` when the memory has none there yet.
@@ -722,7 +615,7 @@ class GitMirror:
             topics = [topics]
         category = topics[0] if topics else None
 
-        persons = _classified_persons(classification)
+        persons = classified_persons(classification)
         people = self._people()
         about = About.of(persons, people)
 
@@ -739,7 +632,7 @@ class GitMirror:
         fm = self._frontmatter(
             title=title, date=date,
             correspondent=correspondent, document_type=document_type,
-            category=category, persons=about.ids, tags=self._tags(tags),
+            category=category, persons=about.ids, tags=self._tags(tags, existing_path or target_path),
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
             identity=identity_for(existing.text if existing else None, "document", target_path),
@@ -855,8 +748,6 @@ class GitMirror:
     # Obsidian/Dataview queries can still tell capture-sourced entries
     # from Paperless-sourced ones at a glance.
 
-    _CAPTURE_HASH_LEN = 6
-
     def _capture_filepath(
         self, *,
         entity: str,
@@ -865,17 +756,14 @@ class GitMirror:
         title: str | None,
         hash_key: str,
     ) -> str:
-        """Capture mirror path. Delegates to ``vault_entry.capture_filepath``,
-        injecting this mirror's capture-hash length.
+        """An email thread's path (`stack.filing.cards.capture_filepath`).
 
         Email threads are date-prefixed so the month folder sorts
-        chronologically (like documents); notes/bookmarks keep the plain
-        slug name.
+        chronologically (like documents); notes and bookmarks keep the plain
+        slug name and are placed by the filing core (`stack.filing.write`).
         """
-        return capture_filepath(
-            entity, kind, captured_at, title, hash_key, self._CAPTURE_HASH_LEN,
-            date_prefix=(kind == "email"),
-        )
+        return capture_filepath(entity, kind, captured_at, title, hash_key,
+                                date_prefix=(kind == "email"))
 
     def _capture_frontmatter(
         self, *,
@@ -890,58 +778,72 @@ class GitMirror:
         filed_by: str | None = None,
         identity: dict | None = None,
     ) -> dict:
-        """Capture frontmatter. Delegates to ``vault_entry.capture_frontmatter``.
-
-        A note's keeps only what the card is about; where it came from
-        goes into its sidecar (ADR-018 §3, `stack.cards.sources`).
-        """
-        fm = capture_frontmatter(
+        """A capture's frontmatter (`stack.filing.cards.card_frontmatter`):
+        an email thread's here; a note's keeps only what it is about."""
+        return card_frontmatter(
             title=title, captured_at=captured_at, kind=kind,
             source_uri=source_uri, persons=persons, tags=tags,
             model=model, capture_id=capture_id, filed_by=filed_by,
             identity=identity,
         )
-        if kind == "note":
-            fm = card_fields(fm)
-        return fm
 
     async def card_history(self, card_id: str) -> CardHistory | None:
         """What a refile of the note `card_id` applies again of its history
         (ADR-018 §7), as the curator reads it across the card's moves. None
-        when no card carries the id or the curator cannot be reached."""
+        for no id, and for an id no card carries (404). Any other failure,
+        a curator that does not answer too, raises (`Refused`,
+        `CuratorDown`): a refile without the history would drop a person's
+        edits, so its caller writes nothing then."""
+        if not card_id:
+            return None
         try:
             found = await asyncio.to_thread(self.memory.versions, card_id)
-        except (Refused, CuratorDown) as e:
-            if not (isinstance(e, Refused) and e.status == 404):
-                logger.warning("[git-mirror] history of {} not read: {}", card_id, e)
-            return None
+        except Refused as e:
+            if e.status == 404:
+                return None
+            raise
         return history_of([Version.from_json(v) for v in found.versions], read_sources=card_sources)
 
-    def _field_values(self, people: list[Person]) -> FieldValues:
-        """What a field edit may name here: the card schemas, the declared
-        people, the ontology."""
+    def _vocabulary(self, target_path: str) -> Vocabulary:
+        """The topics a card at `target_path` may carry
+        (`stack.filing.vocabulary`); the shipped seed's without a vault."""
         if self.vault:
-            ontology = self.vault.ontology()
-        else:
-            from stacklets.memory.lib import get_ontology
-            ontology = get_ontology(None)
-        return FieldValues(schemas=SCHEMA_DIR, person_ids=frozenset(p.id for p in people),
-                           ontology=ontology)
+            return self.vault.vocabulary(target_path)
+        from stacklets.memory.lib import SEED_ONTOLOGY_PATH
+        return Vocabulary.of(target_path, None, seed=SEED_ONTOLOGY_PATH)
 
     async def read_capture(self, path: str) -> str | None:
-        """Return the raw markdown of a capture entry, or None if missing.
+        """The text of the file at `path`, or None (`read_file`)."""
+        found = await self.read_file(path)
+        return found.text if found else None
 
-        Used by ``CapturePipeline.reprocess`` to re-classify an
-        already-filed capture without re-fetching the original binary.
-        Best-effort: a curator that cannot answer is logged and surfaced
-        as None so the caller can render a friendly "couldn't find it" reply.
+    async def read_file(self, path: str) -> File | None:
+        """The file at `path` with its version, as the curator's clone has it, or None.
+
+        A refile reads its card and sidecar once with this, and writes on
+        those versions. Best-effort: a curator that cannot answer is logged
+        and surfaced as None, so the caller can answer that it found nothing.
         """
         try:
-            found = await asyncio.to_thread(self.memory.file, path)
+            return await self.file_at(path)
         except (Refused, CuratorDown) as e:
-            logger.warning("[git-mirror] read_capture {} failed: {}", path, e)
+            logger.warning("[git-mirror] reading {} failed: {}", path, e)
             return None
-        return found.text if found else None
+
+    async def file_at(self, path: str) -> File | None:
+        """The file at `path` with its version, None when the memory has no such file.
+
+        A curator that cannot answer raises `Refused` or `CuratorDown`, so a
+        caller that must tell "not there" from "not answered" (a note's
+        sidecar) can.
+        """
+        return await asyncio.to_thread(self.memory.file, path)
+
+    def card_context(self) -> CardContext:
+        """What a capture's card is written against here (`stack.filing.cards.CardContext`):
+        the declared people, the topics of a card's place, the shared bucket
+        and the memory's card schemas."""
+        return CardContext(self._people(), self._vocabulary, self.shared_bucket, SCHEMA_DIR)
 
     def capture_entry(
         self, *,
@@ -964,67 +866,27 @@ class GitMirror:
         sources: "Sequence[Source]" = (),
         made: dict | None = None,
         ops: "Sequence[FieldOp]" = (),
-    ) -> "CaptureEntry":
+    ) -> CaptureEntry:
         """The files a capture is written as at `target_path`, without writing them.
 
-        ``existing`` is the file there now, whose card id the entry keeps
-        (`identity_for`). `publish_capture` writes what this returns; a
-        preview of a refile shows it (`stack memory reprocess`). The other
-        arguments are `publish_capture`'s. A note's entry carries its
-        sidecar too, and a person's field edits ``ops`` applied again to its
-        card, in order (ADR-018 §7); one that no longer fits is left out
-        and named in `CaptureEntry.left_out`.
+        The filing core's card (`stack.filing.cards.capture_entry`) against
+        this mirror's people, topics and schemas. `publish_capture` writes
+        it; a preview of a refile shows it (`stack memory reprocess`).
+        ``body_text`` names the capture for its path only, so it is not read here.
         """
-        title = classification.get("title") or title_hint or "Capture"
-        persons = _classified_persons(classification)
-        people = self._people()
-        about = About.of(persons, people)
-        fm = self._capture_frontmatter(
-            title=title,
-            captured_at=captured_at,
-            kind=kind,
-            source_uri=source_uri,
-            persons=about.ids,
-            tags=self._tags(tags),
-            model=model,
-            capture_id=capture_id,
-            filed_by=_filer_localpart(submitter),
-            identity=identity_for(existing, kind, target_path),
+        return capture_entry(
+            self.card_context(), target_path=target_path, existing=existing, kind=kind,
+            source_uri=source_uri, title_hint=title_hint, classification=classification,
+            captured_at=captured_at, model=model, tags=tags, capture_id=capture_id,
+            submitter=submitter, kept_media=kept_media, caption=caption, replies=replies,
+            clean=clean, sources=sources, made=made, ops=ops,
         )
-        if kind == "note":
-            card = render_note(
-                frontmatter=fm, sources=sources, persons=persons, people=people,
-                from_path=target_path, shared_bucket=self.shared_bucket, clean=clean,
-                summary=classification.get("summary"),
-                facts=classification.get("facts") or [],
-                action_items=classification.get("action_items") or [],
-            )
-            left_out: list[str] = []
-            if ops:
-                card, left_out = apply_ops(card, ops, values=self._field_values(people),
-                                           path=target_path, bucket=self.shared_bucket)
-                fm = frontmatter_parse(card)
-            return CaptureEntry(fm, card, about, sidecar_text(
-                card_id=str(fm.get("card_id") or ""), filed_by=_filer_localpart(submitter) or "",
-                sources=sources, made=made or {}), tuple(left_out))
-        content = self._render_capture(
-            frontmatter=fm,
-            kind=kind,
-            captured_at=captured_at,
-            source_uri=source_uri,
-            persons=persons,
-            people=people,
-            from_path=target_path,
-            summary=classification.get("summary"),
-            facts=classification.get("facts") or [],
-            # Action items only when the classifier extracted them — notes
-            # that opted in (kind == "note"); bookmarks never carry the field.
-            action_items=classification.get("action_items") or [],
-            kept_media=kept_media,
-            caption=caption,
-            replies=replies,
-        )
-        return CaptureEntry(fm, content, about)
+
+    async def capture_on_file(self, *, entity: str, capture_id: str, by: str) -> OnFile | None:
+        """The note filed from the message `capture_id` under `entity`, or
+        None (`stack.filing.identity.on_file`); its after-steps run again
+        with no items."""
+        return await on_file(self.memory, self, entity=entity, capture_id=capture_id, by=by)
 
     async def publish_capture(
         self, *,
@@ -1048,136 +910,35 @@ class GitMirror:
         made: dict | None = None,
         ops: "Sequence[FieldOp]" = (),
         changed_by: str | None = None,
+        base: str | None = None,
+        sidecar_base: str | None = None,
     ) -> Filed | NotFiled:
-        """Create or update a capture entry in the mirror.
+        """Create or update a note or a bookmark in the memory, through the
+        filing core's write (`stack.filing.write.write_capture`).
 
-        `entity` is the sender's slug — the Matrix localpart, lowercased.
-        Routes the capture under `<entity>/<kind>s/...`.
+        `entity` is the bucket the card routes under (`<entity>/<kind>s/...`).
+        `kind` is "bookmark" (link and summary; ``body_text`` usually empty)
+        or "note" (the words sent; ``body_text`` names it for its path).
+        ``existing_path`` is a refile's: the entry is rewritten where it is.
+        The commit is by ``changed_by``, else ``submitter``, else the
+        archivist; the archivist commits it (ADR-015). After it the topic's
+        card is declared and a note's to-dos folded (`after_filing`).
+        ``base`` and ``sidecar_base`` are the versions the card and a note's
+        sidecar are written on ("" for a new file); None writes on the ones
+        read at write time.
 
-        `kind` is "bookmark" (URL pointer + LLM summary; body usually
-        empty) or "note" (pasted body the user typed; body preserved).
-        Caller decides what to pass as `body_text` — for bookmarks in
-        archival mode, that's the extracted Markdown; for bookmarks in
-        marker-only mode, "".
-
-        Identity for idempotent updates: `source_uri` when present
-        (re-pastes of the same URL update the same file), otherwise
-        the body text (re-pastes of the same text update; edits create
-        a new file).
-
-        ``kept_media`` is the archived copy of the uploaded file, when
-        the caller kept one: the entry names it and, for a picture,
-        shows it. Absent on every capture that has no bytes of its own
-        (a URL, a pasted note) and on a reprocess, which re-renders
-        from the prior entry and never sees the original again.
-
-        ``caption`` is what the sender wrote with an upload, and
-        ``replies`` the ``(author, words)`` written in its thread; the
-        entry keeps both word for word.
-
-        A note is written as its card and its sidecar, in one commit
-        (ADR-018): ``sources`` are what it was made from, in order, and
-        ``made`` how it was made. ``clean`` is the clean version of its
-        words when it was filed as its own words (`vault_entry.render_note`).
-        ``body_text`` then only names it, for its path. ``ops`` are a
-        person's field edits, applied again to a refiled note (`capture_entry`).
-
-        ``existing_path`` is the reprocess hook: the entry is rewritten
-        where it is, whatever its new title.
-
-        Returns where the capture landed (its path relative to the repo
-        root) and its card id on success, `NotFiled` with the reason when
-        the curator cannot be reached, refused the write, or a note changed
-        after it was read (nothing is overwritten then). Failures are
-        logged but never raised: captures are best-effort.
+        Returns where the capture landed and its card id, or `NotFiled`
+        with the reason. Failures are logged but never raised.
         """
-        resolved_title = classification.get("title") or title_hint
-        title = resolved_title or "Capture"
-
-        hash_key = source_uri or body_text
-        target_path = self._capture_filepath(
-            entity=entity,
-            kind=kind,
-            captured_at=captured_at,
-            title=title if resolved_title else None,
-            hash_key=hash_key,
+        return await write_capture(
+            self.memory, self.card_context(), self, via=BOT_USERNAME,
+            entity=entity, kind=kind, source_uri=source_uri, title_hint=title_hint,
+            body_text=body_text, classification=classification, captured_at=captured_at,
+            model=model, tags=tags, existing_path=existing_path, capture_id=capture_id,
+            submitter=submitter, kept_media=kept_media, caption=caption, replies=replies,
+            clean=clean, sources=sources, made=made, ops=ops, changed_by=changed_by,
+            base=base, sidecar_base=sidecar_base,
         )
-
-        # Dedup on identity, not filename: if this URL/body already lives under
-        # a different title (a re-paste with new framing, an older differently-
-        # titled capture), find it by its hash so we update that entry instead
-        # of forking a duplicate. The reprocess caller already knows the path,
-        # so only look when it didn't pass one.
-        try:
-            if existing_path is None:
-                existing_path = await self._lookup_capture_path(target_path)
-            # A capture keeps the path it was first filed under. Topic pages,
-            # list items and the link in the chat point at it, so a new title
-            # or a correction from someone else in the room changes what the
-            # entry says, never where it is.
-            if existing_path:
-                target_path = existing_path
-            existing = await asyncio.to_thread(self.memory.file, target_path)
-            side = await asyncio.to_thread(self.memory.file, sidecar_path(target_path)) \
-                if kind == "note" else None
-        except (Refused, CuratorDown) as e:
-            logger.warning("[git-mirror] Capture not filed for {}: {}", source_uri or "(paste)", e)
-            return _not_written(e)
-
-        # The filer stays the card's `filed_by` (`submitter`). The commit is
-        # by whoever made this change: on a refile from a reply in the chat
-        # that is the person who replied (`changed_by`), so `git log
-        # --author` and the dashboard name them, and the subject says it was
-        # a reply. Committer stays the bot (ADR-015).
-        by = _by(changed_by or submitter)
-        entry = self.capture_entry(
-            target_path=target_path, existing=existing.text if existing else None,
-            kind=kind, source_uri=source_uri, title_hint=title_hint,
-            body_text=body_text, classification=classification,
-            captured_at=captured_at, model=model, tags=tags,
-            capture_id=capture_id, submitter=submitter, kept_media=kept_media,
-            caption=caption, replies=replies, clean=clean, sources=sources, made=made, ops=ops,
-        )
-        fm, content, about = entry.frontmatter, entry.content, entry.about
-        for line in entry.left_out:
-            logger.warning("[git-mirror] {}: a field edit no longer fits, left out: {}",
-                           target_path, line)
-        briefing_summary = classification.get("summary")
-
-        # A note is its card and its sidecar (ADR-018), written in one
-        # commit, each on the version it was read at, so neither changes
-        # without the other.
-        verb = ("reply" if changed_by else "update") if existing else "capture"
-        changes = [put(target_path, content, base=existing.version if existing else "")]
-        if kind == "note":
-            changes.append(put(sidecar_path(target_path), entry.sidecar,
-                               base=side.version if side else ""))
-        trailers = {"Source": source_uri or "(paste)", **({"Model": model} if model else {})}
-        try:
-            await asyncio.to_thread(self.memory.commit, changes, by=by, via=BOT_USERNAME, kind=verb, title=title,
-                                    body=briefing_summary or "", trailers=trailers)
-        except Refused as e:
-            if e.reason == "changed":
-                logger.warning("[git-mirror] Capture not written, nothing overwritten: {}", e)
-            else:
-                logger.warning("[git-mirror] Capture publish failed for {}: {}",
-                               source_uri or "(paste)", e)
-            return _not_written(e)
-        except CuratorDown as e:
-            logger.warning("[git-mirror] Capture publish failed for {}: {}",
-                           source_uri or "(paste)", e)
-            return _not_written(e)
-
-        logger.info("[git-mirror] {} → {}", verb, target_path)
-        _report_unknown(target_path, about)
-        await self._declare_topic(target_path)
-        await self._fold_capture_todos(
-            target_path=target_path,
-            classification=classification,
-            by=by,
-            previous_path=existing_path or "",
-        )
-        return Filed(target_path, str(fm.get("card_id") or ""))
 
     # ── Email threads ─────────────────────────────────────────────────────
     #
@@ -1235,7 +996,7 @@ class GitMirror:
         resolved_title = classification.get("title") or title_hint
         title = resolved_title or "Email thread"
 
-        persons = _classified_persons(classification)
+        persons = classified_persons(classification)
         people = self._people()
         about = About.of(persons, people)
 
@@ -1245,7 +1006,7 @@ class GitMirror:
         # file by its hash suffix and append there, instead of spawning a
         # new file per reply. Mirrors how the document mirror reuses a
         # renamed doc's `-p<id>.md` path.
-        digest = capture_hash(thread_uri or body_text, self._CAPTURE_HASH_LEN)
+        digest = capture_hash(thread_uri or body_text)
         try:
             target_path = await self._find_email_thread(entity, digest)
             if target_path is None:
@@ -1259,7 +1020,7 @@ class GitMirror:
             existing = await asyncio.to_thread(self.memory.file, target_path)
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Email fold failed for {}: {}", thread_uri or "(no thread)", e)
-            return _not_written(e)
+            return not_written(e)
         existing_content = (existing.text if existing else None) or None
 
         section = render_email_message_section(
@@ -1272,7 +1033,7 @@ class GitMirror:
             action_items=classification.get("action_items") or [],
         )
 
-        tags = self._tags(tags)
+        tags = self._tags(tags, target_path)
         new_fm = self._capture_frontmatter(
             title=title,
             captured_at=captured_at,
@@ -1329,7 +1090,7 @@ class GitMirror:
                 "[git-mirror] Email fold failed for {}: {}",
                 thread_uri or "(no thread)", e,
             )
-            return _not_written(e)
+            return not_written(e)
 
         logger.info("[git-mirror] {} email → {}", verb, target_path)
         _report_unknown(target_path, about)
@@ -1388,13 +1149,13 @@ class GitMirror:
             existing = await asyncio.to_thread(self.memory.file, path)
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Email correction not written for {}: {}", path, e)
-            return _not_written(e)
+            return not_written(e)
         if existing is None:
             return NotFiled("card_missing")
         try:
             fields = corrected_fields(
                 frontmatter_parse(existing.text), model_title=classification.get("title") or "",
-                model_persons=_classified_persons(classification), model_tags=self._tags(tags),
+                model_persons=classified_persons(classification), model_tags=self._tags(tags, path),
                 words=words, people=people)
             content = correct_email_thread(existing.text, fields=fields, from_path=path,
                                            shared_bucket=self.shared_bucket, people=people)
@@ -1412,7 +1173,7 @@ class GitMirror:
                 trailers={"Model": model} if model else {})
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] Email correction not written for {}: {}", path, e)
-            return _not_written(e)
+            return not_written(e)
         logger.info("[git-mirror] reply email → {}", path)
         await self._declare_topic(path)
         return Filed(path, _card_id_in(content), changes=changes, card=card_view(content))

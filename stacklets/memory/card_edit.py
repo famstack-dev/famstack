@@ -57,10 +57,11 @@ from dataclasses import dataclass, field
 
 from .card_schema import CardSchemas, VaultValues
 
-from .lib import get_ontology
+from .lib import SEED_ONTOLOGY_PATH
 from .cards import CardChanged, CardStore, CloneMissing, Put, Refused, StoreError
 from stack.cards.links import with_about_from_fields
 from stack.card_render import render, split_body
+from stack.filing.vocabulary import Vocabulary
 from stack.frontmatter import parse, with_field
 from stack.people import load_people
 
@@ -161,7 +162,11 @@ class CardEditor:
         if isinstance(proposed, list):
             return _problem(proposed)
         after_text, after = proposed
-        values = VaultValues([p.id for p in people], get_ontology(self.store.repo))
+        # The topics of the card's place: a refusal lists what is allowed, and
+        # it must not name a topic the card's readers may not read.
+        vocabulary = Vocabulary.of(path, self.store.repo, seed=SEED_ONTOLOGY_PATH,
+                                   shared_bucket=self.shared_bucket)
+        values = VaultValues([p.id for p in people], vocabulary.ontology)
         problems = _read_only_problems(before, after, self.schemas.read_only(str(before.get("type"))))
         problems += [p for p in self.schemas.problems(after, values)
                      if p["field"] not in {q["field"] for q in problems}]

@@ -56,6 +56,7 @@ from stacklets.docs.bot.vault_entry import (  # noqa: E402
     render_email_message_section,
 )
 
+from stack.filing.vocabulary import Vocabulary
 from stack.cards.links import About, correspondent_card, topic_card, without_person_tags  # noqa: E402
 from stack.cards.sources import Source  # noqa: E402
 from stack.cards import with_card_id  # noqa: E402
@@ -287,7 +288,7 @@ _ROOM = "!memories:springfield.example"
 def _diary_card(entry: Entry, answer: dict | None, *, template: str = "",
                 media: dict[str, str] | None = None) -> str:
     extraction = extraction_from(
-        answer, ontology=ONTO, language="de", people=_NAMES, declared=DECLARED, model="qwen3")
+        answer, topics=Vocabulary(ONTO), people=_NAMES, declared=DECLARED, model="qwen3")
     # The compile records which prompt the model read the entry under
     # (`cli/diary/cards.py`), and nothing when the model gave no answer.
     extraction = replace(extraction, template=template)

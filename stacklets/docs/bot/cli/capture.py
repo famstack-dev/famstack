@@ -50,17 +50,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..capture_pipeline import CapturePipeline
-from ..capture_tags import CaptureTagCache
 from ..extractors import TextExtractor, UrlExtractor
 from ..pipeline import Classifier, PaperlessAPI
 from ..reasons import why
 from ..text_utils import is_just_url
 
-# `_DATA_DIR` is the bot's in-container session dir, and the same constant
-# `_mirror` already resolves the bot's Forgejo creds from. Imported rather
-# than restated so the CLI and the bot never disagree about where the
-# archivist keeps its state.
-from ._mirror import _DATA_DIR, build_mirror_like_bot, read_bot_toml_settings
+from ._mirror import build_mirror_like_bot, read_bot_toml_settings
 from ._shared import err
 
 _FILED = ("captured", "reclassified")
@@ -242,28 +237,29 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
     mirror = build_mirror_like_bot()
 
     settings = read_bot_toml_settings()
-    tags = CaptureTagCache(_DATA_DIR / "capture-tags.json")
-    tags.load()
-
     pipeline = CapturePipeline(
         url_extractor=UrlExtractor(),
         text_extractor=TextExtractor(),
         classifier=classifier,
         mirror=mirror,
-        capture_tags=tags,
         paperless=paperless,
         bot_name="archivist-bot",
         classify_max_chars=int(settings.get("classify_max_chars", 100_000)),
         capture_keep_body=bool(settings.get("capture_keep_body", False)),
-        capture_tag_prompt_size=int(settings.get("capture_tag_prompt_size", 50)),
+        # The household's people and topics, as the bot reads them.
+        vault=mirror.vault,
         # No transcriber wired: an audio file fails cleanly with
         # "could not read that voice memo" rather than half-filing.
     )
 
+    # SAFETY: the command has no room, and its receipt may be relayed into
+    # a room of several people, so the model is offered only the shared
+    # topics (`Vocabulary.of`, `read_in`).
+    read_in = mirror.vault.shared_bucket if mirror.vault is not None else None
     if kind == "link":
         outcome = await pipeline.capture_url(
             url=spec.text, sender_mxid=spec.sender,
-            notifier=_StderrNotifier(), bucket=spec.bucket,
+            notifier=_StderrNotifier(), bucket=spec.bucket, read_in=read_in, channel="cli",
         )
     elif kind == "file":
         mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
@@ -275,11 +271,12 @@ async def run(paperless: PaperlessAPI, classifier: Classifier,
             # into the vault, so the entry keeps what was read out of
             # the file and names the file it came from.
             source_uri=None, display_link=name,
-            sender_mxid=spec.sender, bucket=spec.bucket,
+            sender_mxid=spec.sender, bucket=spec.bucket, read_in=read_in, channel="cli",
         )
     else:
         outcome = await pipeline.capture_text(
-            text=spec.text, sender_mxid=spec.sender, bucket=spec.bucket,
+            text=spec.text, sender_mxid=spec.sender, bucket=spec.bucket, read_in=read_in,
+            channel="cli",
         )
 
     print(render_receipt(outcome))

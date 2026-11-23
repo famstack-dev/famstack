@@ -23,8 +23,8 @@ from stacklets.docs.bot.capture_pipeline import CapturePipeline  # noqa: E402
 from stack.cards.events import TextEdit  # noqa: E402
 from stack.cards.history import CardHistory  # noqa: E402
 from stack.cards.sources import NOTE, Source  # noqa: E402
-from stacklets.docs.bot.git_mirror import Filed  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
+from tests.capture_mirror import FakeMirror  # noqa: E402
 from stacklets.docs.bot.vault_entry import capture_frontmatter, identity_for, render_capture, render_note  # noqa: E402
 from stack.frontmatter import dump as frontmatter_dump  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
@@ -116,7 +116,8 @@ class FakeClassifier:
                                initial_classification=None,
                                extract_action_items=False,
                                current_list="", write_in=None,
-                               kind="note", clean_words=False, classify_only=False):
+                               kind="note", clean_words=False, classify_only=False,
+                               topics=None):
         # Recorded so a test can assert the classifier was shown the list it
         # is about to add to; extracting blind is what grew one list from
         # thirteen items to twenty-seven.
@@ -130,6 +131,7 @@ class FakeClassifier:
         self.saw_images = images
         self.saw_clean_words = clean_words
         self.saw_classify_only = classify_only
+        self.saw_topics = topics
         if self._raises:
             raise self._raises
         return self._payload
@@ -140,52 +142,6 @@ class FakeClassifier:
         # respected. Subclasses override to return None (LLM down /
         # not useful) or a short token to exercise the sanity guard.
         return f"# Reformatted\n\n{ocr_text[:max_chars]}"
-
-
-class FakeMirror:
-    def __init__(self):
-        self.captures: list[dict] = []
-        self.emails: list[dict] = []
-
-    async def card_history(self, card_id):
-        """No history read: the note is refiled from the card as it reads now."""
-        return None
-
-    async def publish_capture(self, **kwargs):
-        self.captures.append(kwargs)
-        # Mirrors the publish_capture contract: where the capture landed
-        # and its card id (or None on failure). Deterministic, so the
-        # envelope-emission branch in _publish executes.
-        kind = kwargs.get("kind") or "bookmark"
-        entity = "homer"
-        return Filed(f"{entity}/{kind}s/test-capture.md", f"{kind}-7f3a9c21e4")
-
-    async def publish_email_message(self, **kwargs):
-        # Email folds into a thread file via its own mirror entrypoint;
-        # the path is keyed by the thread, not the individual message.
-        self.emails.append(kwargs)
-        entity = kwargs.get("entity") or "homer"
-        return Filed(f"{entity}/emails/test-thread.md", "email-0b6e2d91aa")
-
-    async def read_capture(self, path):
-        # The simplest re-readable shape for reprocess tests.
-        return self._stored.get(path)
-
-    _stored: dict = {}
-
-
-class FakeTags:
-    def __init__(self):
-        self.recorded: list[tuple] = []
-
-    def top(self, n):
-        return []
-
-    def record(self, tags, when):
-        self.recorded.append((tuple(tags), when))
-
-    def save(self):
-        pass
 
 
 class FakePaperless:
@@ -216,12 +172,10 @@ def _pipeline(*, mirror=_UNSET, classifier=None, capture_keep_body=False,
         or FakeExtractor(_source(source_uri="http://embedded")),
         classifier=classifier or FakeClassifier(),
         mirror=FakeMirror() if mirror is _UNSET else mirror,
-        capture_tags=FakeTags(),
         paperless=FakePaperless(),
         bot_name="archivist-bot",
         classify_max_chars=10000,
         capture_keep_body=capture_keep_body,
-        capture_tag_prompt_size=50,
         llm=llm,
         vault=vault,
     )
@@ -335,37 +289,11 @@ class TestCaptureText:
             text_extractor=FakeExtractor(None),  # nothing extracted
             classifier=FakeClassifier(),
             mirror=FakeMirror(),
-            capture_tags=FakeTags(),
             paperless=FakePaperless(),
             bot_name="b", classify_max_chars=100,
-            capture_keep_body=False, capture_tag_prompt_size=50,
-        )
+            capture_keep_body=False, )
         out = await pipe.capture_text(text="   ", sender_mxid="@marge:s")
         assert out.status == "empty"
-
-
-class TestTagList:
-    """`_tag_list` is the classifier's free-form tags, normalising types and
-    whitespace. It names no person: the capture's `persons` does."""
-
-    def test_tags_without_person_tags(self):
-        c = {"tags": ["AI", "Productivity"], "persons": ["Homer"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Productivity"]
-
-    def test_single_string_tag_becomes_list(self):
-        c = {"tags": "AI", "persons": ["Homer"]}
-        assert CapturePipeline._tag_list(c) == ["AI"]
-
-    def test_empty_classification_yields_empty(self):
-        assert CapturePipeline._tag_list({}) == []
-
-    def test_skips_non_string_values(self):
-        c = {"tags": ["AI", None, 42, ""], "persons": ["Homer", ""]}
-        assert CapturePipeline._tag_list(c) == ["AI"]
-
-    def test_strips_whitespace(self):
-        c = {"tags": ["  AI  ", "Productivity"], "persons": ["Homer"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Productivity"]
 
 
 class TestClassifyDegradation:
@@ -485,92 +413,6 @@ class TestCaptureBinaryFailures:
         )
         assert out.status == "extract_failed"
         assert out.failure_reason == "binary"
-
-
-class TestTopicSeedMerge:
-    """The static merge helper pins the tag-seed semantics: seed first,
-    classifier additions second, duplicates collapsed. The room-based
-    routing in the archivist (Step 3) leans on this contract; the
-    merge function is exposed as static so the archivist can verify
-    its own seed handling without instantiating a pipeline."""
-
-    def test_seed_survives_empty_classifier_tags(self):
-        """The strongest property: a capture filed in a topic room
-        retains the seed even when the classifier returns no tags
-        at all. Room beats classifier in the empty case."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": []}, seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping"]
-
-    def test_seed_first_then_classifier_additions(self):
-        """Seed precedes classifier tags in the merged list. This
-        is load-bearing for downstream consumers that read the first
-        tag as the canonical topic (e.g. the dream cycle's pattern
-        detection)."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear", "italy-2026"]},
-            seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping", "gear", "italy-2026"]
-
-    def test_seed_deduplicates_when_classifier_repeats_it(self):
-        """The classifier may include the seed tag in its output
-        despite the prompt's guidance. The merge collapses the
-        duplicate; the seed's position wins."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["camping", "gear"]},
-            seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping", "gear"]
-
-    def test_no_seed_is_noop(self):
-        """Non-topic-room captures pass `seed_topics=None` (or omit
-        the kwarg). The classifier's tags are returned unchanged."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear"]}, seed_topics=None,
-        )
-        assert merged["tags"] == ["gear"]
-        merged_empty = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear"]}, seed_topics=[],
-        )
-        assert merged_empty["tags"] == ["gear"]
-
-    def test_classifier_missing_tags_key(self):
-        """When the classifier degraded (no tags key in the payload),
-        the seed still applies. The result has a fresh `tags` list."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"persons": ["Homer"]}, seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping"]
-
-    def test_classifier_returns_string_for_tags(self):
-        """`_tag_list` already tolerates the classifier returning a
-        bare string for `tags:` (some prompts produce that). The
-        merge does the same coercion so the seed prepends cleanly."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": "gear"}, seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping", "gear"]
-
-    def test_seed_with_multiple_entries(self):
-        """A topic room with multiple guaranteed tags (forward
-        compatibility for `default_topics: [camping, outdoor]`)
-        keeps all of them in order."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["italy-2026"]},
-            seed_topics=["camping", "outdoor"],
-        )
-        assert merged["tags"] == ["camping", "outdoor", "italy-2026"]
-
-    def test_seed_skips_whitespace_and_non_string(self):
-        """Defensive: malformed seed entries don't pollute the
-        merged list. Empty strings and non-strings drop silently."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear"]},
-            seed_topics=["camping", "", None, "  ", 42],  # type: ignore[list-item]
-        )
-        assert merged["tags"] == ["camping", "gear"]
 
 
 class TestPdfBodyCap:
@@ -885,37 +727,6 @@ class TestTopicSeedEndToEnd:
         assert "vans" in tags
         # Seed first, then classifier additions in order.
         assert tags == ["van-life", "gear", "vans"]
-
-    @pytest.mark.asyncio
-    async def test_seed_recorded_in_capture_tag_cache(self):
-        """The capture-tag cache feeds the next capture's prompt as
-        existing-tags context. A seeded topic-room capture should
-        push the seed into that cache so the camping tag stays warm
-        even when the classifier never invented it on its own."""
-        mirror = FakeMirror()
-        tags = FakeTags()
-        pipe = CapturePipeline(
-            url_extractor=FakeExtractor(_source(source_uri="http://src")),
-            text_extractor=FakeExtractor(_source(source_uri="http://embedded")),
-            classifier=FakeClassifier(payload={
-                "title": "Note", "tags": [], "persons": ["Homer"],
-            }),
-            mirror=mirror,
-            capture_tags=tags,
-            paperless=FakePaperless(),
-            bot_name="archivist-bot",
-            classify_max_chars=10000,
-            capture_keep_body=False,
-            capture_tag_prompt_size=50,
-        )
-        await pipe.capture_text(
-            text="some pasted thought",
-            sender_mxid="@homer:s",
-            seed_topics=["camping"],
-        )
-        # The seed survives into the topic-tag list the cache records.
-        all_recorded = [t for entry in tags.recorded for t in entry[0]]
-        assert "camping" in all_recorded
 
     @pytest.mark.asyncio
     async def test_bucket_override_routes_to_topic_folder(self):
@@ -1715,14 +1526,14 @@ class TestACorrectedNoteIsRefiledFromItsWords:
         card that shows the words alone is given a tidy one first, by the
         capture prompt, and the conversation starts from that."""
         tidy = "Homer calls the hotel on Thursday. Budget: at most 200."
-        mirror = FakeMirror()
+        edit = TextEdit("lisa", "2026-10-21T09:00:00+00:00", (("max 200", "max 220"),))
+        mirror = FakeMirror(history=CardHistory(edits=(edit,)))
         classifier = FakeClassifier(payload={**self.ANSWER, "clean": tidy}, corrected=self.CORRECTED)
         mirror._stored = {self.PATH: _old_note(
             "Trip", self.WORDS, capture_id="$n:s", path=self.PATH, persons=["homer"], tags=["hotel"])}
-        edit = TextEdit("lisa", "2026-10-21T09:00:00+00:00", (("max 200", "max 220"),))
         await _pipeline(mirror=mirror, classifier=classifier).reprocess(
             vault_path=self.PATH, user_hint="", sender_mxid="@marge:s",
-            reply_text="it is Friday, not Thursday", history=CardHistory(edits=(edit,)))
+            reply_text="it is Friday, not Thursday")
         assert classifier.saw_rebuild[1] == tidy
         assert classifier.saw_rebuild[2] == [edit.message(), "Marge: it is Friday, not Thursday"]
 
@@ -1733,16 +1544,15 @@ class TestACorrectedNoteIsRefiledFromItsWords:
         the card's history shows it, goes back to the words as sent, and her
         words are her note, a correction before the reply."""
         edited = "Homer calls the hotel on Thursday, budget max 200"
-        mirror = FakeMirror()
+        note = Source(NOTE, "lisa", "2026-10-21T09:00:00+00:00", "cards", "text",
+                      "cards:0a1b2c3d4e5f6a7b", quote=edited)
+        mirror = FakeMirror(history=CardHistory(quotes_as_sent=(("$n:s", self.WORDS),), quote_edits=(note,)))
         classifier = FakeClassifier(payload=dict(self.ANSWER), corrected=self.CORRECTED)
         mirror._stored = {self.PATH: _old_note(
             "Trip", edited, capture_id="$n:s", path=self.PATH, persons=["homer"], tags=["hotel"])}
-        note = Source(NOTE, "lisa", "2026-10-21T09:00:00+00:00", "cards", "text",
-                      "cards:0a1b2c3d4e5f6a7b", quote=edited)
         await _pipeline(mirror=mirror, classifier=classifier).reprocess(
             vault_path=self.PATH, user_hint="", sender_mxid="@marge:s",
-            reply_text="it is Friday, not Thursday",
-            history=CardHistory(quotes_as_sent=(("$n:s", self.WORDS),), quote_edits=(note,)))
+            reply_text="it is Friday, not Thursday")
         assert [(s.role, s.person, s.words) for s in mirror.captures[-1]["sources"]] == [
             ("original", "marge", self.WORDS), ("note", "lisa", edited),
             ("reply", "marge", "it is Friday, not Thursday")]

@@ -47,10 +47,6 @@ from typing import TYPE_CHECKING, Callable, Iterable, List, Optional
 from stack.own_service import OWN_SERVICE_HOST
 from stack.vault import DEFAULT_SHARED_BUCKET, correspondents_dir
 
-# Frontmatter parsing uses the shared stdlib-only module from stack.frontmatter
-# so both host CLI and containers can parse identically.
-from stack.frontmatter import FrontmatterError, card_fields, parse as _parse_frontmatter_new
-
 # `python-frontmatter` is intentionally not imported at module load.
 # The CLI runs on a stdlib-only `python3` (see `./stack`), so the
 # install hook would crash at import time if we pulled in a third-
@@ -65,8 +61,17 @@ from stack.cards import HAND_WRITTEN, CardIdError, card_id_from, is_view, new_ca
 from stack import media
 from stack.forgejo import ForgejoClient
 from stack.ontology import Ontology
-from stack.tags import with_declared_topics
-from stack.vault import TOPIC_CARD
+# Re-exported for the host commands (`cli/`), which import no framework domain
+# module directly: `load_persons_from_vault`, `persons_prompt_section`,
+# `ONTOLOGY_PATH_IN_REPO`.
+from stack.people.names import (
+    fm_list as _fm_list,
+    load_persons_from_vault as load_persons_from_vault,
+    parse_frontmatter as _parse_frontmatter,
+    persons_prompt_section as persons_prompt_section,
+)
+from stack.topics import ONTOLOGY_PATH_IN_REPO as ONTOLOGY_PATH_IN_REPO
+from stack.topics import get_ontology as _get_ontology
 
 if TYPE_CHECKING:
     # Type-only: `stack.ai.client` pulls in the OpenAI SDK, which the
@@ -124,7 +129,6 @@ BRAIN_SEED_README = (
 )
 BRAIN_SEED_COMMIT_MESSAGE = "seed: initial brain projection scaffold"
 BRAIN_MIGRATION_TOKEN_NAME = "memory-brain-migration"
-ONTOLOGY_PATH_IN_REPO = "ontology.toml"
 
 BOT_USERNAME, BOT_EMAIL = MEMORY_BOT, MEMORY_BOT_EMAIL
 
@@ -163,6 +167,13 @@ SEED_TITLE = "initial memory from famstack"
 def load_seed_ontology() -> Ontology:
     """Read the shipped seed ontology and return a parsed `Ontology`."""
     return Ontology.load(SEED_ONTOLOGY_PATH)
+
+
+def get_ontology(vault_path: Optional[Path] = None, shared_bucket: str = DEFAULT_SHARED_BUCKET) -> Ontology:
+    """The live ontology from the vault, else the shipped seed, with the
+    vault's topic cards on top (`stack.topics.get_ontology`); a
+    topic id two buckets share takes the title of `shared_bucket`'s card."""
+    return _get_ontology(vault_path, SEED_ONTOLOGY_PATH, shared_bucket=shared_bucket)
 
 
 # ─── Vault path + auth ───────────────────────────────────────────────────
@@ -655,19 +666,6 @@ def progress_since(state_dir: Path, since: float) -> list[str]:
 
 # ─── Vault readers ───────────────────────────────────────────────────────
 
-def load_ontology_from_vault(vault_path: Path) -> Optional[Ontology]:
-    """Read `ontology.toml` from the vault working copy.
-
-    Returns None when the vault has no ontology file yet (a freshly-
-    cloned repo where the seed push hasn't landed, or a hand-curated
-    instance that deleted the file).
-    """
-    ontology_file = Path(vault_path) / ONTOLOGY_PATH_IN_REPO
-    if not ontology_file.exists():
-        return None
-    return Ontology.load(ontology_file)
-
-
 # ─── Correspondents (shared-bucket entity layer) ─────────────────────────
 #
 # Correspondents are organizations the family corresponds with (banks,
@@ -841,107 +839,6 @@ def correspondents_prompt_section(correspondents: List[Correspondent]) -> str:
 # "Marge Bouvier" on a marriage certificate resolves to the same
 # person as "Marge" on a utility bill.
 
-# Skip set for `load_persons_from_vault`: top-level directories that
-# carry an `about.md` but are not a household member. Kept in sync
-# with the `stack memory wiki` command's own skip set; both walk the
-# same vault structure.
-_NON_MEMBER_DIRS = {".git", ".obsidian", "wiki", "private", "templates", "_shared"}
-
-
-@dataclass
-class Person:
-    """A single household-member wiki entry."""
-
-    canonical: str
-    slug: str
-    synonyms: List[str] = field(default_factory=list)
-    # Path on disk, useful for `stack memory persons show` and tests.
-    source_path: Optional[Path] = None
-
-    def all_known_names(self) -> List[str]:
-        """Canonical + every synonym, no duplicates, canonical first."""
-        seen = {self.canonical}
-        out = [self.canonical]
-        for s in self.synonyms:
-            if s and s not in seen:
-                seen.add(s)
-                out.append(s)
-        return out
-
-
-def load_persons_from_vault(
-    vault_path: Path,
-    shared_bucket: str = DEFAULT_SHARED_BUCKET,
-) -> List[Person]:
-    """Walk `<vault>/<slug>/about.md` and return the parsed entries.
-
-    Each entity bucket directly under the vault root is treated as a
-    potential household member. Buckets that are reserved for shared
-    content (the `shared_bucket`, `wiki/`, `.git/`, ...) are skipped
-    by name. A bucket without an `about.md` is also skipped -- a
-    member can exist on the file system (with captured notes) before
-    the wiki overview pass has generated their page.
-
-    Pages tagged with a `kind:` other than `person` are skipped --
-    leaves room for non-member entries to coexist under the same
-    directory shape without leaking into the classifier prompt.
-    """
-    vault_path = Path(vault_path)
-    if not vault_path.exists():
-        return []
-
-    skip = _NON_MEMBER_DIRS | {shared_bucket}
-    result: List[Person] = []
-    for about in sorted(vault_path.glob("*/about.md")):
-        slug = about.parent.name
-        if slug in skip or slug.startswith("."):
-            continue
-        try:
-            text = about.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        # A broken card is never guessed at: its folder is no person's name.
-        if (meta := card_fields(text, about)) is None:
-            continue
-        if meta.get("kind") and meta.get("kind") != "person":
-            continue
-        canonical = meta.get("canonical") or meta.get("title") or slug
-        if not canonical:
-            continue
-        result.append(Person(
-            canonical=str(canonical),
-            slug=str(meta.get("slug") or slug),
-            synonyms=_fm_list(meta, "synonyms"),
-            source_path=about,
-        ))
-    return result
-
-
-def persons_prompt_section(persons: List[Person]) -> str:
-    """Render the persons block embedded in the classifier prompt.
-
-    Output shape, mirroring `correspondents_prompt_section`:
-
-        Family members (canonical first name; synonyms in parens):
-          - Marge (Marjorie, Margaret, Marge Bouvier, Marge Simpson)
-          - Homer
-          - Bart (Bartholomew, Bart Simpson)
-
-    Returns an empty string when no curated person pages exist yet --
-    the prompt builder falls back to the flat list of first names
-    pulled from Paperless Person tags in that case.
-    """
-    if not persons:
-        return ""
-    lines = ["Family members (canonical first name; synonyms in parens):"]
-    for p in persons:
-        if p.synonyms:
-            lines.append(f"  - {p.canonical} ({', '.join(p.synonyms)})")
-        else:
-            lines.append(f"  - {p.canonical}")
-    return "\n".join(lines)
-
-
 def people_prompt_section(people) -> str:
     """The persons block from the person files, in the shape above.
 
@@ -959,69 +856,6 @@ def people_prompt_section(people) -> str:
         lines.append(f"  - {p.first_name} ({', '.join(others)})" if others
                      else f"  - {p.first_name}")
     return "\n".join(lines)
-
-
-def get_ontology(vault_path: Optional[Path] = None) -> Ontology:
-    """Return the live ontology from the vault, else the shipped seed, with
-    the topics the vault's topic cards declare on top of it.
-
-    Callers pass an explicit vault path so this stays a pure function
-    with no env or framework reach. The CLI commands read the path
-    from `config["data_dir"]`, the install hook from `ctx.stack.data`,
-    and the archivist from `MEMORY_VAULT_DIR` in its container.
-
-    A topic card is the household's own topic (`topic_card_titles`). Every
-    writer and reader of tags takes its topics from here, so the topic
-    cards are topics for the tag rule, the search, the format check and
-    the card schemas alike (`stack.tags.with_declared_topics`), while a
-    classifier is still offered the ontology's alone.
-
-    Calling with `None` is the pre-install / test-friendly path:
-    seed-only, no filesystem touch beyond the shipped file.
-    """
-    if vault_path is None:
-        return load_seed_ontology()
-    ontology = load_ontology_from_vault(vault_path) or load_seed_ontology()
-    return with_declared_topics(ontology, topic_card_titles(Path(vault_path)))
-
-
-# A topic's card, in the topic's folder (ADR-017 §10). A memory from before
-# topic cards had a file of their own keeps it as `about.md` there.
-TOPIC_CARDS = (TOPIC_CARD, "about.md")
-
-
-def topic_declared_at(path: str) -> str:
-    """The topic id a topic card at vault path `path` declares, its folder; "" elsewhere.
-
-    >>> topic_declared_at("family/itchy-scratchy-land/topic.md")
-    'itchy-scratchy-land'
-    >>> topic_declared_at("family/itchy-scratchy-land/notes/2026/10/tent-3a338e.md")
-    ''
-    """
-    parts = path.split("/")
-    return parts[1] if len(parts) == 3 and parts[2] in TOPIC_CARDS else ""
-
-
-def topic_card_titles(vault_path: Path) -> dict[str, str]:
-    """Each topic the vault's topic cards declare: its id, the card's folder, to its title.
-
-    A topic card (`<bucket>/<folder>/topic.md`, `type: topic`) is the
-    household's own topic on top of the ontology. Buckets with a folder of
-    one name declare one topic id, titled by the first card in path order.
-    A file that does not read as a topic card declares nothing.
-    """
-    titles: dict[str, str] = {}
-    for name in TOPIC_CARDS:
-        for file in sorted(Path(vault_path).glob(f"*/*/{name}")):
-            try:
-                fields = card_fields(file.read_text(encoding="utf-8"), file)
-            except (OSError, UnicodeDecodeError):
-                continue
-            if fields is None or str(fields.get("type") or "").strip() != "topic":
-                continue
-            topic = topic_declared_at(file.relative_to(vault_path).as_posix())
-            titles.setdefault(topic, str(fields.get("title") or "").strip())
-    return titles
 
 
 # ─── Install (HTTP API) ──────────────────────────────────────────────────
@@ -1282,34 +1116,6 @@ def _resolve_seed_repo_path(rel_path: str, shared_bucket: str) -> str:
 # reads (`cli/_curator.pull_now`). `search_memory` is the search alone.
 
 
-def _parse_frontmatter(text: str, path: Path | str | None = None) -> dict:
-    """Parse vault entry frontmatter using the shared stdlib-only module.
-
-    Delegates to stack.frontmatter.parse, which handles the strict
-    §2 subset per the vault format spec. A page whose frontmatter does
-    not parse is read without it, so search still finds it by its text,
-    and none of its fields are guessed. Pass the page's `path` to have
-    that reported on stderr; a reader that must leave such a card out
-    rather than read it as one without fields calls `card_fields`.
-    """
-    if path is not None:
-        return card_fields(text, path) or {}
-    try:
-        return _parse_frontmatter_new(text)
-    except FrontmatterError:
-        return {}
-
-
-def _fm_list(fm: dict, key: str) -> List[str]:
-    """Read a frontmatter field as a list of strings, regardless of shape."""
-    v = fm.get(key)
-    if isinstance(v, list):
-        return [str(x) for x in v]
-    if isinstance(v, str):
-        return [v]
-    return []
-
-
 def _norm_tag(value: str) -> str:
     """Collapse whitespace and lower-case for tag comparison.
 
@@ -1500,6 +1306,7 @@ def search_memory(
     limit: int = 20,
     fold_diacritics: bool = True,
     search_frontmatter: bool = True,
+    ontology: Optional[Ontology] = None,
 ) -> List[dict]:
     """Walk the vault, return result dicts, most relevant first.
 
@@ -1519,7 +1326,10 @@ def search_memory(
     path starts with any prefix. `None` means no scope filter (all
     docs allowed); an empty list means no docs allowed -- the
     archivist passes a closed scope set for unknown senders so they
-    can't read personal notes by accident.
+    can't read personal notes by accident. `ontology` resolves a tag's
+    label to its topic id; the vault's (`get_ontology`) when not given.
+    The search command passes the instance's (`get_ontology(vault,
+    shared_bucket)`), whose shared bucket titles a topic id two buckets share.
 
     Returns dicts with keys `path`, `rel`, `title`, `date`,
     `persons`, `tags`, `excerpt`, `matched_terms`, and `fields` (the
@@ -1568,14 +1378,13 @@ def search_memory(
 
     from stack.tags import tag_for, tag_words
 
-    ontology = get_ontology(vault)
+    ontology = ontology or get_ontology(vault)
 
     def tag_key(tag: str) -> str:
         return tag_for(tag, ontology) or _norm_tag(tag)
 
-    persons = persons or []
     tags = tags or []
-    want_persons = {p.lower() for p in persons}
+    want_persons = {p.lower() for p in persons or []}
     want_tags = {tag_key(t) for t in tags}
 
     # Normalize scopes: ensure each prefix ends with "/" so "marge"
@@ -2399,71 +2208,24 @@ def declare_cards(memory: MemoryAPI, vault: Path, *,
 # they are signed (`stack.digest`), and 0010 signs the ones the compile
 # still owns again, so they stay the compile's.
 
-def topic_tags_for(vault: Path) -> CardLinks:
-    """What tags the topics of the working copy `vault`'s cards by id.
-
-    Each tag that names a topic of the vault's ontology (`ontology.toml`,
-    else the shipped seed), by its id or its label in any language,
-    becomes the id; every other tag is lowercased with hyphens; two that
-    become one are one, in the place of the first. A tag that is no
-    keyword even so stays as it is and is listed in `left`
-    (`stack.tags.with_topic_tags`). Diary cards are left alone: they are
-    `diary_topic_tags_for`'s.
-    """
-    from stack.tags import with_topic_tags
-
-    ontology = get_ontology(vault)
-    texts = _markdown_files(vault)
-    found = CardLinks()
-    for path in sorted(texts):
-        if _parse_frontmatter(texts[path], path).get("type") == "diary":
-            continue
-        text, left = with_topic_tags(texts[path], ontology)
-        found.left += [f"{path}: tag {tag!r} is no topic and no keyword" for tag in left]
-        if text != texts[path]:
-            found.changes[path] = text
-    return found
-
-
-def tag_topics_by_id(memory: MemoryAPI, vault: Path, *,
+def tag_topics_by_id(memory: MemoryAPI, vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET,
                      trailer: str = "") -> tuple[CardLinks, str | None]:
     """Tag the topics of `vault`'s cards by id (`topic_tags_for`), in one
     commit by the memory bot; what the pass found and the commit's sha."""
-    found = topic_tags_for(vault)
+    from .place_tags import topic_tags_for
+
+    found = topic_tags_for(vault, shared_bucket=shared_bucket)
     title = f"tag topics by id in {len(found.changes)} card(s)"
     return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 
 
-def diary_topic_tags_for(vault: Path) -> CardLinks:
-    """What tags the topics of the working copy `vault`'s diary cards by id.
-
-    The rule of every other card (`topic_tags_for`): a topic's label in
-    any language becomes its id, every other tag is lowercased with
-    hyphens, and a tag that is no keyword even so stays and is listed in
-    `left`. A card the compile still owns is signed again
-    (`stack.digest.signed`), so it is what the compile writes today; a
-    card a person changed gets ids too, and stays unsigned and theirs.
-    """
-    from stack.digest import changed_by_hand, signed
-    from stack.tags import with_topic_tags
-
-    ontology = get_ontology(vault)
-    found = CardLinks()
-    for path, text in sorted(_markdown_files(vault).items()):
-        if _parse_frontmatter(text, path).get("type") != "diary":
-            continue
-        new, left = with_topic_tags(text, ontology)
-        found.left += [f"{path}: tag {tag!r} is no topic and no keyword" for tag in left]
-        if new != text:
-            found.changes[path] = new if changed_by_hand(text) else signed(new)
-    return found
-
-
-def tag_diary_topics_by_id(memory: MemoryAPI, vault: Path, *,
+def tag_diary_topics_by_id(memory: MemoryAPI, vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET,
                            trailer: str = "") -> tuple[CardLinks, str | None]:
     """Tag the topics of `vault`'s diary cards by id (`diary_topic_tags_for`),
     in one commit by the memory bot; what the pass found and the commit's sha."""
-    found = diary_topic_tags_for(vault)
+    from .place_tags import diary_topic_tags_for
+
+    found = diary_topic_tags_for(vault, shared_bucket=shared_bucket)
     title = f"tag topics by id in {len(found.changes)} diary card(s)"
     return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 

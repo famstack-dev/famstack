@@ -1,6 +1,6 @@
 """The model's reading of an entry for its card: title, summary, facts, people.
 
-    extractions = await extract_all(entries, llm, cache, ontology=ontology, ...)
+    extractions = await extract_all(entries, llm, cache, topics=vocabulary, ...)
     current_template(entry)    # the fingerprint of the prompt this entry is read under
 
 One call per entry, after the entries are compiled, because the entry is
@@ -186,7 +186,7 @@ def sure_quotes(quotes, event_ids) -> list[str]:
             if not set(re.findall(r"[\wÀ-ɏ]+", q.lower())) & unsure]
 
 
-async def extract_all(entries, llm, cache, *, ontology, people: dict,
+async def extract_all(entries, llm, cache, *, topics, people: dict,
                        declared: list[DeclaredPerson] | None,
                        vocabulary: str, people_section: str,
                        language_code: str, current: bool = False,
@@ -216,7 +216,7 @@ async def extract_all(entries, llm, cache, *, ontology, people: dict,
         raw, template = await _answer_for(entry, on_file(entry), llm, cache,
                                           vocabulary=vocabulary, people_section=people_section)
         extraction = extraction_from(
-            raw, ontology=ontology, language=language_code, people=people,
+            raw, topics=topics, people=people,
             declared=declared, model=model)
         report_unknown(entry_id, extraction)
         out.append(replace(extraction, template=template,

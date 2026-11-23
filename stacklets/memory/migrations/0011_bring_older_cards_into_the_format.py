@@ -22,7 +22,8 @@ id, and its note id in `former_card_ids`, so a link to the note id still finds
 it); renames the two fields; then the passes of 0002, 0003, 0004, 0006 and
 0008, which now see these cards. On every record, of any age, `persons` keeps
 declared people by id and `tags` follow the archivist's rule (`Moe's` becomes
-`moe-s`). No model is called.
+`moe-s`), with the topics of the card's place: a person's private topic is a
+topic only on a card in that person's bucket. No model is called.
 
 A card's text changes only where 0003 and 0008 change it. A name nobody goes
 by leaves `persons`, and a tag with no letter leaves `tags`, each named in the
@@ -63,7 +64,6 @@ from ..lib import (
     card_ids_for,
     card_kinds_for,
     declared_cards_for,
-    get_ontology,
     memory_for_migration,
     note_sources_for,
     people_by_id_for,
@@ -76,6 +76,8 @@ from stack.frontmatter import with_field
 from stack.people import load_people
 from stack.tags import card_tags
 from stack.vault import DEFAULT_SHARED_BUCKET
+
+from ..place_tags import vocabularies
 
 REPO = "family/memory"
 
@@ -169,7 +171,7 @@ def repair_of(copy: Path, *, shared_bucket: str, media_root: Path | None) -> Rep
         card_ids_for,
         *people_passes,
         lambda at: declared_cards_for(at, shared_bucket=shared_bucket),
-        record_tags_for,
+        lambda at: record_tags_for(at, shared_bucket=shared_bucket),
         card_kinds_for,
         email_fields_for,
         lambda at: note_sources_for(at, media_root=media_root),
@@ -314,14 +316,17 @@ def record_persons_for(copy: Path, *, shared_bucket: str) -> CardLinks:
     return found
 
 
-def record_tags_for(copy: Path) -> CardLinks:
-    """Each record's tags as the archivist writes them (`stack.tags.card_tags`).
-    A tag with no letter leaves them and is listed in `left`, and a `Person:`
-    tag goes, as in 0003. With an ontology that cannot be read no tag can be
+def record_tags_for(copy: Path, *, shared_bucket: str) -> CardLinks:
+    """Each record's tags as the archivist writes them: the topics of its
+    place (`stacklets.memory.place_tags.vocabularies`), so a private
+    topic's title on a card in another bucket stays a keyword. A tag with
+    no letter leaves them and is listed in `left`, and a `Person:` tag
+    goes, as in 0003. With an ontology that cannot be read no tag can be
     read, so all stay, and `left` says why."""
     found = CardLinks()
+    vocabulary = vocabularies(copy, shared_bucket=shared_bucket)
     try:
-        ontology = get_ontology(copy)
+        vocabulary(shared_bucket)
     except Exception as e:  # noqa: BLE001 - a hand edit can break it in many ways, none may hold the bots
         found.left.append(f"ontology.toml cannot be read ({e!r}), so no card's tags were changed")
         return found
@@ -330,6 +335,7 @@ def record_tags_for(copy: Path) -> CardLinks:
         tags = fields.get("tags")
         if _type_of(fields) not in LINKED_RECORDS or not isinstance(tags, list):
             continue
+        ontology = vocabulary(path).ontology
         kept = without_person_tags([str(t) for t in tags])
         written = card_tags(kept, ontology)
         if written != tags:

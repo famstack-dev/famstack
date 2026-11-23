@@ -76,6 +76,7 @@ units = [
     "cards",
     "digest",
     "email_message",
+    "filing",
     "links",
     "list_doc",
     "lists",
@@ -86,6 +87,7 @@ units = [
     "page_patch",
     "people",
     "tags",
+    "topics",
     "vault",
 ]
 

@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 
-from stacklets.memory.lib import (  # noqa: E402
-    Person,
+from stack.people.names import (  # noqa: E402
+    PersonPage,
     load_persons_from_vault,
     persons_prompt_section,
 )
@@ -59,7 +59,7 @@ canonical: Homer
 """)
         persons = load_persons_from_vault(vault)
         assert persons == [
-            Person(
+            PersonPage(
                 canonical="Homer",
                 slug="homer",
                 synonyms=[],
@@ -120,7 +120,7 @@ canonical: Duff Insurance
 
     def test_falls_back_to_slug_when_canonical_absent(self, vault):
         # A freshly-created entity bucket without curated frontmatter
-        # should still surface as a Person so the classifier sees
+        # should still surface as a PersonPage so the classifier sees
         # the name; the slug stands in for the canonical until the
         # household edits the page.
         _write_about(vault, "lisa", "---\ntitle: Lisa\n---\n")
@@ -152,7 +152,7 @@ class TestPersonsPromptSection:
 
     def test_renders_canonical_only(self):
         [section] = [persons_prompt_section([
-            Person(canonical="Homer", slug="homer"),
+            PersonPage(canonical="Homer", slug="homer"),
         ])]
         assert section == (
             "Family members (canonical first name; synonyms in parens):\n"
@@ -161,9 +161,9 @@ class TestPersonsPromptSection:
 
     def test_renders_synonyms_inline(self):
         section = persons_prompt_section([
-            Person(canonical="Marge", slug="marge",
+            PersonPage(canonical="Marge", slug="marge",
                    synonyms=["Marjorie", "Marge Bouvier"]),
-            Person(canonical="Homer", slug="homer"),
+            PersonPage(canonical="Homer", slug="homer"),
         ])
         assert section == (
             "Family members (canonical first name; synonyms in parens):\n"

@@ -22,7 +22,7 @@ from pathlib import Path, PurePosixPath
 from stack.cards.commits import SUBJECTS, NoServerName, commit_author, commit_subject
 from stack.memory import MEMORY_BOT
 from stack.cards.history import LOG_FORMAT, Commit, Version, card_versions, parse_blobs, parse_log
-from stack.cards.lookup import find_by_card_id
+from stack.cards.lookup import find_by_card_id, find_filed_from
 from stack.cards.tree import remove_file
 
 from ._git import NETWORK_TIMEOUT_S, PUSH_REFUSED, Git, GitFailed, Ran
@@ -261,6 +261,22 @@ class CardStore:
         current = self.read(found.path) if found else None
         return File(current.path, current.text, current.version, found.card_id) \
             if found and current else None
+
+    @_in_the_clone("find a capture")
+    def filed_from(self, source_id: str, *, under: str) -> File | None:
+        """The note filed from the message `source_id`, under the folder
+        `under` at any depth, as the last commit left it; None when none was.
+
+        Only a source of role `original` counts, and a note with no sidecar
+        by its frontmatter's `capture_id` (`stack.cards.lookup.find_filed_from`).
+        The curator answers it from its own clone, which every write goes
+        through, so a capture filed a moment ago is found.
+        """
+        under = _directory(under)
+        self._require_clone()
+        found = find_filed_from(source_id, under=under, root=self.repo)
+        current = self.read(found) if found else None
+        return File(current.path, current.text, current.version) if current else None
 
     @_in_the_clone("compare two commits")
     def includes(self, commit: str, *, later: str) -> bool:
