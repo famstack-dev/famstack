@@ -24,6 +24,7 @@ units = [
     "clock",
     "config_file",
     "configure",
+    "core_refresh",
     "devices",
     "docker",
     "doctor",

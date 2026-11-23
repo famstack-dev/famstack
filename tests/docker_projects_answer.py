@@ -4,12 +4,23 @@ Run as `python -I docker_projects_answer.py <folder> <docker args>`. It reads
 `<folder>/state.json` on every call, writes the command to
 `<folder>/commands.log` and answers as a real daemon would. Standard library
 only, because `-I` keeps the test session out and every `docker` call starts
-a new interpreter.
+a new interpreter. PyYAML is the one exception: it comes with the test
+interpreter, and a compose file is YAML.
+
+Compose is answered for the environment of each service, as far as the
+stack reads it back: `compose config --format json` resolves each service's
+`env_file` and `environment:` with `${VAR}` and `${VAR:-default}` from the
+project's `.env`, and `compose up` creates the services it names, or all of
+them, with that environment. `inspect <container>` with the `.Config.Env`
+format then answers the environment the container was created with, so a
+test sees which containers a `compose up` replaced and what they run with.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -35,6 +46,65 @@ def _runs(state: dict, container: str) -> bool:
     """Whether `container` (`stack-<id>` or `stack-<id>-<service>`) belongs to a stacklet set."""
     parts = container.split("-")
     return len(parts) > 1 and parts[0] == "stack" and parts[1] in state["projects"]
+
+
+# ── Compose files: what each service is created with ────────────────────
+
+_DOTENV_LINE = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\]|\\.)*)"$')
+_VARIABLE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^}]*))?\}")
+
+
+def _dotenv(path: Path) -> dict[str, str]:
+    """A `.env` as `stack.env_file` writes it: `KEY="value"` lines."""
+    if not path.exists():
+        return {}
+    found = (_DOTENV_LINE.match(line) for line in path.read_text().splitlines())
+    return {m.group(1): re.sub(r"\\(.)", r"\1", m.group(2)) for m in found if m}
+
+
+def _services(compose_file: Path) -> dict[str, dict]:
+    """Each service of `compose_file`, by name, with `container` and the
+    `environment` compose resolves for it; nothing for a file that is not
+    there or not YAML."""
+    try:
+        import yaml
+        parsed = yaml.safe_load(compose_file.read_text()) or {}
+    except Exception:
+        return {}
+    folder = compose_file.parent
+    variables = {**_dotenv(folder / ".env"), **os.environ}
+
+    def fill(value) -> str:
+        return _VARIABLE.sub(lambda m: variables.get(m.group(1)) or (m.group(2) or ""), str(value))
+
+    services = {}
+    for name, service in (parsed.get("services") or {}).items():
+        env: dict[str, str] = {}
+        for entry in service.get("env_file") or []:
+            env.update(_dotenv(folder / (entry if isinstance(entry, str) else entry["path"])))
+        block = service.get("environment") or {}
+        pairs = block.items() if isinstance(block, dict) else (
+            item.partition("=")[::2] for item in block)
+        env.update({key: fill(value) for key, value in pairs})
+        services[name] = {"container": service.get("container_name", name), "environment": env}
+    return services
+
+
+def _compose_file(argv: list[str]) -> Path:
+    return Path(argv[argv.index("-f") + 1]) if "-f" in argv else Path("docker-compose.yml")
+
+
+def _create(folder: Path, state: dict, argv: list[str]) -> None:
+    """Record the containers a `compose up` creates: the services after
+    `--force-recreate`, or every service of the file."""
+    services = _services(_compose_file(argv))
+    named = argv[argv.index("--force-recreate") + 1:] if "--force-recreate" in argv else []
+    created = {services[n]["container"]: services[n]["environment"]
+               for n in (named or services) if n in services}
+    state["containers"] = {**state.get("containers", {}), **created}
+    (folder / "state.json").write_text(json.dumps(state))
+    with (folder / "recreated.log").open("a") as log:
+        log.write(json.dumps([_compose_file(argv).parent.name, sorted(created)]) + "\n")
 
 
 def _answer(folder: Path, argv: list[str]) -> int:
@@ -63,13 +133,23 @@ def _answer(folder: Path, argv: list[str]) -> int:
     if argv[:1] == ["info"] or argv[:2] in (["network", "inspect"], ["network", "create"]):
         return 0
     if argv[:1] == ["compose"] and "config" in argv:
-        print(json.dumps({"services": {}}))
+        services = _services(_compose_file(argv))
+        print(json.dumps({"services": {name: {"container_name": s["container"],
+                                              "environment": s["environment"]}
+                                       for name, s in services.items()}}))
         return 0
     step = next((a for a in argv if a in COMPOSE_STEPS), None) if argv[:1] == ["compose"] else None
     if step:
         message = state["fail"].get(step)
         print(message or "", file=sys.stderr, end="")
+        if step == "up" and not message:
+            _create(folder, state, argv)
         return 1 if message else 0
+    if (argv[:1] == ["inspect"] and any("{{range .Config.Env}}" in a for a in argv)
+            and argv[1] in state.get("containers", {})):
+        for key, value in state["containers"][argv[1]].items():
+            print(f"{key}={value}")
+        return 0
     if argv[:1] == ["exec"] and _runs(state, argv[1]):
         message = state.get("exec_fail")
         print(message or "", file=sys.stderr, end="")

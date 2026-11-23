@@ -20,14 +20,17 @@ The states are the ones `stack list` shows: `running`, `starting`,
 `docker compose ls`, the way a real daemon words it.
 
     docker compose ls ...             one row per stacklet set
-    docker compose up|pull|down ...   exit 0, or the failure set with `fail`
+    docker compose up|pull|down ...   exit 0, or the failure set with `fail`;
+                                      `up` creates the services it names, or all
+    docker compose config             each service's resolved environment
+    docker inspect --format {{range .Config.Env}}...
+                                      the environment `up` created it with
     docker exec <container> ...       exit 0 in a container of a stacklet that
                                       runs, or the failure set with `exec_fails`;
                                       "No such container" otherwise
     docker info                       exit 0, or 1 after `daemon_down`
     docker context ls --format json   one context, orbstack
     docker network inspect|create     exit 0
-    docker compose config             no services
     docker ps ...                     the commits set with `commits`
     docker inspect | exec | logs ...  "No such container", exit 1
 
@@ -106,12 +109,25 @@ class Docker:
     def forget(self) -> None:
         """Start the record again, for what a test does after its setup."""
         (self.folder / "commands.log").unlink(missing_ok=True)
+        (self.folder / "recreated.log").unlink(missing_ok=True)
 
     def compose_steps(self) -> list[str]:
         """The `docker compose` steps that changed something, oldest first."""
         steps = [next((a for a in argv if a in COMPOSE_STEPS), "") for argv in self.commands()
                  if argv[:1] == ["compose"]]
         return [step for step in steps if step]
+
+    def recreated(self, stacklet: str) -> list[list[str]]:
+        """The containers each `compose up` of `stacklet` created, oldest
+        first: `[["stack-core-bot-runner"]]` for one up of one service."""
+        log = self.folder / "recreated.log"
+        ups = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+        return [containers for sid, containers in ups if sid == stacklet]
+
+    def container_env(self, container: str) -> dict[str, str]:
+        """The environment `container` was created with; empty when no
+        `compose up` created it."""
+        return self._read().get("containers", {}).get(container, {})
 
     def _read(self) -> dict:
         return json.loads(self._state.read_text())
