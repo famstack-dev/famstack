@@ -220,17 +220,55 @@ def test_a_stack_toml_that_names_no_data_folder_keeps_the_secrets(
     assert default.read_text() == "not this instance's"
 
 
-def test_nothing_set_up_removes_the_secrets(checkout, tmp_path, instance):
-    """Given an instance where nothing was set up (no marker, no container,
-    no data folder), when the admin uninstalls, then `.stack/` goes with
-    its secrets: there is no data they could open."""
+def _nothing_set_up(tmp_path, instance) -> None:
+    """Take the instance back to one where nothing was set up: no setup
+    marker, no stacklet's secret, no data folder."""
     for marker in (instance / ".stack").glob("*.setup-done"):
         marker.unlink()
     shutil.rmtree(tmp_path / "data")
 
+
+def test_nothing_set_up_removes_the_secrets(checkout, tmp_path, instance):
+    """Given an instance where nothing was set up (no marker, no container,
+    no data folder), when the admin uninstalls, then `.stack/` goes with
+    its secrets: there is no data they could open."""
+    _nothing_set_up(tmp_path, instance)
+
     _uninstall(checkout, answer=None)
 
     assert not (instance / ".stack").exists()
+
+
+def _a_container(tmp_path, instance, docker_with_projects) -> None:
+    docker_with_projects(photos="stopped")
+
+
+def _a_folder_in_the_default_data_folder(tmp_path, instance, docker_with_projects) -> None:
+    (instance / "stack.toml").write_text('[core]\nname = "stack"\n')
+    (tmp_path / "stack-data" / "photos").mkdir(parents=True)
+
+
+def _a_secrets_file_that_cannot_be_read(tmp_path, instance, docker_with_projects) -> None:
+    (instance / ".stack" / "secrets.toml").write_text("[photos\nDB_PASSWORD = ")
+
+
+@pytest.mark.parametrize("sign", [_a_container, _a_folder_in_the_default_data_folder,
+                                  _a_secrets_file_that_cannot_be_read],
+                         ids=["container", "default-data-folder", "unreadable-secrets"])
+def test_one_sign_of_a_setup_keeps_the_secrets(
+        checkout, tmp_path, instance, docker_with_projects, sign):
+    """Given an instance with no data folder and one sign that something
+    was set up (a stacklet's container, its folder in the default data
+    folder, a secrets file that cannot be read), when the admin
+    uninstalls, then `secrets.toml` stays: the sign says data may exist
+    somewhere the uninstall cannot see, and its databases need the
+    passwords."""
+    _nothing_set_up(tmp_path, instance)
+    sign(tmp_path, instance, docker_with_projects)
+
+    _uninstall(checkout, answer=None)
+
+    assert (instance / ".stack" / "secrets.toml").exists()
 
 
 def test_the_checkouts_own_config_stays(checkout):

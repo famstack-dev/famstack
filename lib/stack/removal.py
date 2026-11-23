@@ -248,7 +248,7 @@ def _uninstall(stck, exclude: list[str], name: str) -> None:
     # Read before the teardown and `_remove_config` remove what they read:
     # stack.toml, the setup markers.
     data = _named_data_dir(stck)
-    set_up = _ever_set_up(stck, data)
+    set_up = _ever_set_up(stck)
 
     # An excluded stacklet keeps its container, data dir, setup marker and
     # secrets: everything needed to resume on the next `stack up`.
@@ -376,11 +376,13 @@ def _named_data_dir(stck) -> Path | None:
         return None
 
 
-def _ever_set_up(stck, data: Path | None) -> bool:
+def _ever_set_up(stck) -> bool:
     """Whether anything of the stack was set up: a setup marker or a run
-    stamp in `.stack/`, a stacklet's own secret, a container, or a
-    stacklet's folder in the data folder stack.toml names or in the
-    default one.
+    stamp in `.stack/`, a stacklet's own secret (or a secrets file that
+    cannot be read), a container, or a stacklet's folder in the stack's
+    data folder. That folder is the one stack.toml names, or the default
+    one when it names none; it matters only when the named folder is not
+    there, so in practice it is the default folder.
 
     The secret counts because a declined uninstall removes the markers
     and stack.toml but keeps the secrets: a stacklet's generated password
@@ -397,8 +399,7 @@ def _ever_set_up(stck, data: Path | None) -> bool:
         return True
     if docker.all_project_ids():
         return True
-    folders = {d for d in (data, stck.data) if d is not None}
-    return any((d / sid).exists() for d in folders for sid in ids)
+    return any((stck.data / sid).exists() for sid in ids)
 
 
 def _secrets_may_go(stck, data: Path | None, set_up: bool, exclude: list[str]) -> bool:
