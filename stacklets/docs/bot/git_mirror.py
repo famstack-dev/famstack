@@ -829,10 +829,19 @@ class GitMirror:
         and surfaced as None, so the caller can answer that it found nothing.
         """
         try:
-            return await asyncio.to_thread(self.memory.file, path)
+            return await self.file_at(path)
         except (Refused, CuratorDown) as e:
             logger.warning("[git-mirror] reading {} failed: {}", path, e)
             return None
+
+    async def file_at(self, path: str) -> File | None:
+        """The file at `path` with its version, None when the memory has no such file.
+
+        A curator that cannot answer raises `Refused` or `CuratorDown`, so a
+        caller that must tell "not there" from "not answered" (a note's
+        sidecar) can.
+        """
+        return await asyncio.to_thread(self.memory.file, path)
 
     def card_context(self) -> CardContext:
         """What a capture's card is written against here (`stack.filing.cards.CardContext`):

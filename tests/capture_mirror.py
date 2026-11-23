@@ -59,4 +59,8 @@ class FakeMirror:
         text = self._stored.get(path)
         return File(path, text, "") if text is not None else None
 
+    async def file_at(self, path):
+        """`read_file`: this stand-in's curator always answers."""
+        return await self.read_file(path)
+
     _stored: dict = {}

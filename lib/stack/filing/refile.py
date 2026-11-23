@@ -5,7 +5,7 @@
                              added=[reply])
     refiling = refiling_of(note, sources)
     filing = await refile(note, refiling, policy, reader=reading, writer=mirror,
-                          household=vault, by="@lisa:simpson")
+                          directory=vault, by="@lisa:simpson")
 
 A note's sources are its record (ADR-018): the messages it was sent as
 (each an `original`), the replies and notes added since, and a person's
@@ -56,7 +56,7 @@ from ..cards.sources import (
 )
 from ..frontmatter import FrontmatterError, parse
 from .capture import Capture, KeptTags, Origin, Refile
-from .file import Filing, Household, Reader, Writer, file
+from .file import Filing, Directory, Reader, Writer, file
 from .policy import Policy
 
 __all__ = ["NoteRead", "Rebuild", "Refiling", "originals", "refile", "refile_sources", "refiling_of"]
@@ -216,7 +216,7 @@ def refiling_of(note: NoteRead, sources: Sequence[Source]) -> Refiling:
 
 
 async def refile(note: NoteRead, refiling: Refiling, policy: Policy, *, reader: Reader,
-                 writer: Writer, household: Household | None, by: str, content,
+                 writer: Writer, directory: Directory | None, by: str, content,
                  requested_by: str = "", own_tags: KeptTags | None = None,
                  channel: str = "chat") -> Filing:
     """File the note again from `refiling`, as `policy` places it, on the versions `note` was read at.
@@ -230,7 +230,7 @@ async def refile(note: NoteRead, refiling: Refiling, policy: Policy, *, reader: 
     since `note` was read is refused: `not_changed`, reason `changed`.
 
         filing = await refile(note, refiling, Policy(room_topics=("camping",)),
-                              reader=reading, writer=mirror, household=vault,
+                              reader=reading, writer=mirror, directory=vault,
                               by="@lisa:simpson", content=words)
         filing.status    # 'filed'
     """
@@ -242,7 +242,7 @@ async def refile(note: NoteRead, refiling: Refiling, policy: Policy, *, reader: 
     again = Refile(note.path, by=by, own_tags=own_tags,
                    ops=note.history.ops if note.history else (),
                    requested_by=requested_by, people=tuple(_persons(fields)))
-    return await file(capture, policy, reader=reader, writer=writer, household=household,
+    return await file(capture, policy, reader=reader, writer=writer, directory=directory,
                       refile=again, base=note.version, sidecar_base=note.sidecar_version)
 
 

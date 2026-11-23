@@ -12,6 +12,6 @@ of its sources when someone corrects it.
 `stack.filing.vocabulary` is the topics a card may carry at its place;
 `stack.filing.topic_list` is the list of them a model chooses from, and
 reading its choice back; `stack.filing.card_tags` puts a card's tags
-together. `stack.filing.people` is the household's people a capture's card
+together. `stack.filing.people` is the known people a capture's card
 names.
 """

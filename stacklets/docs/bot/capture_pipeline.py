@@ -1,9 +1,10 @@
 """CapturePipeline — URL/text capture → classify → mirror → outcome.
 
 The capture flow, lifted out of ArchivistBot. Far leaner than the
-document pipeline: no Paperless write, no entity reconciliation, no
-event envelope — a URL or a pasted note becomes a summarised markdown
-entry in the sender's own vault bucket.
+document pipeline: no Paperless write, no entity reconciliation. A URL
+or a pasted note becomes a summarised markdown entry in the sender's
+own vault bucket, and the outcome carries the event envelope that tells
+the other bots about it.
 
 Like DocumentPipeline, it does the work (no Matrix, no i18n) and returns
 a CaptureOutcome the orchestrator renders. The one mid-flow message —
@@ -108,6 +109,21 @@ TEXT_EXTS = {"md", "markdown", "txt"}
 # (line joins, header normalisation) without letting a half-answer
 # replace the raw OCR.
 _REFORMAT_MIN_RATIO = 0.5
+
+
+class NoteUnreadable(Exception):
+    """A correction cannot start because a read of the note failed.
+
+    ``reason`` is the outcome's failure reason (`sidecar_unreadable` or
+    `history_unreadable`) and ``cause`` the curator's own error. A sidecar
+    that does not exist is no failure. Nothing is written, because
+    refiling without the sidecar's messages or a person's edits would lose
+    them.
+    """
+
+    def __init__(self, reason: str, cause: Exception):
+        super().__init__(reason)
+        self.reason, self.cause = reason, cause
 
 
 @dataclass
@@ -704,10 +720,9 @@ class CapturePipeline:
             if note is None:
                 try:
                     note = await self._note_read(card, meta)
-                except (Refused, CuratorDown) as e:
-                    logger.warning("[capture] {}: its history could not be read ({}), "
-                                   "reprocess skipped", vault_path, e)
-                    return CaptureOutcome(status="not_changed", failure_reason="history_unreadable")
+                except NoteUnreadable as e:
+                    logger.warning("[capture] {}: {} ({}), reprocess skipped", vault_path, e.reason, e.cause)
+                    return CaptureOutcome(status="not_changed", failure_reason=e.reason)
             reply = Source(REPLY, _localpart(sender_mxid), reply_at or now(), "chat", "text",
                            reply_id or new_id("chat"), quote=reply_text.strip())
             return await self._reprocess_note(
@@ -757,10 +772,16 @@ class CapturePipeline:
 
     async def _note_read(self, card: File, meta: dict) -> NoteRead:
         """The note's card, its sidecar and its history, read once, with
-        their versions; the refile is written on them. Raises `Refused` or
-        `CuratorDown` when the history cannot be read (`GitMirror.card_history`)."""
-        side = await self._mirror.read_file(sidecar_path(card.path))
-        history = await self._mirror.card_history(str(meta.get("card_id") or ""))
+        their versions; the refile is written on them. Raises `NoteUnreadable`
+        when the sidecar (a missing one is no failure) or the history cannot be read."""
+        try:
+            side = await self._mirror.file_at(sidecar_path(card.path))
+        except (Refused, CuratorDown) as e:
+            raise NoteUnreadable("sidecar_unreadable", e) from e
+        try:
+            history = await self._mirror.card_history(str(meta.get("card_id") or ""))
+        except (Refused, CuratorDown) as e:
+            raise NoteUnreadable("history_unreadable", e) from e
         return NoteRead(card.path, card.text, card.version, side.text if side else "",
                         side.version if side else "", history)
 
@@ -803,7 +824,7 @@ class CapturePipeline:
         policy = Policy(room_topics=(found_topic[1],) if found_topic else (), read_in=read_in,
                         keep_body=self.capture_keep_body)
         filing = await refile(note, refiling, policy, reader=reader, writer=self._mirror,
-                              household=self._vault, by=sender_mxid, content=content,
+                              directory=self._vault, by=sender_mxid, content=content,
                               requested_by=requested_by, own_tags=own_tags,
                               channel=_channel_of(refiling.capture_id))
         return self._outcome(filing, source=content, display_link="(capture)", kind="note",
@@ -925,7 +946,7 @@ class CapturePipeline:
         refile = Refile(existing_path or "", by=actor or "", own_tags=own_tags,
                         words=correction_words) if reclassified else None
         filing = await file(capture, policy, reader=reader, writer=self._mirror,
-                            household=self._vault, refile=refile)
+                            directory=self._vault, refile=refile)
         return self._outcome(filing, source=source, display_link=display_link, kind=kind,
                              reclassified=reclassified, actor=actor, capture_id=capture_id,
                              user_hint=user_hint or "", transcribed=transcribed)

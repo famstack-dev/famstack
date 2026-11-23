@@ -91,6 +91,17 @@ class HistoryDown(MemoryAPI):
         return super().versions(card_id)
 
 
+class SidecarDown(MemoryAPI):
+    """The curator's API, whose answer for a note's sidecar can be made a server fault (a missing one stays a 404)."""
+
+    unreadable = False
+
+    def file(self, path):
+        if self.unreadable and path.endswith(".json"):
+            raise Refused(500, "unknown", "the sidecar could not be read")
+        return super().file(path)
+
+
 @pytest.fixture
 async def room(tmp_path, memory, httpserver):
     """Marge's capture room with a model that Lisa's edit can interrupt."""
@@ -270,6 +281,45 @@ async def test_a_reply_while_the_history_cannot_be_read_writes_nothing_and_loses
         assert chat.reactions_on("$fix") == [FAILED_MARK]
     finally:
         await chat.close()
+
+
+async def test_a_reply_while_the_sidecar_cannot_be_read_names_that_as_the_reason(
+        tmp_path, memory, httpserver):
+    """Given Marge's note with a sidecar, when the curator cannot give the sidecar (a server fault) and
+    Marge replies, then nothing is written and the answer says the sidecar could not be read, not that
+    the note has no original."""
+    api = SidecarDown.from_container(memory.environ)
+    chat = ChatRoom(tmp_path, memory, httpserver, ModelAnswers(FILED), memory_api=api)
+    try:
+        await a_filed_grill_note(chat, memory)
+        api.unreadable = True
+        commits = len(memory.authors())
+        before = len(chat.notices())
+
+        await chat.says(MARGE, "Call it Charcoal and propane", event_id="$fix", thread="$grill")
+
+        assert len(memory.authors()) == commits
+        assert chat.reactions_on("$fix") == [FAILED_MARK]
+        answers = " ".join(e.body for e in chat.notices()[before:])
+        assert "sidecar" in answers and "no original" not in answers
+    finally:
+        await chat.close()
+
+
+async def test_a_reply_in_a_note_with_no_sidecar_is_answered_as_a_missing_one_not_an_unreadable_one(
+        room, memory):
+    """Given Marge's note whose sidecar does not exist (the curator answers 404), when Marge replies in its
+    thread, then nothing is written and the answer is the one for a note with nothing to rebuild from, not
+    the one for a sidecar that could not be read."""
+    path = await a_filed_grill_note(room, memory)
+    memory.edited_in_forgejo({}, removed=(path.removesuffix(".md") + ".json",))
+    before, commits = len(room.notices()), len(memory.authors())
+
+    await room.says(MARGE, "Call it Charcoal and propane", event_id="$fix", thread="$grill")
+
+    answers = " ".join(e.body for e in room.notices()[before:])
+    assert len(memory.authors()) == commits and room.reactions_on("$fix") == [FAILED_MARK]
+    assert "no original" in answers and "sidecar" not in answers
 
 
 # ── A reply is a source by its id ─────────────────────────────────────

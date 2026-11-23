@@ -1,4 +1,4 @@
-"""Writing a capture's card into the family memory: one curator commit, then the after-steps.
+"""Writing a capture's card into the memory: one curator commit, then the after-steps.
 
     filed = await write_capture(memory, setting, after, via="archivist-bot",
                                 entity="marge", kind="note", classification=reading, ...)

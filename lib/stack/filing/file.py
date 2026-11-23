@@ -1,7 +1,7 @@
 """Filing a capture: the steps from what a person sent to its card in the memory.
 
     filing = await file(capture, policy, reader=reading, writer=mirror,
-                        household=vault)
+                        directory=vault)
     filing.status        # 'filed'
     filing.filed.path    # 'marge/notes/2026/11/grill-charcoal-0c401e.md'
 
@@ -15,7 +15,7 @@ correction files through them again (`Refile`):
       │                         its message, then nothing is written
       │ 2 the topics shown      the place's vocabulary, as the room may read it
       │ 3 the reading           Reader: the model's answer (the intake's port)
-      │ 4 the people            who the card is about, by the household's ids
+      │ 4 the people            who the card is about, by the known people's ids
       │ 5 the tags              the room's topic, the keywords, the topics chosen
       │ 6 the write             Writer: one curator commit, then the after-steps
       │ 7 a renamed topic       written again under the topic's new id
@@ -63,7 +63,7 @@ from .topic_list import topics_to_choose
 from .vocabulary import Vocabulary
 from .write import Filed, NotFiled
 
-__all__ = ["Filing", "Household", "Reader", "Reading", "Writer", "file"]
+__all__ = ["Filing", "Directory", "Reader", "Reading", "Writer", "file"]
 
 
 # ── The ports ─────────────────────────────────────────────────────────
@@ -104,11 +104,11 @@ class Reader(Protocol):
     async def read(self, *, entity: str, topics: list[str] | None) -> Reading: ...
 
 
-class Household(Protocol):
-    """The household a card is filed for: its topics, its people, its language and its memory.
+class Directory(Protocol):
+    """The place a card is filed in: its topics, its people, its language and its memory.
 
-        household.vocabulary("family/camping", read_in="family")   # what the room may see
-        household.known_people()                                    # People, by their ids
+        directory.vocabulary("family/camping", read_in="family")   # what the room may see
+        directory.known_people()                                    # People, by their ids
     """
 
     language: str
@@ -168,7 +168,7 @@ class Filing:
 
 
 async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writer,
-               household: Household | None, refile: Refile | None = None,
+               directory: Directory | None, refile: Refile | None = None,
                base: str | None = None, sidecar_base: str | None = None) -> Filing:
     """File `capture` into the memory, as `policy` places it; `refile` files it again as its card.
 
@@ -179,7 +179,7 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
     written on ("" for a new file); None writes on the ones read at write
     time. A note's first filing names none: it is written on an empty base
     at a free name, or on the card filed from its message
-    (`stack.filing.write.write_capture`). ``household`` is None when the intake has no memory
+    (`stack.filing.write.write_capture`). ``directory`` is None when the intake has no memory
     to read (no topics are shown, nobody is placed by id).
 
     Returns a `Filing`. Never raises for the memory or the model: a write
@@ -188,7 +188,7 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
 
         filing = await file(Capture(kind="note", content=words, origin=marge),
                             Policy(bucket="family/camping", room_topics=("camping",)),
-                            reader=reading, writer=mirror, household=vault)
+                            reader=reading, writer=mirror, directory=vault)
         filing.filed.path   # 'family/camping/notes/2026/11/tent-3a338e.md'
     """
     origin = capture.origin
@@ -205,13 +205,13 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
             return Filing("on_file", entity, dict(stored.card),
                           Filed(stored.path, stored.card_id, card=dict(stored.card)),
                           captured_at=stored.captured_at)
-    resolver, shown = _vocabularies(capture, policy, household, folder=(refile.existing_path if refile else "") or entity)
+    resolver, shown = _vocabularies(capture, policy, directory, folder=(refile.existing_path if refile else "") or entity)
 
     reading = await reader.read(
         entity=entity,
-        topics=topics_to_choose(shown, household.language) if shown is not None and household else None)
+        topics=topics_to_choose(shown, directory.language) if shown is not None and directory else None)
     classification = reading.classification
-    unplaced = _place_people(capture, classification, household, refile)
+    unplaced = _place_people(capture, classification, directory, refile)
     if reading.clean_rejected:
         logger.warning("[capture] clean version not filed, it {}: the card shows the words",
                        reading.clean_rejected)
@@ -238,7 +238,7 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
     # A topic renamed while this capture was read: the curator refuses the
     # old folder (its card check), and the capture goes to the topic where
     # it is now, under its new id.
-    if not isinstance(filed, Filed) and (renamed := _renamed(entity, household)):
+    if not isinstance(filed, Filed) and (renamed := _renamed(entity, directory)):
         old_id, new_id = entity.rpartition("/")[2], renamed.rpartition("/")[2]
         tags = [new_id if t == old_id else t for t in tags]
         classification["tags"] = [new_id if t == old_id else t for t in classification.get("tags") or []]
@@ -251,7 +251,7 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
                       reason=filed.reason, clean_rejected=reading.clean_rejected,
                       captured_at=captured_at)
     if unplaced:
-        logger.info("[capture] {}: nobody in the household goes by {}; left off the card",
+        logger.info("[capture] {}: nobody known goes by {}; left off the card",
                     filed.card_id, ", ".join(unplaced))
     # The writer says what the card now holds (its people by id, its tags
     # as written): the reply, the event and the next correction's anchor
@@ -265,7 +265,7 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
 # ── The place and the people ──────────────────────────────────────────
 
 
-def _vocabularies(capture: Capture, policy: Policy, household: Household | None, *,
+def _vocabularies(capture: Capture, policy: Policy, directory: Directory | None, *,
                   folder: str) -> tuple[Vocabulary | None, Vocabulary | None]:
     """The vocabulary that resolves the model's topic choice, and the one it is shown.
 
@@ -275,15 +275,15 @@ def _vocabularies(capture: Capture, policy: Policy, household: Household | None,
     model's choice; the room limits what it is shown. Email asks for none,
     as documents do.
     """
-    if household is None or capture.kind == "email":
+    if directory is None or capture.kind == "email":
         return None, None
-    return household.vocabulary(folder), household.vocabulary(folder, read_in=policy.read_in)
+    return directory.vocabulary(folder), directory.vocabulary(folder, read_in=policy.read_in)
 
 
-def _place_people(capture: Capture, classification: dict, household: Household | None,
+def _place_people(capture: Capture, classification: dict, directory: Directory | None,
                   refile: Refile | None = None) -> list[str]:
     """Put who the card is about into ``classification["persons"]``, by
-    the household's ids; returns the names nobody goes by. A card naming
+    the known people's ids; returns the names nobody goes by. A card naming
     nobody is about its sender (`default_person`). A correction whose
     answer names nobody keeps the people the card is about
     (`Refile.people`): a reply that fixes a title does not drop them. An
@@ -293,19 +293,19 @@ def _place_people(capture: Capture, classification: dict, household: Household |
     if refile and refile.people and not classification.get("persons"):
         classification["persons"] = list(refile.people)
     sender = capture.origin.person.capitalize() if capture.default_person else ""
-    placed = (household.known_people() if household else People()).place_answer(
+    placed = (directory.known_people() if directory else People()).place_answer(
         classification, note=capture.kind == "note", sender=sender)
     classification["persons"] = placed.names
     return placed.unplaced
 
 
-def _renamed(bucket: str, household: Household | None) -> str:
+def _renamed(bucket: str, directory: Directory | None) -> str:
     """The bucket a renamed topic `bucket` (`family/nahprojekte`) is in now; "" when none.
 
     Read from the memory's topic cards (`renamed_topic`), so it is the
     answer the curator gives once the rename is committed.
     """
-    root = household.root() if household is not None else None
+    root = directory.root() if directory is not None else None
     owner, _, topic = bucket.rpartition("/")
     found = renamed_topic(owner, topic, root=root) if root and owner else None
     return f"{owner}/{found[0]}" if found else ""
