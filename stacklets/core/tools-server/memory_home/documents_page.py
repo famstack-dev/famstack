@@ -32,7 +32,6 @@ from memory_home.frame import page_head
 from memory_home.items import Context, type_icon
 from memory_home.paging import pager
 from memory_home.words import counted, words
-from memory_ui.words import day_of, plain_day
 
 __all__ = ["sheet"]
 
@@ -84,8 +83,8 @@ def _tile(href: str, label: str, kind: str, count: int, newest: dict | None, con
     w = words(context.language)
     when = ""
     if newest:
-        day = day_of(newest.get("day"))
-        when = w["newest_on"].format(day=plain_day(day, today=context.today, language=context.language)) if day else ""
+        day = context.day_words(newest.get("day"))
+        when = w["newest_on"].format(day=day) if day else ""
     mark = ' aria-current="page"' if current else ""
     return (f'<a class="kindcard" data-type="document" href="{escape(href)}"{mark}>'
             f'<span class="kc-top">{type_icon("document", kind=kind, size=16)}'
