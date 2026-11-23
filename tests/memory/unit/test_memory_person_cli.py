@@ -112,3 +112,32 @@ class TestTheVerbs:
         """`stack memory person <name>` was the read before `add` existed."""
         result = run("homer")
         assert result["error"] == "to read a person: stack memory person show homer"
+
+
+class TestAPageForTheRoom:
+    """`show --audience` reads a page only when everyone listening may read it.
+
+    A person's page (`homer/about.md`) is in that person's own folder and is
+    compiled from their own notes too, so it is read for them alone
+    (`stack.cards.audience.readable`).
+    """
+
+    @pytest.fixture
+    def pages(self, store):
+        store.edited_in_forgejo(
+            {"homer/about.md": "---\ntitle: Homer\nslug: homer\ncanonical: Homer\n---\n\n"
+                               "# Homer\n\nHides the donuts in the garage.\n"})
+
+    def test_a_persons_page_is_read_for_that_person_alone(self, run, pages, capsys):
+        assert run("show", "homer", "--audience", "homer")["person"] == "homer"
+        assert "donuts" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("audience", ["marge", "homer,marge"])
+    def test_anyone_else_listening_gets_a_refusal_and_no_text(self, run, pages, capsys, audience):
+        result = run("show", "homer", "--audience", audience)
+
+        assert result["error"] == "homer's page is read only in homer's own chat"
+        assert "donuts" not in capsys.readouterr().out
+
+    def test_without_an_audience_the_admin_reads_every_page(self, run, pages):
+        assert run("show", "homer")["person"] == "homer"

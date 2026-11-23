@@ -327,3 +327,44 @@ HTML layout per card type is where they start.
   most likely the curator writes the rendered cards into the views.
 - Whether a correction to a document card (its date, its correspondent) also
   goes to Paperless through the archivist, so the two agree.
+
+## Update 2026-11-23: the agent reads for the people in its room
+
+`search`, `person show`, `history`, every `list` verb, `topic` and `write`
+now take `--audience` too, with the rule of `find`, `card` and `links`. A
+person's page (`<id>/about.md`), lists and topic pages in a person's folder
+are read for that person alone. `history` shows a change only when the
+audience may read every file it changed, because a commit's subject names
+the card, and it answers a scope the audience may not read as a missing
+one. A list change and a `write` reply with what they changed, so they
+refuse a list or page the audience may not read, and the refusal names
+none of its items. A path with a `.`, `..` or empty segment (`family/../marge/x.md`) is
+read by nobody, because the rule takes the first folder of the text as the
+folder it means. A new list's name is unique over every folder, so a taken
+name is refused with one text for a shared and a private list.
+`lookup` (the ontology) and `correspondents` (the shared folder) read no
+person's own card and take no audience.
+
+The agent's memory reads carry the room's audience, against a model that
+does not read the runtime's environment. The runtime takes the people in a message's room from
+the Matrix client. For each command of that turn, a tool's or the exec
+tool's, it signs them with the agent's audience key (a secret of the agent
+stacklet, HMAC-SHA256 over the people and an expiry two minutes ahead).
+The host API checks the signature with the same key and adds the signed
+people as `--audience` to each memory read (`stack.agent_audience`). It
+refuses a memory read without a valid signature: no people known, people
+the model's shell set itself, a signature with changed people, an expired
+one. It also refuses an audience the agent's line names itself. The exec
+tool builds a command's environment from an allowlist that does not hold
+the key, so the model's shell cannot sign people of its choice. The
+admin's own commands on the Mac do not pass through the API, so they keep
+the view that reads every card.
+
+Limits. The exec shell runs in the runtime's container as the same user.
+It can read the key from the runtime's environment (`/proc/1/environ`), and
+sign any people with `agent_audience.sign`, which is on the container's
+`PYTHONPATH` (`/app/shared`). It can also read a concurrent command's
+signature from that command's `/proc/<pid>/environ`. A command's own signature is in its environment, so a shell can keep
+one and use it in another room until it expires. Closing both needs the
+memory tools in a process the shell cannot reach. The agent's container
+also still mounts the whole memory read-only, which this does not cover.

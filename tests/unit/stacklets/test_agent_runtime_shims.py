@@ -18,7 +18,18 @@ instead of the breakage reaching the rig as a log line nobody reads.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import time
+import types
+
 import pytest
+
+from stack.agent_audience import signed_people
+
+from pathlib import Path
+
+STACKLETS = Path(__file__).resolve().parents[3] / "stacklets"
 
 # The stub nanobot (`nanobot_stub`) and the fixture that imports
 # `sitecustomize` against it (`nanobot`) live in conftest, shared with the
@@ -850,3 +861,99 @@ def test_files_outside_the_vault_keep_stock_behaviour(nanobot):
         path="memory/notes.md")) == "stock edit memory/notes.md"
     assert "stock patch" in asyncio.run(apply_patch().execute(
         edits=[{"path": "memory/notes.md", "action": "replace"}]))
+
+
+# ── the people in the room go with each read ─────────────────────────────
+#
+# What Stacky may read depends on who is in the room (`room_people.py`). The
+# Matrix channel knows the room's members; nanobot copies a message's
+# metadata into the request context its tools run in. So the shim puts the
+# people there, and every read of that turn carries them as
+# `STACK_AUDIENCE`, which the `stack` shim sends to the host API.
+
+def _room(channel, room_id: str, *members: str) -> None:
+    """A room as nio keeps it: its members by Matrix id."""
+    channel.client.rooms[room_id] = types.SimpleNamespace(
+        room_id=room_id, users={member: object() for member in members})
+
+
+def _in_turn(mods, metadata) -> None:
+    """The next tool calls run in a turn whose message carried `metadata`."""
+    request = types.SimpleNamespace(turn_id="t1", sender_id="@marge:home.local",
+                                    session_key="matrix:!family:home.local",
+                                    chat_id="!family:home.local", metadata=metadata)
+    mods["nanobot.agent.tools.context"].current_request_context = lambda: request
+
+
+def test_a_message_carries_the_people_in_its_room(nanobot):
+    """Given the family room with Stacky and the stack's own accounts in it,
+    when a message arrives, then it carries the people and none of the bots."""
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    _room(channel, "!family:home.local", "@marge:home.local", "@bart:home.local",
+          channel.config.user_id, "@archivist-bot:home.local", "@stackadmin:home.local")
+
+    asyncio.run(channel._handle_message(sender_id="@marge:home.local",
+                                        chat_id="!family:home.local", content="hi",
+                                        metadata={"event_id": "$1"}))
+
+    assert channel.handled[0]["metadata"] == {"event_id": "$1", "room_people": ["bart", "marge"]}
+
+
+def test_a_message_from_a_room_the_client_does_not_know_carries_no_people(nanobot):
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+
+    asyncio.run(channel._handle_message(sender_id="@marge:home.local",
+                                        chat_id="!unknown:home.local", content="hi",
+                                        metadata={"event_id": "$1"}))
+
+    assert "room_people" not in channel.handled[0]["metadata"]
+
+
+RUNTIME_KEY = "runtime-audience-key-91fe"
+
+
+def test_exec_runs_a_command_for_the_people_of_its_turn_signed(nanobot, monkeypatch):
+    """Given a turn in a room of Bart and Marge, then exec's command carries
+    them signed with the runtime's key, and never the key itself."""
+    monkeypatch.setenv("STACK_AUDIENCE_KEY", RUNTIME_KEY)
+    mods = nanobot()
+    _in_turn(mods, {"room_people": ["bart", "marge"]})
+
+    env = mods["nanobot.agent.tools.shell"].ExecTool()._build_env()
+
+    assert signed_people(env["STACK_AUDIENCE"], RUNTIME_KEY, now=time.time()) == "bart,marge"
+    assert RUNTIME_KEY not in env.values()
+
+
+def test_the_exec_tool_of_the_agents_config_never_passes_the_audience_key(nanobot, monkeypatch):
+    """Given the runtime holds its audience key, when exec builds a command's
+    environment from the agent's own config (`allowed_env_keys`), then the
+    key is not in it: the model's shell cannot sign people of its choice."""
+    monkeypatch.setenv("STACK_AUDIENCE_KEY", RUNTIME_KEY)
+    config = json.loads((STACKLETS / "agent" / "config.json").read_text())
+    mods = nanobot()
+    exec_tool = mods["nanobot.agent.tools.shell"].ExecTool
+    exec_tool.allowed_env_keys = config["tools"]["exec"]["allowed_env_keys"]
+    _in_turn(mods, {"room_people": ["bart"]})
+
+    env = exec_tool()._build_env()
+
+    assert "STACK_AUDIENCE_KEY" not in env and RUNTIME_KEY not in env.values()
+
+
+@pytest.mark.parametrize("metadata", [None, {}, {"room_people": []}],
+                         ids=["outside any turn", "people not known", "nobody"])
+def test_exec_without_known_people_names_no_audience(nanobot, monkeypatch, metadata):
+    """Given a command where nobody can say who is in the room, then it names
+    no audience, also when the container's own environment holds one: the
+    API then refuses the memory read."""
+    monkeypatch.setenv("STACK_AUDIENCE", "marge")
+    monkeypatch.setenv("STACK_AUDIENCE_KEY", RUNTIME_KEY)
+    mods = nanobot()
+    mods["nanobot.agent.tools.shell"].ExecTool.allowed_env_keys = ["PATH", "STACK_AUDIENCE"]
+    if metadata is not None:
+        _in_turn(mods, metadata)
+
+    env = mods["nanobot.agent.tools.shell"].ExecTool()._build_env()
+
+    assert "STACK_AUDIENCE" not in env

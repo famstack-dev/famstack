@@ -3,6 +3,7 @@
     readable("homer/notes/grill.md", frozenset({"homer"}))      # True: his own folder
     readable("homer/notes/grill.md", frozenset({"marge"}))      # False
     readable("family/lists/camping.md", frozenset({"marge"}))   # True: the shared folder
+    readable("family/../marge/x.md", frozenset({"marge"}))      # False: not a plain path
     audience_of("homer")                                         # frozenset({"homer"})
     audience_of("")                                              # None: the admin's view
 
@@ -35,8 +36,17 @@ def readable(path: str, audience: frozenset[str], *, shared_bucket: str = SHARED
     """Whether everyone in `audience` may read the card at `path`.
 
     A person's bucket is the first folder of the path, named by their slug;
-    it is read only when that person is the whole audience.
+    it is read only when that person is the whole audience. A path with a
+    `.`, `..` or empty segment is read by nobody:
+
+        readable("family/../marge/x.md", frozenset({"marge"}))   # False
     """
+    # SAFETY: the path often holds a caller's own words (a topic, a scope,
+    # a page). `family/../marge/x.md` starts with the shared folder and
+    # means Marge's, so a path that does not name its folders plainly is
+    # refused here, for every caller, instead of normalised by each.
+    if any(segment in ("", ".", "..") for segment in path.split("/")):
+        return False
     # SAFETY: a person's own folder never reaches anyone else, also not a
     # group they belong to: their notes are written for them alone.
     bucket, _, rest = path.partition("/")

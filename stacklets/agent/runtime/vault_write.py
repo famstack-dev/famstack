@@ -47,9 +47,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 
+from room_people import audience_env
 from turn import current as current_turn
 
 _log = logging.getLogger("agent.runtime.vault_write")
@@ -89,6 +91,7 @@ def _run(page: str, payload: str, *flags: str) -> str:
     result = subprocess.run(
         ["stack", "memory", "write", page, "--by", _actor(), *flags],
         capture_output=True, text=True, timeout=120,
+        env=audience_env(dict(os.environ), current_turn().people),
     )
     return (result.stdout or result.stderr or "").strip() or "(no answer from memory)"
 

@@ -17,10 +17,12 @@ one place.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
+from room_people import audience_env
 from turn import current as current_turn
 
 # What `show` covers when the model names no span: the week ahead.
@@ -92,6 +94,7 @@ class CalendarTool(Tool):
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=audience_env(dict(os.environ), current_turn().people),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
         out = stdout.decode(errors="replace").strip()

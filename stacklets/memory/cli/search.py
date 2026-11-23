@@ -19,7 +19,7 @@ Contract — kept stable so wrappers (CLI, MCP, Matrix bot) can build
 on it without rework:
 
     stack memory search <query> [--nl] [--person <name>] [--tag <value>]
-                        [--scope <prefix>] [--limit N]
+                        [--scope <prefix>] [--audience <people>] [--limit N]
                         [--paths | --count]
                         [--vault <path>] [--no-refresh]
 
@@ -35,6 +35,13 @@ repeatable, OR-combined within their axis, AND-combined across axes.
 `--tag` normalizes internal whitespace so `Person:Homer` matches a
 file that tags `'Person: Homer'` — writers shouldn't have to know
 which spelling lives on disk.
+
+`--audience marge` (or `bart,homer`) names who will see the answer:
+only pages they may all read are searched (`stack.cards.audience`), so
+a person's own page is found only when that person is the whole
+audience, and an empty value searches only the shared pages. Without
+it, search reads every page, as the admin does on the Mac. The agent
+always reads with one: the host API adds the people in its room.
 
 `--nl` is the sentence path. "What do we still need to buy for the
 camping trip" is not a regex — as one it asks for those exact words,
@@ -113,6 +120,7 @@ from ..lib import (
 )
 
 from ._common import dispatch_capture
+from ._graph import scopes_for, take_audience
 from ._curator import pull_now
 
 # The `/go` namespace owns its own URL shapes; we join, never build.
@@ -311,6 +319,9 @@ def run(args, stacklet, config) -> dict | None:
     contract. The function returns None on success; "no results"
     exits 1 silently rather than printing an error.
     """
+    # `--audience` is read as `find`, `card` and `links` read it: an empty
+    # value is nobody, which searches only the shared pages.
+    args, audience = take_audience(args)
     parser = _parser()
     ns = parser.parse_args(args)
 
@@ -334,7 +345,7 @@ def run(args, stacklet, config) -> dict | None:
     results = search_memory(
         query, vault,
         persons=ns.person, tags=ns.tag,
-        scopes=ns.scope or None,
+        scopes=_scopes(ns.scope or None, scopes_for(audience, config)),
         limit=ns.limit,
     )
 
@@ -364,3 +375,17 @@ def run(args, stacklet, config) -> dict | None:
     show_matches = len(split_alternatives(query)) > 1
     print("\n\n".join(_format_block(r, link_base, show_matches) for r in results))
     return None
+
+
+def _scopes(asked: list[str] | None, readable: list[str] | None) -> list[str] | None:
+    """The folders searched: those `--scope` asked for, within those the audience
+    may read. None searches everything; an empty list searches nothing.
+
+        _scopes(["marge/notes"], ["bart/", "family/"])   []
+        _scopes(None, ["family/"])                       ["family/"]
+    """
+    if readable is None or asked is None:
+        return readable if asked is None else asked
+    # SAFETY: a scope the caller names never widens what the audience may read.
+    return [scope for scope in asked
+            if any(f"{scope.rstrip('/')}/".startswith(folder) for folder in readable)]

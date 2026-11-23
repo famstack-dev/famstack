@@ -66,6 +66,10 @@ Third, one shim that widens when the agent is allowed to answer at all:
    the model with the words. Another person's photo, an older one and one
    that reached the agent on its own are never attached.
 
+13. room_people (room_people.py): each message carries the people in its
+   room, and every command of its turn (a tool's or exec's) names them to
+   the host API, which reads the memory for them alone.
+
 WHY SHIMS AND NOT A FORK
     nanobot 0.3 has a seam for per-turn context (runtime-context providers) and
     keeps a session per Matrix thread, which retired the two shims that needed
@@ -117,6 +121,12 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  reaching `MatrixChannel.send` when `sendToolHints` is on,
                  `MatrixChannel._send_room_content(room_id, content)` returning a response
                  with `event_id`, `MatrixChannel._build_thread_relates_to(metadata)` (static)
+    room_people: `MatrixChannel._handle_message(sender_id, chat_id, content, ..., metadata=)`
+                 called with `metadata` as a keyword, `MatrixChannel.client.rooms[room_id].users`
+                 (nio), `MatrixChannel.config.user_id`; nanobot copying a message's metadata
+                 into `RequestContext.metadata` (`agent/loop.py` `_request_context_for_turn`);
+                 `nanobot.agent.tools.shell.ExecTool._build_env(self) -> dict`, called by
+                 `execute` inside the tool call
     photo_before: `MatrixChannel._on_message(self, room, event)` (async), the event's
                  `server_timestamp` (milliseconds, int),
                  `MatrixChannel._on_media_message(self, room, event)` (async; gates, then
@@ -262,6 +272,38 @@ for _module_name, _what in (
         _log.info("%s active", _what)
     except Exception:
         _log.exception("%s could not attach (nanobot internals changed?)", _what)
+
+
+# ── room_people: every memory read is for the people in the room ────────────
+# A message carries the people in its room (nanobot copies its metadata into
+# the request context its tools run in), and each command a tool or exec runs
+# in that turn names them as `STACK_AUDIENCE`. The host API reads the memory
+# for them alone and refuses a read without them. SAFETY: if this shim does
+# not attach, reads name nobody and the API refuses them; nothing falls back
+# to the admin's view. See room_people.py.
+try:
+    import nanobot.agent.tools.shell as _shell_people
+    import nanobot.channels.matrix.runtime as _matrix_people
+    from room_people import audience_env as _audience_env
+    from room_people import with_people as _with_people
+    from turn import current as _current_turn_people
+
+    _orig_handle_people = _matrix_people.MatrixChannel._handle_message
+    _orig_build_env = _shell_people.ExecTool._build_env
+
+    async def _handle_with_people(self, sender_id, chat_id, content, *args, **kwargs):
+        kwargs["metadata"] = _with_people(kwargs.get("metadata"), self.client, chat_id,
+                                          self.config.user_id)
+        return await _orig_handle_people(self, sender_id, chat_id, content, *args, **kwargs)
+
+    def _build_env_for_the_room(self):
+        return _audience_env(_orig_build_env(self), _current_turn_people().people)
+
+    _matrix_people.MatrixChannel._handle_message = _handle_with_people
+    _shell_people.ExecTool._build_env = _build_env_for_the_room
+    _log.info("room-people shim active")
+except Exception:
+    _log.exception("room-people shim could not attach (nanobot internals changed?)")
 
 
 # ── name_trigger: being spoken to by name counts as a mention ────────────────

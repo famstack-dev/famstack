@@ -37,6 +37,17 @@ The API answers only a caller that sends its own token. The agent's is
 `stack up agent`, and goes first on the line: `token <value> memory search
 tent`. It opens the plaintext surface only; the allowlist still decides
 which commands run.
+
+AND WHO IS LISTENING
+
+The agent's runtime gives each command it runs the people in the room it
+answers in, signed with the agent's audience key, as `STACK_AUDIENCE`
+(`bart,marge:<expiry>:<mac>`). The value goes on the line after the token:
+`token <value> audience bart,marge:<expiry>:<mac> memory find gift`. The
+API runs a memory read for the signed people alone, and refuses one without
+a valid signature, so a command outside a turn, or one that sets
+`STACK_AUDIENCE` itself, reads nothing private (`stack.agent_audience`).
+This shim only carries the value; it holds no key and checks nothing.
 """
 
 import os
@@ -51,6 +62,12 @@ EXIT_MARKER = "stack-exit:"
 def wire_line(argv):
     """Encode argv as the single line the API parses with `shlex.split`."""
     return shlex.join(argv) + "\n"
+
+
+def with_listeners(line, people):
+    """`line` with the people in the room in front, as the API reads them;
+    the line unchanged when nobody is known (the API then refuses a read)."""
+    return f"audience {shlex.quote(people)} {line}" if people else line
 
 
 def with_token(line, token):
@@ -83,7 +100,8 @@ def main(argv):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.settimeout(125)
             sock.connect((host, int(port)))
-            sock.sendall(with_token(wire_line(argv), os.environ.get("STACK_API_TOKEN")).encode())
+            line = with_listeners(wire_line(argv), os.environ.get("STACK_AUDIENCE", ""))
+            sock.sendall(with_token(line, os.environ.get("STACK_API_TOKEN")).encode())
             sock.shutdown(socket.SHUT_WR)  # done sending; half-close so the server reads EOF
             chunks = []
             while True:

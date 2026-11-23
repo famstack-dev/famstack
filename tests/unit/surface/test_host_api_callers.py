@@ -25,10 +25,13 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 
 import pytest
 
-from tests.host_api_tokens import AGENT_TOKEN, CORE_TOKEN, give_tokens
+from tests.host_api_tokens import AGENT_TOKEN, AUDIENCE_SECRET, CORE_TOKEN, give_tokens, signed
+from stack.agent_audience import AUDIENCE_KEY, sign
+from stack.secrets import TomlSecretStore
 from tests.loopback import serving
 
 from .conftest import STACKLETS
@@ -160,10 +163,11 @@ def test_no_token_is_valid_before_its_stacklet_made_one(api, instance, tmp_path)
 def test_a_plaintext_command_with_the_agents_token_is_answered(api, tmp_path):
     """Given the agent, when it sends a command of its allowlist after its
     token, then the API runs exactly that command and answers in text."""
-    reply = send(api, f"token {AGENT_TOKEN} memory search tent\n")
+    reply = send(api, f"token {AGENT_TOKEN} audience {signed('marge')} memory search tent\n")
 
     assert exit_code(reply) == 0
-    assert json.loads((tmp_path / "called").read_text()) == ["memory", "search", "tent"]
+    assert json.loads((tmp_path / "called").read_text()) == [
+        "memory", "search", "--audience", "marge", "tent"]
 
 
 @pytest.mark.parametrize("line", [
@@ -199,12 +203,18 @@ def listening(api):
         yield f"127.0.0.1:{port}"
 
 
-def agent_runs(address: str, *argv: str, token: str | None) -> subprocess.CompletedProcess:
+def agent_runs(address: str, *argv: str, token: str | None,
+               audience: str | None = None) -> subprocess.CompletedProcess:
     """`stack <argv>` in the agent's container: its shim as a process, with
-    the environment the exec tool gives it."""
+    the environment the exec tool gives it in a turn (`STACK_AUDIENCE`, the
+    people in the room as the runtime signs them; Marge's own chat unless
+    `audience` says otherwise, "" for none)."""
     env = {"PATH": os.environ["PATH"], "STACK_API_ADDR": address}
     if token is not None:
         env["STACK_API_TOKEN"] = token
+    audience = signed("marge") if audience is None else audience
+    if audience:
+        env["STACK_AUDIENCE"] = audience
     return subprocess.run([sys.executable, str(STACKLETS / "agent" / "client" / "stack"), *argv],
                           capture_output=True, text=True, env=env, timeout=30)
 
@@ -215,13 +225,122 @@ def test_the_agents_shim_sends_its_token_and_is_answered(listening, tmp_path):
     run = agent_runs(listening, "memory", "search", "school run", token=AGENT_TOKEN)
 
     assert run.returncode == 0, run.stderr
-    assert json.loads((tmp_path / "called").read_text()) == ["memory", "search", "school run"]
+    assert json.loads((tmp_path / "called").read_text()) == [
+        "memory", "search", "--audience", "marge", "school run"]
 
 
 def test_the_agents_shim_without_a_token_is_refused(listening, tmp_path):
     """Given a container without the agent's token, when it runs the same
     shim, then the API refuses it and nothing runs."""
     run = agent_runs(listening, "memory", "search", "tent", token=None)
+
+    assert run.returncode == REFUSED_PLAINTEXT
+    assert not ran_stack(tmp_path)
+
+
+# ── The agent reads the memory for the people in the room ─────────────────
+#
+# The shim sends who is listening after the token, from the turn's room, as
+# the runtime signed it with the agent's audience key (`audience
+# bart,marge:<expiry>:<mac>`). The API adds the signed people as `--audience`
+# to every memory read that takes one, and refuses such a read without a
+# valid signature: no audience is the admin's view, which the agent never
+# gets. The admin's own `./stack` on the Mac does not pass through here and
+# keeps that view.
+
+# Each read, and the command the API runs for it in a room of Bart and Marge.
+READS_FOR_THE_ROOM = {
+    "memory search gift": ["memory", "search", "--audience", "bart,marge", "gift"],
+    "memory find gift": ["memory", "find", "--audience", "bart,marge", "gift"],
+    "memory card capture/Marge00000":
+        ["memory", "card", "--audience", "bart,marge", "capture/Marge00000"],
+    "memory links capture/Family0000":
+        ["memory", "links", "--audience", "bart,marge", "capture/Family0000"],
+    "memory person show marge": ["memory", "person", "show", "--audience", "bart,marge", "marge"],
+    "memory history marge": ["memory", "history", "--audience", "bart,marge", "marge"],
+    "memory list show geschenke":
+        ["memory", "list", "--audience", "bart,marge", "show", "geschenke"],
+    "memory list tick geschenke zzz --as bart":
+        ["memory", "list", "--audience", "bart,marge", "tick", "geschenke", "zzz", "--as", "bart"],
+    "memory write family/notes/tent.md --by bart":
+        ["memory", "write", "--audience", "bart,marge", "family/notes/tent.md", "--by", "bart"],
+    "memory topic camping": ["memory", "topic", "--audience", "bart,marge", "camping"],
+}
+
+
+@pytest.mark.parametrize("read", READS_FOR_THE_ROOM)
+def test_a_memory_read_is_run_for_the_people_in_the_room(api, tmp_path, read):
+    reply = send(api, f"token {AGENT_TOKEN} audience {signed('marge', 'Bart')} {read}\n")
+
+    assert exit_code(reply) == 0
+    assert json.loads((tmp_path / "called").read_text()) == READS_FOR_THE_ROOM[read]
+
+
+@pytest.mark.parametrize("read", READS_FOR_THE_ROOM)
+def test_a_memory_read_with_nobody_known_in_the_room_is_refused(api, tmp_path, read):
+    """Given a read where nobody could say who is in the room, then it is
+    refused and nothing runs: it never falls back to the admin's view."""
+    reply = send(api, f"token {AGENT_TOKEN} {read}\n")
+
+    assert exit_code(reply) == REFUSED_PLAINTEXT
+    assert "who is in this room" in reply
+    assert not ran_stack(tmp_path)
+
+
+def _with_people(signature: str, people: str) -> str:
+    return ":".join([people, *signature.split(":")[1:]])
+
+
+NOT_SIGNED_BY_THE_RUNTIME = {
+    "people without a signature": lambda: "marge",
+    "a signature with the people changed": lambda: _with_people(signed("bart"), "marge"),
+    "an expired signature": lambda: sign(["marge"], AUDIENCE_SECRET, now=time.time() - 3600),
+    "a signature with another key": lambda: sign(["marge"], "not-the-key", now=time.time()),
+}
+
+
+@pytest.mark.parametrize("audience", NOT_SIGNED_BY_THE_RUNTIME)
+def test_a_memory_read_for_people_the_runtime_did_not_sign_is_refused(api, tmp_path, audience):
+    """Given a line that names Marge as listening, when the runtime's key did
+    not sign that, now, then the read is refused and nothing runs."""
+    reply = send(api, f"token {AGENT_TOKEN} audience {NOT_SIGNED_BY_THE_RUNTIME[audience]()} "
+                      "memory find gift\n")
+
+    assert exit_code(reply) == REFUSED_PLAINTEXT
+    assert not ran_stack(tmp_path)
+
+
+def test_a_memory_read_before_the_agent_has_its_key_is_refused(api, instance, tmp_path):
+    """Given an instance whose agent has no audience key yet, then no
+    signature is valid, and a memory read is refused."""
+    TomlSecretStore(instance / ".stack" / "secrets.toml").set("agent", AUDIENCE_KEY, "")
+    reply = send(api, f"token {AGENT_TOKEN} audience {sign(['marge'], '', now=time.time())} "
+                      "memory find gift\n")
+
+    assert exit_code(reply) == REFUSED_PLAINTEXT
+    assert not ran_stack(tmp_path)
+
+
+@pytest.mark.parametrize("option", ["--audience marge", "--audience=marge", "--aud marge"])
+def test_the_agent_cannot_name_the_audience_itself(api, tmp_path, option):
+    """Given Bart's chat, when the line names Marge as the audience, in any
+    spelling the command line reads, then it is refused: who is listening is
+    the room's to say, not the model's."""
+    reply = send(api, f"token {AGENT_TOKEN} audience {signed('bart')} memory find gift {option}\n")
+
+    assert exit_code(reply) == REFUSED_PLAINTEXT
+    assert not ran_stack(tmp_path)
+
+
+def test_a_command_that_is_not_a_memory_read_runs_as_before(api, tmp_path):
+    reply = send(api, f"token {AGENT_TOKEN} audience {signed('bart')} docs show 12\n")
+
+    assert exit_code(reply) == 0
+    assert json.loads((tmp_path / "called").read_text()) == ["docs", "show", "12"]
+
+
+def test_the_agents_shim_outside_a_room_sends_no_audience_and_is_refused(listening, tmp_path):
+    run = agent_runs(listening, "memory", "find", "gift", token=AGENT_TOKEN, audience="")
 
     assert run.returncode == REFUSED_PLAINTEXT
     assert not ran_stack(tmp_path)
