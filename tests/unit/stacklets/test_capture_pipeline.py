@@ -23,8 +23,8 @@ from stacklets.docs.bot.capture_pipeline import CapturePipeline  # noqa: E402
 from stack.cards.events import TextEdit  # noqa: E402
 from stack.cards.history import CardHistory  # noqa: E402
 from stack.cards.sources import NOTE, Source  # noqa: E402
-from stacklets.docs.bot.git_mirror import Filed  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
+from tests.capture_mirror import FakeMirror  # noqa: E402
 from stacklets.docs.bot.vault_entry import capture_frontmatter, identity_for, render_capture, render_note  # noqa: E402
 from stack.frontmatter import dump as frontmatter_dump  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
@@ -142,40 +142,6 @@ class FakeClassifier:
         # respected. Subclasses override to return None (LLM down /
         # not useful) or a short token to exercise the sanity guard.
         return f"# Reformatted\n\n{ocr_text[:max_chars]}"
-
-
-class FakeMirror:
-    def __init__(self):
-        self.captures: list[dict] = []
-        self.emails: list[dict] = []
-
-    async def card_history(self, card_id):
-        """No history read: the note is refiled from the card as it reads now."""
-        return None
-
-    async def publish_capture(self, **kwargs):
-        self.captures.append(kwargs)
-        # Mirrors the publish_capture contract: where the capture landed
-        # and its card id (or None on failure). Deterministic, so the
-        # envelope-emission branch in _publish executes.
-        kind = kwargs.get("kind") or "bookmark"
-        entity = "homer"
-        return Filed(f"{entity}/{kind}s/test-capture.md", f"{kind}-7f3a9c21e4")
-
-    async def publish_email_message(self, **kwargs):
-        # Email folds into a thread file via its own mirror entrypoint;
-        # the path is keyed by the thread, not the individual message.
-        self.emails.append(kwargs)
-        entity = kwargs.get("entity") or "homer"
-        return Filed(f"{entity}/emails/test-thread.md", "email-0b6e2d91aa")
-
-    async def read_capture(self, path):
-        # The simplest re-readable shape for reprocess tests.
-        return self._stored.get(path)
-
-    _stored: dict = {}
-
-
 
 
 class FakePaperless:
@@ -328,30 +294,6 @@ class TestCaptureText:
             capture_keep_body=False, )
         out = await pipe.capture_text(text="   ", sender_mxid="@marge:s")
         assert out.status == "empty"
-
-
-class TestTagList:
-    """`_tag_list` is the classifier's free-form tags, normalising types and
-    whitespace. It names no person: the capture's `persons` does."""
-
-    def test_tags_without_person_tags(self):
-        c = {"tags": ["AI", "Productivity"], "persons": ["Homer"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Productivity"]
-
-    def test_single_string_tag_becomes_list(self):
-        c = {"tags": "AI", "persons": ["Homer"]}
-        assert CapturePipeline._tag_list(c) == ["AI"]
-
-    def test_empty_classification_yields_empty(self):
-        assert CapturePipeline._tag_list({}) == []
-
-    def test_skips_non_string_values(self):
-        c = {"tags": ["AI", None, 42, ""], "persons": ["Homer", ""]}
-        assert CapturePipeline._tag_list(c) == ["AI"]
-
-    def test_strips_whitespace(self):
-        c = {"tags": ["  AI  ", "Productivity"], "persons": ["Homer"]}
-        assert CapturePipeline._tag_list(c) == ["AI", "Productivity"]
 
 
 class TestClassifyDegradation:
@@ -1584,14 +1526,14 @@ class TestACorrectedNoteIsRefiledFromItsWords:
         card that shows the words alone is given a tidy one first, by the
         capture prompt, and the conversation starts from that."""
         tidy = "Homer calls the hotel on Thursday. Budget: at most 200."
-        mirror = FakeMirror()
+        edit = TextEdit("lisa", "2026-10-21T09:00:00+00:00", (("max 200", "max 220"),))
+        mirror = FakeMirror(history=CardHistory(edits=(edit,)))
         classifier = FakeClassifier(payload={**self.ANSWER, "clean": tidy}, corrected=self.CORRECTED)
         mirror._stored = {self.PATH: _old_note(
             "Trip", self.WORDS, capture_id="$n:s", path=self.PATH, persons=["homer"], tags=["hotel"])}
-        edit = TextEdit("lisa", "2026-10-21T09:00:00+00:00", (("max 200", "max 220"),))
         await _pipeline(mirror=mirror, classifier=classifier).reprocess(
             vault_path=self.PATH, user_hint="", sender_mxid="@marge:s",
-            reply_text="it is Friday, not Thursday", history=CardHistory(edits=(edit,)))
+            reply_text="it is Friday, not Thursday")
         assert classifier.saw_rebuild[1] == tidy
         assert classifier.saw_rebuild[2] == [edit.message(), "Marge: it is Friday, not Thursday"]
 
@@ -1602,16 +1544,15 @@ class TestACorrectedNoteIsRefiledFromItsWords:
         the card's history shows it, goes back to the words as sent, and her
         words are her note, a correction before the reply."""
         edited = "Homer calls the hotel on Thursday, budget max 200"
-        mirror = FakeMirror()
+        note = Source(NOTE, "lisa", "2026-10-21T09:00:00+00:00", "cards", "text",
+                      "cards:0a1b2c3d4e5f6a7b", quote=edited)
+        mirror = FakeMirror(history=CardHistory(quotes_as_sent=(("$n:s", self.WORDS),), quote_edits=(note,)))
         classifier = FakeClassifier(payload=dict(self.ANSWER), corrected=self.CORRECTED)
         mirror._stored = {self.PATH: _old_note(
             "Trip", edited, capture_id="$n:s", path=self.PATH, persons=["homer"], tags=["hotel"])}
-        note = Source(NOTE, "lisa", "2026-10-21T09:00:00+00:00", "cards", "text",
-                      "cards:0a1b2c3d4e5f6a7b", quote=edited)
         await _pipeline(mirror=mirror, classifier=classifier).reprocess(
             vault_path=self.PATH, user_hint="", sender_mxid="@marge:s",
-            reply_text="it is Friday, not Thursday",
-            history=CardHistory(quotes_as_sent=(("$n:s", self.WORDS),), quote_edits=(note,)))
+            reply_text="it is Friday, not Thursday")
         assert [(s.role, s.person, s.words) for s in mirror.captures[-1]["sources"]] == [
             ("original", "marge", self.WORDS), ("note", "lisa", edited),
             ("reply", "marge", "it is Friday, not Thursday")]
