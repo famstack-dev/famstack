@@ -166,7 +166,7 @@ def _topic(graph: Graph, about: str, audience: frozenset[str] | None, today: dat
             "cards": _part(cards, part),
             "links": links(graph, cards),
             "counts": counts(cards),
-            **topic_view(topic, cards, today)}
+            **topic_view(topic, cards, today, part=part)}
 
 
 def _sender(graph: Graph, about: str, audience: frozenset[str] | None, today: date, part: int) -> dict:

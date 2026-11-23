@@ -21,7 +21,6 @@ from html import escape
 from memory_home import sections
 from memory_home.items import Context, card_link, person_name, type_icon
 from memory_home.words import counted, words
-from memory_ui.words import day_of, plain_day
 
 __all__ = ["chips", "panels", "main_list", "main_kind"]
 
@@ -103,8 +102,7 @@ def _row(item: dict, context: Context, *, said: bool, folded: bool) -> str:
 
 def _by(item: dict, context: Context) -> str:
     """"Marge · Oct 11": who the card names, and its day in words."""
-    day = day_of(item.get("day"))
-    when = plain_day(day, today=context.today, language=context.language) if day else ""
+    when = context.day_words(item.get("day"))
     who = ", ".join(person_name(p, context) for p in item.get("persons", []))
     return " · ".join(part for part in (who, when) if part)
 

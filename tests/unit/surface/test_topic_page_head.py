@@ -115,7 +115,7 @@ def test_the_head_is_the_kicker_the_title_the_facts_and_the_key(tools):
     assert page.texts("kicker") == ["Own topic"]
     assert page.texts("title") == ["Quilt for Lisa"]
     assert page.texts("facts") == ["9 cards · 9 about you"]
-    assert page.texts("key") == ["✦ beside a date: famstack's AI summarised the entry. "
+    assert page.texts("key") == ["✦ beside a date: an AI summarised the entry. "
                                  "Everything else is taken from the cards as they are."]
     assert page.texts("filters") == []
 

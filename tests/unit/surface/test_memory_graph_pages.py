@@ -311,6 +311,36 @@ def test_another_persons_own_topic_says_what_to_do_instead(tools):
     assert "Homer" not in page.text and "Bowling" not in page.text
 
 
+def test_a_part_past_the_end_of_a_topic_says_it_has_no_more_entries(tools):
+    """Given Marge's camping topic of one part, when her phone opens part 2,
+    then the page says the topic has no more entries and leads back to it,
+    not that the topic is someone else's; Homer's own topic at part 2 is
+    still the page of a topic that does not exist, byte for byte."""
+    marge = phone(tools, person="marge")
+    past = marge.opens(f"/memory/topic/{CAMPING}?part=2")
+    hidden, nothing = marge.opens(f"/memory/topic/{BOWLING}?part=2"), marge.opens("/memory/topic/topic-nowhere?part=2")
+
+    assert past.status == 404
+    assert past.texts("title") == ["No more entries"] and past.texts("topic-refusal") == []
+    assert ("Back to the topic ›", f"/memory/topic/{CAMPING}") in past.links()
+    assert hidden.status == nothing.status == 404 and hidden.body == nothing.body
+    assert hidden.texts("title") == ["Not one of your topics"]
+
+
+def test_the_topics_style_and_script_load_on_its_pages_only(tools):
+    """Given Marge's phone, then a topic's page, and its refusal, load
+    `topic.css` and `topic.js`, and "My memory" and a person's page load
+    neither: a page fetches only what it draws."""
+    marge = phone(tools, person="marge")
+    topic_pages = [opens(marge, f"/memory/topic/{CAMPING}"), marge.opens(f"/memory/topic/{BOWLING}")]
+    other_pages = [opens(marge, "/memory"), opens(marge, "/memory/person/bart")]
+
+    for page in topic_pages:
+        assert any(s.endswith("/topic.js") for s in page.scripts()) and "/topic.css" in page.body
+    for page in other_pages:
+        assert not any(s.endswith("/topic.js") for s in page.scripts()) and "/topic.css" not in page.body
+
+
 def test_the_mac_reads_homers_own_topic(tools):
     page = opens(this_mac(tools), f"/memory/topic/{BOWLING}")
 

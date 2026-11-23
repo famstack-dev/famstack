@@ -24,7 +24,7 @@
   font: inherit; font-size: 0.92rem; color: var(--secondary); cursor: pointer; }
 
 /* The states that say what to do: an empty topic, and a topic that is another person's own. */
-.topic-empty, .topic-refusal { max-width: 40rem; margin: var(--space-3, 1rem) 0; line-height: 1.5; }
+.topic-empty, .topic-refusal, .topic-past-why { max-width: 40rem; margin: var(--space-3, 1rem) 0; line-height: 1.5; }
 
 /* The entries: each note in full, with no box. ✦ beside the date marks the AI's text. */
 .entry { padding: 1rem 0 1.1rem; border-bottom: 1px solid var(--fs-border-light); }

@@ -81,6 +81,15 @@ class Context:
         return cls(language=language, today=date.fromisoformat(answer["today"]), me=me,
                    looker=looker, names=names)
 
+    def day_words(self, value: object) -> str:
+        """A card's day (`"2026-11-17"` or a date) in plain words for this
+        page, "" for none: "Yesterday", "3 November".
+
+            Context(language="en", today=date(2026, 11, 18)).day_words("2026-11-17")   # 'Yesterday'
+        """
+        day = day_of(value)
+        return plain_day(day, today=self.today, language=self.language) if day else ""
+
 
 def row(item: dict, context: Context, *, when: str | None = None, line: str = "") -> str:
     """`item` as a row: `when` (the day's words; the item's own day when
@@ -89,9 +98,7 @@ def row(item: dict, context: Context, *, when: str | None = None, line: str = ""
 
         row({"id": "note-1", "type": "note", "title": "Tent", "day": "2026-11-01"}, context)
     """
-    day = day_of(item.get("day"))
-    when = when if when is not None else (
-        plain_day(day, today=context.today, language=context.language) if day else "")
+    when = when if when is not None else context.day_words(item.get("day"))
     quiet = " · ".join(part for part in (line, _facts(item, context)) if part)
     return (f'<li class="row"><span class="fl-date">{escape(when)}</span>'
             f'{type_icon(item.get("type", ""), kind=item.get("kind", ""))}'

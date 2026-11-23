@@ -7,8 +7,13 @@ the AI was down has sources and no prompt template, so its text is the
 messages as sent and nothing here marks it.
 
     ai_made(card)                         # True: the sidecar names a prompt template
-    key_line(card, language="en")         # "✦ The title and the text are famstack's AI's, ..."
+    ai_hint("external", language="en")    # "Summarised by your family's AI server"
+    key_line(card, language="en", route="managed")   # "The title and the text are famstack's AI's, ..."
     correction(card, language="en")       # ("Something wrong?", "Reply in the thread ...")
+
+The words name the AI the stack routes to (`memory_ui.ai_route`), so a
+family with its own AI server is not told famstack's AI wrote its notes.
+The card page and a topic's page both take ✦'s words from here.
 
 Why it reads the sidecar and not the text: a card is rebuilt from its
 sources, never from its own words (ADR-018), so what made it is what the
@@ -24,6 +29,7 @@ import re
 from collections.abc import Mapping
 from html import escape
 
+from memory_ui.ai_route import ROUTES
 from memory_ui.words import words
 
 __all__ = ["ai_made", "ai_hint", "key_line", "correction", "from_room", "mark"]
@@ -45,28 +51,32 @@ def ai_made(card: Mapping) -> bool:
     return card.get("type") == "note" and bool((card.get("made") or {}).get("prompt_template"))
 
 
-def ai_hint(*, language: str) -> str:
-    """What ✦ says on hover or tap: "Summarised by famstack's AI".
+def ai_hint(route: str = "", *, language: str) -> str:
+    """What ✦ says on hover or tap, for the AI's `route` (`ai_route.of`):
+    any other route names just an AI.
 
-        >>> ai_hint(language="en")
+        >>> ai_hint("managed", language="en")
         "Summarised by famstack's AI"
+        >>> ai_hint("", language="en")
+        'Summarised by AI'
     """
-    return words(language)["ai_hint"]
+    return words(language)["ai_hint"][_known(route)]
 
 
-def key_line(card: Mapping, *, language: str) -> str:
-    """The key under the facts: what the AI wrote and that the messages are
-    below. "" for a note the AI did not write.
+def key_line(card: Mapping, *, language: str, route: str = "") -> str:
+    """The key under the facts: which AI wrote the title and the text
+    (`route`, as for `ai_hint`) and that the messages are below. "" for a
+    note the AI did not write.
 
         >>> card = {"type": "note", "made": {"prompt_template": "7c"},
         ...         "sources": [{"role": "original"}] * 6}
-        >>> key_line(card, language="en")[:41]
+        >>> key_line(card, language="en", route="managed")[:41]
         "The title and the text are famstack's AI'"
     """
     if not ai_made(card):
         return ""
     n = sum(1 for s in card.get("sources") or [] if isinstance(s, Mapping) and s.get("role") == "original")
-    one, many = words(language)["ai_key"]
+    one, many = words(language)["ai_key"][_known(route)]
     return (one if n == 1 else many).format(n=n)
 
 
@@ -123,3 +133,8 @@ def _start_of(text: str) -> str:
         if plain:
             return " ".join(plain.split()[:EXAMPLE_WORDS]).rstrip(".,:;")
     return ""
+
+
+def _known(route: str) -> str:
+    """`route` when it has words of its own, else "" (just an AI)."""
+    return route if route in ROUTES else ""

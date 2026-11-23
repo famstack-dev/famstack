@@ -69,14 +69,17 @@ TOKENS = f"{DASHBOARD_PREFIX}/static/tokens.css"
 
 def document(sheet: str, *, title: str, language: str, here: str,
              person: tuple[str, str] | None = None, menu: Menu | None = None,
-             query: str = "", description: str = "") -> str:
+             query: str = "", description: str = "", assets: tuple[str, ...] = ()) -> str:
     """A whole memory page: the header, the menu and `sheet` (HTML) in the
     card pages' frame. `title` names the browser tab, `here` is the address
     of the page (its menu link is marked current), `person` the device's
     person as (id, first name), None for a household device, `menu` the
     menu's groups for the device (`menu.menu_of`; none when None), and
-    `query` the words the search field holds (the search page's own), and
-    `description` the preview a chat app shows for a link (a card's page).
+    `query` the words the search field holds (the search page's own),
+    `description` the preview a chat app shows for a link (a card's page),
+    and `assets` the page's own styles and scripts by name
+    (`("topic.css", "topic.js")`), loaded after the shared ones, so a page
+    fetches only what it draws.
 
         >>> "aria-current" in document("<p>x</p>", title="My memory", language="en",
         ...                            here="/memory", person=("marge", "Marge"))
@@ -85,9 +88,11 @@ def document(sheet: str, *, title: str, language: str, here: str,
     return card_frame(sheet, title=title, language=language, description=description,
                       header=_header(language, person, query),
                       side=_menu(language, here, person, menu or Menu()),
-                      stylesheets=(TOKENS, addresses.asset("home.css"), addresses.asset("topic.css")),
+                      stylesheets=(TOKENS, addresses.asset("home.css"),
+                                   *(addresses.asset(a) for a in assets if a.endswith(".css"))),
                       scripts=(addresses.asset("home.js"), addresses.asset("preview.js"),
-                               addresses.asset("search_layer.js"), addresses.asset("search_toggle.js"), addresses.asset("topic.js")))
+                               addresses.asset("search_layer.js"), addresses.asset("search_toggle.js"),
+                               *(addresses.asset(a) for a in assets if a.endswith(".js"))))
 
 
 def avatar(person_id: str, name: str) -> str:

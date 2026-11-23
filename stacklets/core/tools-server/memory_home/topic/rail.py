@@ -34,7 +34,6 @@ from memory_home import sections
 from memory_home.items import Context, by_line, card_link, type_icon
 from memory_home.words import counted, words
 from memory_ui.addresses import card_address
-from memory_ui.words import day_of, plain_day
 
 __all__ = ["rail"]
 
@@ -78,9 +77,8 @@ def _todo(lst: dict, context: Context) -> str:
 
 def _item(item: dict, position: int, context: Context) -> str:
     """One open item: the box, its text and its due day."""
-    day = day_of(item.get("day"))
-    due = (f'<span class="item-due">{escape(plain_day(day, today=context.today, language=context.language))}</span>'
-           if day else "")
+    day = context.day_words(item.get("day"))
+    due = f'<span class="item-due">{escape(day)}</span>' if day else ""
     more = ' class="rail-more"' if position >= PHONE_ITEMS else ""
     return f'<li{more}><span class="box" aria-hidden="true"></span><span class="item-text">{escape(item.get("title", ""))}</span>{due}</li>'
 
@@ -106,8 +104,7 @@ def _change(item: dict, context: Context) -> str:
     """One change: the card's icon and title, then "Mon 16 Nov · New entry · by you".
     A reply reads "Added to <title>" and has no separate "what"."""
     w = words(context.language)
-    day = day_of(item.get("on"))
-    when = plain_day(day, today=context.today, language=context.language) if day else ""
+    when = context.day_words(item.get("on"))
     replied = item.get("what") == "replied"
     title = (escape(w["added_to"].format(title="\0")).replace("\0", card_link(item)) if replied
              else card_link(item))

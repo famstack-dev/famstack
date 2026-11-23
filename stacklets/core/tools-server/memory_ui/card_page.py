@@ -86,7 +86,7 @@ __all__ = ["page", "description_of", "notice", "full_text"]
 
 def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: str, frame: Frame,
          kept: Mapping | None = None, paperless: str = "",
-         media: Mapping[str, Mapping | None] | None = None) -> str:
+         media: Mapping[str, Mapping | None] | None = None, route: str = "") -> str:
     """The whole page of `card`, its sheet in `frame` (the memory's header
     and menu for the device, `frame.Frame`). `names` maps a person id to the name a
     reader knows; `now` is aware, in the instance's time zone; `kept` is
@@ -94,7 +94,8 @@ def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: st
     the store has none (then the page shows no panel for it); `paperless`
     is Paperless's public address today, for a document's "Open in
     Paperless" (`card_types`); `media` is the store's record of each file
-    of a diary entry, by its path (`entry.media_paths`).
+    of a diary entry, by its path (`entry.media_paths`); `route` is the
+    AI's (`ai_route.of`), which ✦ and the key name.
 
         page({"id": "note-0b6e2d91aa", "type": "note", "title": "Grill",
               "path": "homer/notes/grill.md", "meta": {}, "text": "Buy charcoal."},
@@ -103,7 +104,7 @@ def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: st
     """
     w = words(language)
     head = head_of(card, names=names, today=now.date(), language=language, kept=kept,
-                   paperless=paperless)
+                   paperless=paperless, route=route)
     found = file_of(card)
     title = str(card.get("title") or card.get("id") or "")
     sections = _sections(card, found)
@@ -115,7 +116,7 @@ def page(card: Mapping, *, names: Mapping[str, str], now: datetime, language: st
         _head(head, title),
         _outside(head.outside),
         _photo(found, kept, title, w),
-        _key(card, sections, language),
+        _key(card, sections, language, route),
         (f'<div class="body">{_body(card, body, names, now, language)}</div>'
          if body.strip() or not sections else ""),
         draw(sections, media=media or {}, names=names, language=language, now=now),
@@ -187,11 +188,11 @@ def _sections(card: Mapping, found: FileNote | None) -> list:
     return [] if found else sections_of(card)
 
 
-def _key(card: Mapping, sections: list, language: str) -> str:
-    """The line under the facts that says the AI wrote the title and the
-    text from the messages shown below; "" for any other card."""
-    line = key_line(card, language=language) if sections else ""
-    return f'<p class="ai-key">{mark(ai_hint(language=language))} {escape(line)}</p>' if line else ""
+def _key(card: Mapping, sections: list, language: str, route: str) -> str:
+    """The line under the facts that says which AI (`route`) wrote the
+    title and the text from the messages shown below; "" for any other card."""
+    line = key_line(card, language=language, route=route) if sections else ""
+    return f'<p class="ai-key">{mark(ai_hint(route, language=language))} {escape(line)}</p>' if line else ""
 
 
 def _correction(card: Mapping, sections: list, language: str) -> str:

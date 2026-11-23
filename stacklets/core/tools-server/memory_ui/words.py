@@ -159,11 +159,16 @@ WORDS = {
         "play_video": "Play the video", "open_file": "Open",
         "not_kept": "Not in the memory's files",
         # A note the AI wrote (`entry/made.py`).
-        "ai_hint": "Summarised by famstack's AI",
-        "ai_key": ("The title and the text are famstack's AI's, written once at filing from "
-                   "1 message. The message is below, as sent.",
-                   "The title and the text are famstack's AI's, written once at filing from "
-                   "{n} messages. The messages are below, as sent."),
+        # ✦ and the key name the AI `[ai] provider` routes to (`ai_route`): the
+        # stack's own ("managed"), the family's own server, or any ("").
+        "ai_hint": {"managed": "Summarised by famstack's AI", "external": "Summarised by your family's AI server",
+                    "": "Summarised by AI"},
+        "ai_key": {route: (f"The title and the text are {who}, written once at filing from "
+                           "1 message. The message is below, as sent.",
+                           f"The title and the text are {who}, written once at filing from "
+                           "{n} messages. The messages are below, as sent.")
+                   for route, who in (("managed", "famstack's AI's"), ("external", "your family's AI server's"),
+                                      ("", "an AI's"))},
         "something_wrong": "Something wrong?",
         "correct_line": "Reply in the thread of its notice in the room, for example: {example}. "
                         "famstack files the entry again.",
@@ -231,11 +236,14 @@ WORDS = {
         "previous_photo": "Vorheriges Foto", "next_photo": "Nächstes Foto",
         "play_video": "Video abspielen", "open_file": "Öffnen",
         "not_kept": "Nicht in den Dateien des Gedächtnisses",
-        "ai_hint": "Zusammengefasst von der KI von famstack",
-        "ai_key": ("Der Titel und der Text stammen von der KI von famstack, einmal beim Ablegen aus "
-                   "1 Nachricht geschrieben. Die Nachricht steht darunter, wie gesendet.",
-                   "Der Titel und der Text stammen von der KI von famstack, einmal beim Ablegen aus "
-                   "{n} Nachrichten geschrieben. Die Nachrichten stehen darunter, wie gesendet."),
+        "ai_hint": {"managed": "Zusammengefasst von der KI von famstack",
+                    "external": "Zusammengefasst vom KI-Server deiner Familie", "": "Zusammengefasst von einer KI"},
+        "ai_key": {route: (f"Der Titel und der Text stammen {who}, einmal beim Ablegen aus "
+                           "1 Nachricht geschrieben. Die Nachricht steht darunter, wie gesendet.",
+                           f"Der Titel und der Text stammen {who}, einmal beim Ablegen aus "
+                           "{n} Nachrichten geschrieben. Die Nachrichten stehen darunter, wie gesendet.")
+                   for route, who in (("managed", "von der KI von famstack"),
+                                      ("external", "vom KI-Server deiner Familie"), ("", "von einer KI"))},
         "something_wrong": "Stimmt etwas nicht?",
         "correct_line": "Antworte im Thread der Meldung im Raum, zum Beispiel: {example}. "
                         "famstack legt den Eintrag neu ab.",

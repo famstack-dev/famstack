@@ -126,12 +126,14 @@ def test_a_reply_in_the_thread_shows_who_added_it_and_the_day(tools):
 
 def test_a_note_the_ai_wrote_has_a_star_beside_its_date_and_a_key_line(tools):
     """Given a note whose sidecar names a prompt template, then ✦ stands beside the
-    date with its hover text, and the key says who wrote what, from how many messages."""
+    date with its hover text, and the key says who wrote what, from how many messages.
+    No AI route is set here, so both name just an AI (the routes:
+    `test_topic_page_entries.py`)."""
     page = opens(tools, QUILT)
 
-    assert re.search(r'Sun 15 Nov\s*<span class="ai-mark"[^>]*title="Summarised by famstack\'s AI"',
+    assert re.search(r'Sun 15 Nov\s*<span class="ai-mark"[^>]*title="Summarised by AI"',
                      page.body) or re.search(r'15 November\s*<span class="ai-mark"', page.body)
-    assert ("The title and the text are famstack's AI's, written once at filing from 6 messages. "
+    assert ("The title and the text are an AI's, written once at filing from 6 messages. "
             "The messages are below, as sent.") in page.text
 
 

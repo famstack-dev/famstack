@@ -1,15 +1,16 @@
 """A topic's entries: its newest notes in full, their messages one tap away.
 
-    entries.section(answer, context, media=records, names=names)   # the "Entries 4" section, "" for no note
+    entries.section(answer, context, media=records, names=names, route="managed")   # "Entries 4", "" for no note
     entries.media_paths(answer)                                    # the media store paths the section draws
 
 An entry is a note read from top to bottom on the topic's page: who filed
-it, the day, ✦ when the AI wrote its text (`memory_ui.entry.made`), its
-title, its text as it is and the photos sent with it. Its foot folds the
+it, the day, ✦ when the AI wrote its text (`memory_ui.entry.made.ai_made`,
+the card page's rule, from the sidecar's `made`), named for the AI's
+`route` (`memory_ui.ai_route`), in the card page's words (`ai_hint`), its title, its text as it is and the photos sent with it. Its foot folds the
 messages it was filed from under "show the original messages", drawn as the
 card page draws them (`memory_ui.entry`), and links the card's page. The
-answer holds the newest ten (`entries`); older notes of the part the page
-shows stay rows, as the topic's cards were before.
+answer holds the newest ten (`entries`) on the first part only; older notes
+of the part the page shows stay rows, as the topic's cards were before.
 
 A reply in the note's thread that came after the AI wrote the text is
 counted above the text: the text stays as written and the reply is under
@@ -37,9 +38,8 @@ from memory_home.items import Context, person_name, row
 from memory_home.words import words
 from memory_ui.addresses import card_address
 from memory_ui.entry import draw, media_paths as card_media_paths, sections_of
-from memory_ui.entry.made import ai_hint, mark
+from memory_ui.entry.made import ai_hint, ai_made, mark
 from memory_ui.text import to_html
-from memory_ui.words import day_of, plain_day
 
 __all__ = ["section", "media_paths", "without_notes"]
 
@@ -48,16 +48,17 @@ PHOTO_KINDS = ("image", "images")
 
 
 def section(answer: dict, context: Context, *, media: Mapping[str, Mapping | None],
-            names: Mapping[str, str]) -> str:
+            names: Mapping[str, str], route: str = "") -> str:
     """The "Entries" section: the entries in full, then the older notes of
     the part as rows; "" for a topic with no note on this part. Its count
-    is the topic's notes."""
+    is the topic's notes. `route` is the AI's, which ✦ names (`memory_ui.ai_route.of`)."""
     found = answer.get("entries") or []
     older = _older(answer, found)
     if not found and not older:
         return ""
     count = (answer.get("counts") or {}).get("note") or len(found) + len(older)
-    body = "".join(_entry(e, context, media, names) for e in found)
+    hint = ai_hint(route, language=context.language)
+    body = "".join(_entry(e, context, media, names, hint) for e in found)
     body += sections.rows(row(i, context) for i in older) if older else ""
     return sections.section("entries", context, body, count)
 
@@ -77,14 +78,14 @@ def without_notes(answer: dict) -> dict:
 
 # ── One entry ──────────────────────────────────────────────────────────────
 
-def _entry(e: dict, context: Context, media: Mapping[str, Mapping | None], names: Mapping[str, str]) -> str:
+def _entry(e: dict, context: Context, media: Mapping[str, Mapping | None], names: Mapping[str, str],
+           hint: str) -> str:
     w = words(context.language)
     card = _card_of(e)
     parts = sections_of(card)
     who = e.get("sender") or ""
-    day = day_of(e.get("day"))
-    when = plain_day(day, today=context.today, language=context.language) if day else ""
-    ai = mark(ai_hint(language=context.language)) if e.get("made") else ""
+    when = context.day_words(e.get("day"))
+    ai = mark(hint) if ai_made(e) else ""
     photos = draw([p for p in parts if p.kind in PHOTO_KINDS], media=media, names=names,
                   language=context.language)
     fold = (f'<details class="entry-messages"><summary class="show-messages">{escape(w["entry_show"])}'
@@ -112,8 +113,8 @@ def _later(e: dict, w: dict) -> str:
 
 def _replies_after(e: dict) -> int:
     """How many replies came after the model wrote the text; 0 for a note it did not write."""
-    made = _moment(e.get("made_at"))
-    if not e.get("made") or made is None:
+    made = _moment((e.get("made") or {}).get("at"))
+    if not ai_made(e) or made is None:
         return 0
     return sum(1 for s in e.get("sources") or []
                if s.get("role") == "reply" and (at := _moment(s.get("time"))) is not None and at > made)

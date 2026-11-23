@@ -118,12 +118,13 @@ class Head:
 
 
 def head_of(card: Mapping, *, names: Mapping[str, str], today: date, language: str,
-            kept: Mapping | None = None, paperless: str = "") -> Head:
+            kept: Mapping | None = None, paperless: str = "", route: str = "") -> Head:
     """The head of `card`'s page. `names` maps a person id to the name a
     reader knows (`{"homer": "Homer"}`); `today` is the instance's day;
     `kept` is the media store's record of the file a note was made from
     (`Reads.kept`), None when there is none; `paperless` is Paperless's
-    public address today, which a document's "Open in Paperless" links.
+    public address today, which a document's "Open in Paperless" links;
+    `route` is the AI's (`ai_route.of`), which a note's ✦ names.
 
     A type the table does not know shows its own name as the label and no
     facts, so a new type reads as a plain card until it has a row here.
@@ -137,7 +138,7 @@ def head_of(card: Mapping, *, names: Mapping[str, str], today: date, language: s
     kind = str(card.get("type") or "")
     w = words(language)
     facts_of = _TYPES.get(kind, _plain)
-    ctx = _Context(card, card.get("meta") or {}, names, today, language, w, kept or {}, paperless)
+    ctx = _Context(card, card.get("meta") or {}, names, today, language, w, kept or {}, paperless, route)
     icon = _diary_icon(ctx) if kind == "diary" else _ICONS.get(kind, kind) if kind in _TYPES else "note"
     label = w["types"].get(kind, kind.capitalize())
     if found := file_of(card):
@@ -161,6 +162,7 @@ class _Context:
     w: dict
     kept: Mapping
     paperless: str = ""
+    route: str = ""
 
     def text(self, key: str) -> str:
         value = self.meta.get(key)
@@ -214,7 +216,7 @@ def _bookmark(c: _Context) -> Facts:
 
 def _note(c: _Context) -> Facts:
     chat = bool(c.text("capture_id") or c.card.get("sources"))
-    hint = ai_hint(language=c.language) if ai_made(c.card) else ""
+    hint = ai_hint(c.route, language=c.language) if ai_made(c.card) else ""
     return [Part(c.people()), Part(c.day(), ai_hint=hint)], [Part(c.w["in_chat"] if chat else "")], None
 
 

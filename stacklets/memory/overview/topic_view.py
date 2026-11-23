@@ -1,11 +1,11 @@
 """The answer for one topic: everything the topic's page draws, in one reply.
 
-    topic_view(topic, cards, today)
+    topic_view(topic, cards, today, part=1)
     # {"bookmarks": {"count": 12, "items": [{"id": ..., "site": "example.org", "words": "..."}]},
     #  "documents": {"kinds": [...], "total": 3, ...},
     #  "lists": [{"id": "list-packing", "open": 7, "items": [the first 5 open]}],
     #  "changed": {"count": 1, "items": [...]},
-    #  "entries": [the newest 10 notes in full]}
+    #  "entries": [the newest 10 notes in full]}      # [] on any part but the first
 
 `views._topic` calls it with the topic's cards and merges the parts into
 the page's answer, next to the topic's own `cards`, `links` and `counts`.
@@ -17,6 +17,12 @@ change does not count, and a filing the archivist committed with a person
 as author is that person's. This module only picks what a topic shows and
 adds the two parts no other page has: a bookmark's site and words, and a
 note in full (an entry).
+
+The entries are the newest notes, which the first part of the page shows
+in full; a later part lists older notes as its cards, so it sends none.
+An entry's `made` is the sidecar's record of the model that wrote its text,
+as the card page reads it: core decides ✦ from it with one rule
+(`memory_ui.entry.made.ai_made`), so the two pages never disagree.
 
 A list shows its open items only when it is tagged with the topic, as the
 topic's to-do list: a long list breaks a page (`open_lists` sends none on
@@ -38,27 +44,30 @@ from ..note_card import card_sources
 from .items import item
 from .sections import ListCard, changed, documents, lists_of, open_lists
 
-__all__ = ["ENTRIES", "OPEN_ITEMS", "topic_view"]
+__all__ = ["ENTRIES", "OPEN_ITEMS", "BOOKMARKS", "DOCUMENTS", "topic_view", "entry", "site_of", "words_of"]
 
 # How many notes come in full, and how many open items a to-do list names.
-# Older notes stay in the paged `cards`.
+# Older notes stay in the paged `cards`. A topic names its newest bookmarks
+# and documents, as many as a part of a page lists.
 ENTRIES = 10
 OPEN_ITEMS = 5
 BOOKMARKS = 40
+DOCUMENTS = 40
 
 _SOURCES_HEADING = re.compile(r"^## Sources\s*$", re.MULTILINE)
 
 
-def topic_view(topic: Card, cards: list[Card], today: date) -> dict:
+def topic_view(topic: Card, cards: list[Card], today: date, *, part: int = 1) -> dict:
     """The parts of a topic's page from its `cards` (newest first): `bookmarks`,
     `documents`, `lists`, `changed` and `entries`. Every part is empty for a
-    topic with no card of its kind."""
+    topic with no card of its kind; `entries` also on any `part` but the first."""
     found = lists_of(cards)
+    notes = [c for c in cards if c.type == "note"][:ENTRIES] if part == 1 else []
     return {"bookmarks": _bookmarks([c for c in cards if c.type == "bookmark"]),
-            "documents": documents(cards, limit=BOOKMARKS),
+            "documents": documents(cards, limit=DOCUMENTS),
             "lists": _lists(topic, found),
             "changed": changed(cards, today),
-            "entries": [entry(c) for c in [c for c in cards if c.type == "note"][:ENTRIES]]}
+            "entries": [entry(c) for c in notes]}
 
 
 # ── Bookmarks ─────────────────────────────────────────────────────────────
@@ -99,14 +108,12 @@ def _lists(topic: Card, found: list[ListCard]) -> list[dict]:
 
 def entry(card: Card) -> dict:
     """A note in full: its `text` (without the title and the sources), `title`,
-    `day`, `sender` (who filed it), `sources` with their quotes, and `made`,
-    whether a model wrote the text (its sidecar records the prompt template), and
-    `made_at`, when it did ("" for a note no model wrote)."""
+    `day`, `sender` (who filed it), `sources` with their quotes, and `made`, the
+    sidecar's record of the model that wrote the text as it stands
+    (`{"at": ..., "model": ..., "prompt_template": ...}`, `{}` for none)."""
     side = card.sidecar or {}
-    made = side.get("made") or {}
     return item(card, text=_text(card), sender=str(side.get("filed_by") or card.meta.get("filed_by") or ""),
-                sources=_sources(card), made=bool(made.get("prompt_template")),
-                made_at=str(made.get("at") or "") if made.get("prompt_template") else "")
+                sources=_sources(card), made=dict(side.get("made") or {}))
 
 
 def _sources(card: Card) -> list[dict]:
