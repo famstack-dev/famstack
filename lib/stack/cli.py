@@ -2766,8 +2766,8 @@ def handle_uninstall(stck, args):
         sys.exit(1)
 
     name = stck.product_name()
-    config_exists = (stck.root / "stack.toml").exists()
-    state_exists = (stck.root / ".stack").exists()
+    config_exists = (stck.instance_dir / "stack.toml").exists()
+    state_exists = (stck.instance_dir / ".stack").exists()
     has_containers = bool(docker.all_project_ids())
     if not config_exists and not state_exists and not stck.data.exists() and not has_containers:
         print(f"\n  {DIM}{name} is not set up. Run 'stack install' to get started.{RESET}\n")
@@ -2823,9 +2823,10 @@ def _uninstall(stck, exclude: list[str], name: str) -> None:
                               "Stop it, then run 'stack uninstall' again."})
         sys.exit(1)
 
-    # Remove config files
+    # The instance's config, never the checkout's: under STACK_DIR the
+    # checkout may hold another instance's stack.toml and .stack/.
     for filename in ("stack.toml", "users.toml"):
-        path = stck.root / filename
+        path = stck.instance_dir / filename
         if path.exists():
             path.unlink()
             print(f"  {GREEN}\u2713{RESET} Removed {filename}")
@@ -2834,7 +2835,7 @@ def _uninstall(stck, exclude: list[str], name: str) -> None:
     # setup markers of the preserved stacklets (and anything else they
     # own under .stack/) survive. Without exclusions, the whole directory
     # goes as before.
-    state_dir = stck.root / ".stack"
+    state_dir = stck.instance_dir / ".stack"
     if state_dir.exists():
         import shutil
         if exclude:
