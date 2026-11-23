@@ -930,9 +930,18 @@ class CLI:
     def destroy(self, stacklet_id: str) -> dict:
         """Destroy: Docker compose down + Stack.destroy(), in its run lock."""
         with self._run(stacklet_id):
-            return self._ended(stacklet_id, self._destroy(stacklet_id))
+            return self._ended(stacklet_id, self._removed(stacklet_id, self.stack.destroy))
 
-    def _destroy(self, stacklet_id: str) -> dict:
+    def tear_down(self, stacklet_id: str) -> dict:
+        """Docker compose down + Stack.tear_down(), in its run lock: a
+        destroy that keeps the stacklet's data folder (`stack uninstall`)."""
+        with self._run(stacklet_id):
+            return self._ended(stacklet_id, self._removed(stacklet_id, self.stack.tear_down))
+
+    def _removed(self, stacklet_id: str, remove) -> dict:
+        """Stop the stacklet's containers, then `remove(stacklet_id)`
+        (`Stack.destroy` or `Stack.tear_down`). Containers that do not stop
+        end it before `remove` runs."""
         stacklet = self.stack._find_stacklet(stacklet_id)
         if not stacklet:
             return {"error": f"Stacklet '{stacklet_id}' not found"}
@@ -951,7 +960,7 @@ class CLI:
                 return {"error": "Failed to stop containers", "output": output}
             self.stack.output.step("Containers removed")
 
-        result = self.stack.destroy(stacklet_id)
+        result = remove(stacklet_id)
         self._reload_proxy()
         return result
 
@@ -2706,12 +2715,15 @@ def _belongs_to_stacklet(entry_name: str, sids: list[str]) -> bool:
     return any(entry_name.startswith(f"{sid}.") for sid in sids)
 
 
-def _destroy_every(stck, cli, stacklets: list[dict], exclude: list[str]) -> list[str]:
-    """Destroy each of `stacklets` that has state: data, a setup marker or
-    a container. `exclude` is only named, as preserved. Returns the ids
-    whose destroy failed, after trying every one: a stacklet whose service
-    still runs keeps its data and secrets (`Stack.destroy`), and the
-    others are destroyed all the same."""
+def _tear_down_every(stck, cli, stacklets: list[dict], exclude: list[str]) -> list[str]:
+    """Tear down each of `stacklets` that has state: data, a setup marker
+    or a container. `exclude` is only named, as preserved. Returns the ids
+    whose teardown failed, after trying every one: a stacklet whose service
+    still runs keeps its secrets (`Stack.tear_down`), and the others are
+    torn down all the same.
+
+    The data folders stay: `_uninstall` deletes them only after the admin
+    typed `delete`."""
     failed: list[str] = []
     for sid in exclude:
         print(f"  {DIM}Preserving {sid} (excluded via --not){RESET}", file=sys.stderr)
@@ -2724,7 +2736,7 @@ def _destroy_every(stck, cli, stacklets: list[dict], exclude: list[str]) -> list
         if not has_data and not has_marker and not has_container:
             continue
         print(f"  {ORANGE}Uninstalling {s['name']}...{RESET}", file=sys.stderr)
-        result = cli.destroy(sid)
+        result = cli.tear_down(sid)
         if result.get("ok"):
             print(f"  {GREEN}\u2713{RESET} {s['name']} uninstalled")
         else:
@@ -2792,16 +2804,20 @@ def handle_uninstall(stck, args):
 
 def _uninstall(stck, exclude: list[str], name: str) -> None:
     """`handle_uninstall` once confirmed, holding every stacklet's lock."""
-    # Only destroy stacklets that actually have state, and never touch
+    # Only tear down stacklets that actually have state, and never touch
     # the excluded set. An excluded stacklet keeps its container, data
     # dir, and setup marker: everything needed to survive the uninstall
     # and resume on the next `stack up`.
+    #
+    # The teardown keeps every data folder. They hold the family's photos,
+    # messages and documents, so only the `delete` answer below removes
+    # them; any other answer, a closed terminal or Ctrl+C keeps them.
     cli = CLI(stck)
     removed = [st for st in stck.discover() if st["id"] not in exclude]
-    failed = _destroy_every(stck, cli, removed, exclude)
+    failed = _tear_down_every(stck, cli, removed, exclude)
     if failed:
         # The config, `.stack/` with the secrets and the data folder stay:
-        # a stacklet whose service still runs needs them, and its destroy
+        # a stacklet whose service still runs needs them, and its teardown
         # kept them for that reason.
         print_error({"error": f"Not uninstalled, a service still runs: {', '.join(failed)}. "
                               "Stop it, then run 'stack uninstall' again."})
