@@ -658,6 +658,8 @@ def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
 @pytest.mark.parametrize("symbol", (
     "nanobot.agent.memory.MemoryStore",
     "nanobot.agent.loop.AgentLoop",
+    "nanobot.agent.loop.AgentLoop._restore_turn",
+    "nanobot.agent.loop.TurnKind",
     "nanobot.agent.tools.path_utils.resolve_workspace_path",
     "nanobot.agent.tools.filesystem.WriteFileTool",
 ))

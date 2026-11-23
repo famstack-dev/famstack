@@ -17,7 +17,8 @@ carry one chat's words into another, and this module stops each:
     attachments           every chat's files land in one media folder, which
                           nanobot's file tools and message tool allow outside
                           the workspace. A chat now reaches only the files of
-                          its own conversation: the ones its session holds.
+                          its own conversation: the ones the Matrix channel
+                          downloaded for it, recorded in its session.
     writes                `write_file`, `edit_file` and `apply_patch` on a plain
                           path leave a file in the workspace that every chat
                           reads, and a skill or profile written there goes into
@@ -55,9 +56,14 @@ WRITE_REFUSAL = (
 _sessions = None
 
 
+# The session metadata key that lists the files a conversation was sent.
+SENT_FILES = "stack_sent_files"
+
+
 def install() -> None:
     """Attach the three gates; raise if any of them cannot attach."""
     _keep_the_sessions()
+    _record_sent_files()
     _write_no_shared_history()
     _own_attachments_only()
     _refuse_plain_writes()
@@ -91,24 +97,53 @@ def _keep_the_sessions() -> None:
     AgentLoop.__init__ = init
 
 
-def _in_this_conversation(path: Path) -> bool:
-    """Whether a message of the current turn's conversation carries `path`.
+def _record_sent_files() -> None:
+    """Record the files of each inbound message in its conversation's session.
 
-    Only the paths nanobot itself stored as the message's attachments
-    (`media`) count: the Matrix channel puts every downloaded file there.
-    Never a path in the message text, because a person or the model writes
-    that text. Outside a turn, or with the sessions unknown, nothing is this
-    conversation's.
+    The Matrix channel downloads a message's files into the media folder and
+    hands their paths to the loop as the message's `media`; the photo sent a
+    moment before the words arrives there too (`photo_before`). nanobot's
+    restore stage then keeps only the images under `media` and writes every
+    other file into the message's text as `[Attachment: <path>]`, a line
+    anybody can type. So the paths are taken here, before that stage, and
+    kept in the session's metadata, which nanobot saves with the session: the
+    record survives a restart of the agent, and goes with the session when
+    the session is deleted.
+    """
+    from nanobot.agent.loop import AgentLoop, TurnKind
+
+    original = AgentLoop._restore_turn
+
+    @functools.wraps(original)
+    async def restore(self, ctx):
+        sent = list(ctx.msg.media or []) if ctx.kind is TurnKind.USER else []
+        await original(self, ctx)
+        if sent and ctx.session is not None:
+            known = ctx.session.metadata.get(SENT_FILES) or []
+            new = [p for p in map(_resolved, sent) if p not in known]
+            ctx.session.metadata[SENT_FILES] = [*known, *new]
+
+    AgentLoop._restore_turn = restore
+
+
+def _resolved(path) -> str:
+    """`path` as one absolute spelling, so a record and a request compare."""
+    return str(Path(str(path)).expanduser().resolve())
+
+
+def _in_this_conversation(path: Path) -> bool:
+    """Whether the current turn's conversation was sent `path`.
+
+    Only the files the channel downloaded for the conversation count
+    (`_record_sent_files`), never a path in a message's text, because a
+    person or the model writes that text. Outside a turn, or with the
+    sessions unknown, nothing is this conversation's.
     """
     conversation = current_turn().conversation
     if not conversation or _sessions is None:
         return False
-    target = path.resolve()
-    for message in _sessions.get_or_create(conversation).messages:
-        for carried in message.get("media") or []:
-            if Path(str(carried)).expanduser().resolve() == target:
-                return True
-    return False
+    session = _sessions.get_or_create(conversation)
+    return _resolved(path) in (session.metadata.get(SENT_FILES) or [])
 
 
 def _own_attachments_only() -> None:
