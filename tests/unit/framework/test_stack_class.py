@@ -121,6 +121,21 @@ data_dir = "/tmp/test-data"
         env = Stack(root=tmp_path, data=tmp_path / "data").env("myapp")
         assert env["FAMILY"] == "Homer,Marge,Bart"
 
+    def test_messages_user_ids_are_everyone_with_a_chat_account(self, tmp_path):
+        # Admins get an account on every stacklet; a member only on the
+        # stacklets their entry lists. The bot runner joins exactly these
+        # people to a room that is for everyone.
+        (tmp_path / "users.toml").write_text(
+            '[[users]]\nname = "Homer"\nrole = "admin"\n'
+            '[[users]]\nname = "Marge"\nrole = "member"\nstacklets = ["messages", "photos"]\n'
+            '[[users]]\nname = "Maggie"\nrole = "member"\nstacklets = ["photos"]\n'
+        )
+        _create_stacklet(tmp_path, "myapp", env_defaults={"PEOPLE": "{messages_user_ids}"})
+
+        from stack import Stack
+        env = Stack(root=tmp_path, data=tmp_path / "data").env("myapp")
+        assert env["PEOPLE"] == "homer,marge"
+
     def test_missing_var_resolves_to_empty(self, tmp_path):
         _create_stacklet(tmp_path, "myapp", env_defaults={
             "TOKEN": "{nonexistent_var}",

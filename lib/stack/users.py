@@ -78,6 +78,16 @@ def user_id(user: dict) -> str:
     return user["name"].split()[0].lower()
 
 
+def has_account_on(user: dict, stacklet_id: str) -> bool:
+    """Whether this users.toml entry gets an account on a stacklet.
+
+    An admin gets one on every stacklet. A member gets one only on the
+    stacklets their `stacklets` list names, so a member without
+    `"messages"` has no chat account and is joined to no room.
+    """
+    return user.get("role") == "admin" or stacklet_id in user.get("stacklets", [])
+
+
 def password_key(user: dict) -> str:
     """Secret key for a user's password. e.g. 'USER_ARTHUR_PASSWORD'."""
     return f"USER_{user_id(user).upper()}_PASSWORD"
