@@ -184,6 +184,18 @@ def test_the_bot_loads_in_the_runner(toml, container):
     assert MOVED not in report["log"], report["log"]
 
 
+def test_the_runner_finds_the_documents_room_is_for_everyone(container):
+    """Given the shipped declarations, when the bot runner discovers them,
+    then the archivist's Documents Room is for everyone and the Server Room
+    is not: the runner joins every person with a chat account only to a
+    room whose bot declares `room_members = "everyone"`."""
+    documents = _load(REPO / "stacklets" / "docs" / "bot" / "bot.toml", container)
+    server = _load(REPO / "stacklets" / "core" / "bot" / "bot.toml", container)
+
+    assert (documents["room"], documents["room_members"]) == ("documents", "everyone"), documents
+    assert (server["room"], server["room_members"]) == ("famstack", None), server
+
+
 # A bot module is ordinary Python. This one defines a frozen dataclass under
 # postponed annotations, and dataclasses looks the class's module up in
 # `sys.modules` while it builds the class.

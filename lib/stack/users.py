@@ -78,6 +78,28 @@ def user_id(user: dict) -> str:
     return user["name"].split()[0].lower()
 
 
+def has_account_on(user: dict, stacklet_id: str) -> bool:
+    """Whether this users.toml entry gets an account on a stacklet.
+
+    An admin gets one on every stacklet. A member gets one only on the
+    stacklets their `stacklets` list names, so a member without
+    `"messages"` has no chat account and is joined to no room.
+    """
+    return user.get("role") == "admin" or stacklet_id in user.get("stacklets", [])
+
+
+def user_ids_with_role(users: list[dict], role: str) -> str:
+    """The comma-separated user IDs of the entries with this role,
+    as core renders them into env: `"homer"` for role `"admin"`."""
+    return ",".join(user_id(u) for u in users if u.get("role") == role)
+
+
+def user_ids_with_account(users: list[dict], stacklet_id: str) -> str:
+    """The comma-separated user IDs of the entries with an account on a
+    stacklet (`has_account_on`): `"homer,marge"` for `"messages"`."""
+    return ",".join(user_id(u) for u in users if has_account_on(u, stacklet_id))
+
+
 def password_key(user: dict) -> str:
     """Secret key for a user's password. e.g. 'USER_ARTHUR_PASSWORD'."""
     return f"USER_{user_id(user).upper()}_PASSWORD"

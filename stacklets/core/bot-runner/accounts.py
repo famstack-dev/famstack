@@ -1,8 +1,15 @@
 """Create Matrix accounts and rooms for discovered bots.
 
 Runs on bot-runner startup before any bots are launched. Uses the
-Synapse admin API to create/upsert accounts and join bots to their
-declared rooms. Idempotent — safe to run on every restart.
+Synapse admin API to create accounts, create each bot's declared room
+and join the bot and its people to it. A bot's `room_members` says who
+those are: `"everyone"` joins every person with a chat account (the
+Documents Room), anything else the admins only (the Server Room).
+
+Idempotent, so it is safe on every restart: people are only added, never
+removed, and a room whose members are already right gets no new event.
+A member who left a room for everyone, or was banned from it, stays out:
+only the bot and the admins are joined again.
 """
 
 import json
@@ -104,11 +111,19 @@ def setup_bot_accounts(bots, homeserver, server_name, admin_user, admin_password
 
 
 def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
-                 admin_user_ids=None):
-    """Ensure bot rooms exist and admin users are joined.
+                 admin_user_ids=None, member_user_ids=None):
+    """Ensure bot rooms exist and their people are in them.
 
-    Always runs on startup, even when bot sessions already exist.
-    Creates rooms, joins bots, joins admin-role users.
+    Always runs on startup, even when bot sessions already exist. Creates
+    each bot's room, joins the bot, and joins the people its declaration
+    names: every user in `member_user_ids` for `room_members = "everyone"`,
+    otherwise the admins only. Admins are made admins of the room.
+
+    It only adds: nobody is removed, and a person already in the room is
+    not joined again, so a restart with the right members writes nothing.
+    A member who left the room or was banned from it is not joined again,
+    because that was their choice or an admin's. The bot and the admins
+    are, as the room does not work without them.
     """
     # Only process bots that declare a room
     bots_with_rooms = [b for b in bots if b.get("room") or b.get("join_rooms")]
@@ -121,9 +136,11 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         return
 
     space_id = _resolve_space(base, token, server_name)
+    admins = [f"@{uid}:{server_name}" for uid in admin_user_ids or []]
+    everyone = [f"@{uid}:{server_name}" for uid in member_user_ids or []]
 
     for bot in bots_with_rooms:
-        bot_id = bot["id"]
+        bot_user = f"@{bot['id']}:{server_name}"
         room_alias = bot.get("room")
 
         # Rooms another stacklet owns, which the bot takes part in:
@@ -132,7 +149,7 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         for alias in bot.get("join_rooms") or []:
             existing = _resolve_room(base, token, server_name, alias)
             if existing:
-                _join_user(base, token, existing, f"@{bot_id}:{server_name}")
+                _join_missing(base, token, existing, [bot_user])
 
         if not room_alias:
             continue
@@ -141,13 +158,47 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         if not room_id:
             continue
 
-        # Join the bot and every person with the admin role, and make those
-        # admins of the room: the tech admin created it and is otherwise
-        # the only account with power there.
-        _join_user(base, token, room_id, f"@{bot_id}:{server_name}")
-        for uid in (admin_user_ids or []):
-            _join_user(base, token, room_id, f"@{uid}:{server_name}")
-            _ensure_admin_power(base, token, room_id, f"@{uid}:{server_name}")
+        people = everyone if bot.get("room_members") == "everyone" else []
+        _join_missing(base, token, room_id, [bot_user, *admins],
+                      [p for p in people if p not in admins])
+        # The tech admin created the room and is otherwise the only
+        # account with power there.
+        for admin in admins:
+            _ensure_admin_power(base, token, room_id, admin)
+
+
+def _join_missing(base, token, room_id, required, optional=()):
+    """Force-join each user who is not in the room yet.
+
+    `required` users are joined whatever their membership. `optional`
+    users are joined only when they never were in the room: one who left
+    or was banned stays out.
+
+    The memberships are read first, because a join of a member who is
+    already in the room can still write a membership event. When the
+    read fails, every required user is joined (a join that may repeat is
+    better than a bot or an admin left out) and no optional one, as
+    nothing says whether they left.
+    """
+    memberships = _memberships(base, token, room_id)
+    for user in dict.fromkeys(required):
+        if memberships is None or memberships.get(user) != "join":
+            _join_user(base, token, room_id, user)
+    if memberships is None:
+        return
+    for user in dict.fromkeys(optional):
+        if user not in memberships:
+            _join_user(base, token, room_id, user)
+
+
+def _memberships(base, token, room_id):
+    """Each user's membership in the room (`"join"`, `"leave"`, `"ban"`,
+    `"invite"`), from its state; None when the state cannot be read."""
+    status, resp = _api("GET", f"{base}/_synapse/admin/v1/rooms/{room_id}/state", token=token)
+    if status != 200:
+        return None
+    return {e["state_key"]: (e.get("content") or {}).get("membership")
+            for e in resp.get("state") or [] if e.get("type") == "m.room.member"}
 
 
 def _ensure_admin_power(base, token, room_id, full_user):

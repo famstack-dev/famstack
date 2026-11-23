@@ -2,6 +2,9 @@ id          = "archivist-bot"
 name        = "Archivist"
 description = "Auto-files documents with AI classification"
 room        = "documents"
+# The household paper inbox: every person drops letters here, not only
+# the admins. The bot runner joins everyone with a chat account.
+room_members = "everyone"
 room_topic  = "Drop photos, PDFs, or links here. They get filed and tagged automatically. Type 'help' for tips."
 # The memories room belongs to the messages stacklet. The archivist posts
 # the diary's cards there and takes corrections in their threads.
