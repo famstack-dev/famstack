@@ -45,6 +45,8 @@ def sheet(answer: dict, context: Context, *, about: int | None) -> tuple[str, st
     if about is not None:
         facts += f' · <span class="about-line">{escape(w["about_you"].format(n=about))}</span>'
     head = topic_parts.head(_whose(about_topic.get("owner", ""), context), title, facts, answer, context)
+    if not total:
+        return title, f'<article class="sheet home">{head}{topic_parts.states.empty(context)}</article>'
     shown = _without_itself(answer, about_topic.get("id", ""))
     body = (sections.up_next(shown, context) + topic_parts.main_list(answer, context)
             + sections.cards(shown, context)

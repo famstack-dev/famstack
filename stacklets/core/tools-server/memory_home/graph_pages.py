@@ -38,6 +38,8 @@ from memory_home.items import Context
 from memory_home.looking import Looking, device_person
 from memory_home.menu import menu_of
 from memory_home.notices import NeverSetUp, no_answer, not_found
+from memory_home.topic import states as topic_states
+from memory_home.words import words
 from memory_ui.pages import Answer
 from memory_ui.reads import Reads
 
@@ -67,7 +69,8 @@ async def open_topic(topic_id: str, reads: Reads, looking: Looking, *, language:
         return topic_page.sheet(answer, context, about=about)
 
     return await _open(f"topic/{topic_id}", addresses.topic(topic_id), draw,
-                       reads, looking, language=language, never_set_up=never_set_up, part=part)
+                       reads, looking, language=language, never_set_up=never_set_up, part=part,
+                       refused=topic_states.not_yours)
 
 
 async def open_sender(sender_id: str, reads: Reads, looking: Looking, *, language: str,
@@ -112,15 +115,21 @@ async def open_senders(reads: Reads, looking: Looking, *, language: str,
 # ── Parts ────────────────────────────────────────────────────────────────
 
 async def _open(view: str, here: str, draw: Draw, reads: Reads, looking: Looking, *, language: str,
-                never_set_up: NeverSetUp, part: int = 1) -> Answer:
+                never_set_up: NeverSetUp, part: int = 1,
+                refused: Callable[[str], str] | None = None) -> Answer:
     """A graph page: the memory's overview `view` for the device's
     audience, part `part` of its list, drawn by `draw`, at the address
     `here`, the first part's, which the menu marks on every part. A 404
-    from the memory is the "not found" page; no answer is the page that
+    from the memory is the "not found" page, or the page `refused` draws
+    where a kind of page has its own (a topic: the same for a hidden one
+    and a missing one); no answer is the page that
     says so."""
     (status, answer), names, menu = await asyncio.gather(reads.overview(view, part), reads.names(),
                                                          menu_of(reads, looking))
     person = device_person(looking, names)
+    if status == 404 and refused:
+        return Answer(404, document(refused(language), title=words(language)["topic_refused"],
+                                    language=language, here=here, person=person, menu=menu))
     if status == 404:
         return not_found(language=language, here=here, person=person, menu=menu)
     if answer is None:

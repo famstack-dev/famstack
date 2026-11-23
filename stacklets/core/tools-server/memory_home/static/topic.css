@@ -22,3 +22,6 @@
 .topic-panel .marks .said p { margin: 0; font-size: 0.92rem; }
 .all-rows { margin: 0.5rem 0 0; padding: 0.35rem 0; min-height: var(--tap); border: 0; background: none;
   font: inherit; font-size: 0.92rem; color: var(--secondary); cursor: pointer; }
+
+/* The states that say what to do: an empty topic, and a topic that is another person's own. */
+.topic-empty, .topic-refusal { max-width: 40rem; margin: var(--space-3, 1rem) 0; line-height: 1.5; }
