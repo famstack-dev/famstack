@@ -548,7 +548,7 @@ class Stack:
         # Tech admin — internal service account for all stacklets
         from .users import (
             TECH_ADMIN_USERNAME, TECH_ADMIN_EMAIL,
-            family_display_name, get_admin_password, has_account_on, load_users, user_id,
+            family_display_name, get_admin_password, load_users, user_ids_with_account, user_ids_with_role,
         )
 
         # What the household calls itself ("The Simpsons"), for surfaces
@@ -566,19 +566,11 @@ class Stack:
         # "added to the todo list" reply). See _home_url.
         template_vars["home_url"] = self._home_url()
 
-        # Comma-separated user IDs of all admin-role users from users.toml
-        admin_ids = [
-            user_id(u) for u in load_users(self.instance_dir)
-            if u.get("role") == "admin"
-        ]
-        template_vars["admin_user_ids"] = ",".join(admin_ids)
-
-        # Comma-separated user IDs of everyone with a chat account: the
-        # people the bot runner joins to a room that is for everyone.
-        template_vars["messages_user_ids"] = ",".join(
-            user_id(u) for u in load_users(self.instance_dir)
-            if has_account_on(u, "messages")
-        )
+        # Comma-separated user IDs from users.toml: the admins, and everyone
+        # with a chat account (the bot runner joins them to a room for everyone).
+        all_users = load_users(self.instance_dir)
+        template_vars["admin_user_ids"] = user_ids_with_role(all_users, "admin")
+        template_vars["messages_user_ids"] = user_ids_with_account(all_users, "messages")
 
         # Every family member's first name, account or not, for the bots
         # that have to recognise people before any filing has named them.

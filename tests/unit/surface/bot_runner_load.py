@@ -15,7 +15,8 @@ Discovery is the runner's own `discover_bots`, pointed at the copy, and
 the load is its own `load_bot_class`, the function `main()` calls for
 every bot it launches.
 
-Prints one JSON line on stdout:
+Prints one JSON line on stdout, with the room fields the runner
+discovered (`room`, `room_members`) once it found the bot:
     {"outcome": "loaded", "class": "ArchivistBot", "account": "@archivist-bot:...",
      "session_dir": "<the account's login state>"}
     {"outcome": "provision-only"}
@@ -52,8 +53,11 @@ main._read_secrets = _AnyPassword
 main.STACKLET_ROOTS = (stacklets, state / "extensions")
 
 
+discovered: dict = {}
+
+
 def _report(**answer):
-    print(json.dumps(answer))
+    print(json.dumps({**discovered, **answer}))
     sys.exit(0)
 
 
@@ -64,6 +68,7 @@ with open(bot_toml, "rb") as f:
 cfg = next((c for c in main.discover_bots() if c["bot_id"] == bot_id), None)
 if cfg is None:
     _report(outcome="error", error=f"the runner did not discover {bot_id!r} from {bot_toml}")
+discovered = {"room": cfg["room"], "room_members": cfg.get("room_members")}
 
 # ── the runner's load of one bot ─────────────────────────────────────────
 if cfg["module_stem"] is None:

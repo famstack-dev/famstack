@@ -5,8 +5,10 @@ the bot and the people are in it. A bot's `bot.toml` says who belongs
 there: `room_members = "everyone"` makes it a room for every person with
 a chat account (the Documents Room, where anyone drops a letter); without
 it the room is for the admins only (the Server Room). The runner only
-adds people. It removes nobody, and a room whose members are already
-right gets no new event, because the runner starts on every restart.
+adds people. It removes nobody, a member who left the room or was banned
+stays out, and a room whose members are already right gets no new event,
+because the runner starts on every restart. The people are the user IDs
+core renders into the runner's environment from `users.toml`.
 
 Synapse is stood in on localhost by `tests/synapse.py`. The bot runner's
 `accounts` module is the real one, loaded as the framework loads stacklet
@@ -22,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from stack.stacklet_code import load
+from tests.springfield import make_stack, write_instance
 from tests.synapse import ADMIN_PASSWORD, Synapse
 
 SERVER = "simpson"
@@ -90,3 +93,39 @@ def test_a_second_start_changes_nothing(httpserver, synapse):
     _start_bot_runner(httpserver)
 
     assert synapse.writes == []
+
+
+@pytest.mark.parametrize("membership", ["leave", "ban"])
+def test_a_member_who_left_or_was_banned_stays_out(httpserver, synapse, membership):
+    """Given Marge left the Documents Room or was banned from it, the next start does not join her again."""
+    _start_bot_runner(httpserver)
+    synapse.left("documents", "marge", membership)
+
+    _start_bot_runner(httpserver)
+
+    assert "marge" not in synapse.members_of("documents")
+
+
+def test_an_admin_who_left_is_joined_again(httpserver, synapse):
+    """Given Homer, an admin, left the Documents Room, the next start joins him again, as before."""
+    _start_bot_runner(httpserver)
+    synapse.left("documents", "homer")
+
+    _start_bot_runner(httpserver)
+
+    assert "homer" in synapse.members_of("documents")
+
+
+def test_core_renders_everyone_with_a_chat_account_for_the_runner(tmp_path):
+    """Given an admin, a member with a chat account and one without, core's
+    environment for the runner lists the first two as the room's people."""
+    instance = write_instance(tmp_path)
+    (instance / "users.toml").write_text(
+        '[[users]]\nid = "homer"\nname = "Homer"\nrole = "admin"\n'
+        '[[users]]\nid = "marge"\nname = "Marge"\nrole = "member"\nstacklets = ["messages"]\n'
+        '[[users]]\nid = "maggie"\nname = "Maggie"\nrole = "member"\nstacklets = ["photos"]\n')
+
+    env = make_stack(instance).env("core")
+
+    assert env["STACK_MESSAGES_USER_IDS"] == "homer,marge"
+    assert env["STACK_ADMIN_USER_IDS"] == "homer"
