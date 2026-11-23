@@ -3,9 +3,10 @@
 Each test drives the stack the way the family does (a message in a notes
 room, a reply, `stack memory card edit`, `stack memory write`) and checks
 what the model's wording cannot change: which files exist, who made which
-commit, what the sidecar records, where a link leads. Nothing is stubbed,
-so these run in the instance's own AI mode (`local`), in the first step
-of `stacktests e2e`.
+commit, what the sidecar records, where a link leads. Most stub nothing,
+so they run in the instance's own AI mode (`local`), in the first step
+of `stacktests e2e`. The tag-survives test queues the model's answers on
+the `openai` stand-in and runs in the `stub_model` step, in `mock` mode.
 
 Cards the model titles cannot be found by a title prefix, so each test
 finds its card by the commit that filed it and removes it by path.
@@ -28,6 +29,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.e2e.openai_stub import stub_classify
 from tests.e2e.test_capture_binary_e2e import (
     ARCHIVIST_MXID,
     MEMORY_OWNER,
@@ -151,13 +153,20 @@ async def _go_until(card_id: str, status: int, phone: str, timeout: int = 120) -
 
 # ── A person's edit survives a reply ──────────────────────────────────────
 
-async def test_marges_tag_survives_homers_reply_to_the_note(bdd, code, homer, test_stack, scope):
+async def test_marges_tag_survives_homers_reply_to_the_note(bdd, code, homer, openai, test_stack,
+                                                            scope):
     """A note is filed from the chat; Marge adds a tag in the card editor;
     Homer replies to the filing with a correction.
 
     Then the refile is Homer's `reply:` commit, his words are a reply
     source in the sidecar, and Marge's tag is still on the card: a
     rebuild keeps a person's edit (ADR-018 §7).
+
+    The model's answers come from the `openai` stand-in: the filing asks
+    the capture prompt once; the correction asks the correction prompt
+    (a tag is a field edit, not a text edit), then the capture prompt for
+    the title and tags. A correction the model does not answer writes
+    nothing, so without them no `reply:` commit comes.
     """
     bdd.scenario("Marge's tag survives Homer's reply to the note")
     marges_tag = scope.tag("camping-gear")
@@ -166,14 +175,25 @@ async def test_marges_tag_survives_homers_reply_to_the_note(bdd, code, homer, te
     room_id = await _create_notes_room(homer, f"Homer Cards {scope.uid}")
     bdd.given(f"Homer's notes room, with {ARCHIVIST_MXID}")
 
-    since, sent_ms = time.time(), _now_ms()
     words = ("For the camping trip next weekend: bring three sleeping bags, the big "
              f"tent and the camping stove, and ask Flanders for his lantern. [{marker}]")
+    # The bot checks each clean version below and may refuse one for a
+    # digit inside the marker; the note then shows its own words. The test
+    # asserts nothing of the clean text.
+    stub_classify(openai, {
+        "title": "Camping trip packing",
+        "tags": ["camping-trip", "sleeping-bags", "tent"],
+        "persons": ["Homer"],
+        "clean": ("For the camping trip next weekend, bring three sleeping bags, the big "
+                  f"tent and the camping stove. Ask Flanders for his lantern. [{marker}]"),
+    })
+    since, sent_ms = time.time(), _now_ms()
     await homer.room_send(room_id=room_id, message_type="m.room.message",
                           content={"msgtype": "m.text", "body": words})
     bdd.when("Homer writes a note in the room")
 
     path = await _card_filed_by(code, "capture:", "homer", since)
+    openai.raise_if_unexpected()
     assert path, "no `capture:` commit by homer within 180s; check the bot-runner logs"
     side = path.removesuffix(".md") + ".json"
     scope.on_cleanup.append(lambda _uid: _remove(code, path, side))
@@ -198,13 +218,21 @@ async def test_marges_tag_survives_homers_reply_to_the_note(bdd, code, homer, te
     assert await _commit_on(code, path, "edit:", "marge", timeout=60), "no `edit:` commit by marge"
 
     correction = f"Correction: we need four sleeping bags, Bart is coming too. [{marker}]"
+    openai.correct("For the camping trip next weekend, bring four sleeping bags, the big tent "
+                   f"and the camping stove. Ask Flanders for his lantern. [{marker}]")
+    stub_classify(openai, {
+        "title": "Camping trip packing",
+        "tags": ["camping-trip", "sleeping-bags", "tent"],
+        "persons": ["Homer"],
+    })
     await homer.room_send(room_id=room_id, message_type="m.room.message", content={
         "msgtype": "m.text", "body": correction,
         "m.relates_to": {"m.in_reply_to": {"event_id": filed.event_id}}})
     bdd.when("Homer replies to the filing with a correction")
 
-    assert await _commit_on(code, path, "reply:", "homer"), \
-        "no `reply:` commit by homer on the note within 180s"
+    replied = await _commit_on(code, path, "reply:", "homer")
+    openai.raise_if_unexpected()
+    assert replied, "no `reply:` commit by homer on the note within 180s"
     bdd.then("the refile is Homer's reply commit")
 
     card = _frontmatter(code.get_file(MEMORY_OWNER, MEMORY_REPO, path)["content"])
