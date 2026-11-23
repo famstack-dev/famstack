@@ -54,26 +54,12 @@ def _refresh_core(stck, stacklet_id, first_run=False):
     values changed, and the bot runner after a stacklet's first run.
 
     Called at the end of `stack up <id>` for any stacklet but core. Core's
-    env reads secrets other stacklets write in their first run (an API
-    token, a bot's password), and compose's config hash does not cover an
-    env file's contents, so a changed `.env` needs an explicit recreate for
-    a container to see the new value. Nothing is asked of Docker when the
-    rendered `.env` equals the one core was started with and the start was
-    no first run: a second `stack up photos` leaves core running.
-
-    Otherwise only the containers that run with values that are no longer
-    current are recreated (`stack.core_refresh`). The tools server serves
-    the setup page and the dashboard, and reads a short list of core's
-    values (its `environment:` in core's compose file), so the setup page
-    stays up while the AI's first run hands the bot runner the AI's new
-    address and key.
-
-    A first run (`first_run`) recreates the bot runner even with its
-    values unchanged. It finds bots only when it starts, in the stacklets
-    with a setup-done marker, and a first run writes that marker. The
-    agent's first run changes nothing core's env reads (its bot password
-    goes to the secret store), so without this its bot would not start
-    until core was recreated for another reason.
+    env reads secrets other stacklets write in their first run, and compose
+    does not see a changed env file on its own. Which containers are
+    recreated, and why the tools server is kept running, is in
+    `stack.core_refresh`. Nothing is asked of Docker when the rendered
+    `.env` equals the one core was started with and the start was no
+    first run: a second `stack up photos` leaves core running.
 
     While core's containers run code the checkout has moved past (after
     an update, before `stack restart`), a recreate is not done: core and
@@ -123,7 +109,8 @@ def _refresh_core(stck, stacklet_id, first_run=False):
     core_compose = docker.find_compose_file(core_dir)
     if not core_compose:
         return
-    services = _stale_core_services(core_compose, first_run)
+    from . import core_refresh
+    services = core_refresh.stale_services(core_compose, first_run)
     if services == []:
         return
     answering = _answering_checks(stck)
@@ -134,23 +121,6 @@ def _refresh_core(stck, stacklet_id, first_run=False):
         stck.output.error(f"core refresh failed: {reason}")
         return
     _wait_until_core_is_back(stck, answering)
-
-
-def _stale_core_services(core_compose, first_run: bool) -> list[str] | None:
-    """The services of core to recreate (`stack.core_refresh`), from what
-    compose gives each service now and what each container runs with;
-    None for every service.
-
-    Compose that cannot read the file answers no service. Then every
-    service is recreated, as before, and the recreate reports compose's
-    error instead of a refresh that silently does nothing.
-    """
-    from . import core_refresh
-    expected = docker.compose_service_env(core_compose)
-    if not expected:
-        return None
-    running = {service: docker.container_env(service) for service in expected}
-    return core_refresh.services_to_recreate(expected, running, first_run)
 
 
 # How long a recreate of core may take to answer again, every check

@@ -119,6 +119,20 @@ def test_a_first_run_after_the_ai_route_recreates_only_the_bot_runner(checkout, 
     assert docker.container_env(TOOLS) == tools_before
 
 
+def test_a_first_run_that_changes_nothing_core_reads_recreates_the_bot_runner(checkout, docker):
+    """Given core is up and nothing core's env reads changes,
+    when a stacklet with a bot has its first run (`stack up helper`),
+    then the bot runner is recreated, and nothing else of core.
+
+    The bot runner finds bots only when it starts, in the stacklets with a
+    setup-done marker; the agent's first run changes nothing core reads,
+    and its bot would not answer until core was recreated for another
+    reason."""
+    assert stack("up", "helper") == 0
+
+    assert docker.recreated("core") == [[BOT_RUNNER]]
+
+
 def test_refresh_core_recreates_the_tools_server_when_a_value_it_reads_changed(checkout, docker):
     """Given core and helper are up,
     when the time zone changes, which the tools server reads, and the admin
