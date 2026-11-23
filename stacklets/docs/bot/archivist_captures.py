@@ -20,7 +20,7 @@ archive, and turns the pipeline's `CaptureOutcome` into the reply.
 The reply carries the `capture.filed` or `capture.reclassified` envelope,
 so a reply in its thread is a correction (`archivist_corrections.py`).
 A card names people, so every reply that shows one mentions nobody
-(`NO_MENTIONS`).
+(`NO_MENTIONS`), and only the tags the room may all read (`RoomView`).
 
 No Paperless write, no entity reconciliation: a capture shares the
 memory's vocabulary with the documents but not their pipeline. The
@@ -36,6 +36,7 @@ from urllib.parse import urlsplit
 from stack import media
 from stack.bot import CHECK, CROSS, EYES, RoomContext
 from stack.cards.sources import time_of_ms
+from stack.filing.vocabulary import RoomView
 from stack.links import go_card, public
 from stack.matrix.html import matrix_html
 
@@ -115,9 +116,8 @@ class ArchivistCaptures:
         capture_id: str | None = None,
         user_hint: str | None = None,
     ) -> None:
-        binding = await self._rooms.topic_binding(
-            self._rooms.room_by_id(room_id), sender_mxid,
-        )
+        room = self._rooms.room_by_id(room_id)
+        binding = await self._rooms.topic_binding(room, sender_mxid)
         outcome = await self._services().capture.capture_url(
             url=url, sender_mxid=sender_mxid,
             notifier=self.notifier(room_id, reply_to),
@@ -125,7 +125,7 @@ class ArchivistCaptures:
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             user_hint=user_hint,
-            write_in=self._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx), read_in=self._rooms.scope_bucket(room),
         )
         await self.reply(room_id, outcome, reply_to)
 
@@ -144,16 +144,15 @@ class ArchivistCaptures:
         # way to keep something, so this is the gesture with no fallback.
         if reply_to:
             await self._bot._react(room_id, reply_to, EYES)
-        binding = await self._rooms.topic_binding(
-            self._rooms.room_by_id(room_id), sender_mxid,
-        )
+        room = self._rooms.room_by_id(room_id)
+        binding = await self._rooms.topic_binding(room, sender_mxid)
         outcome = await self._services().capture.capture_text(
             text=text, sender_mxid=sender_mxid,
             capture_id=capture_id,
             seed_topics=binding.seed_topics if binding else None,
             bucket=binding.bucket if binding else None,
             transcribed=transcribed,
-            write_in=self._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx), read_in=self._rooms.scope_bucket(room),
             caption=caption, sent_at=sent_at,
         )
         await self.reply(room_id, outcome, reply_to)
@@ -303,7 +302,7 @@ class ArchivistCaptures:
                 event_id=capture_id, room_id=room_id,
                 sender_mxid=sender_mxid, ts_ms=captured_ts,
             ),
-            write_in=self._rooms.write_in(ctx),
+            write_in=self._rooms.write_in(ctx), read_in=self._rooms.scope_bucket(room),
             caption=caption, sent_at=time_of_ms(captured_ts),
         )
         await self.reply(room_id, outcome, reply_to)
@@ -339,10 +338,13 @@ class ArchivistCaptures:
         if failure is not None:
             await self._bot._answer(room_id, failure, reply_to)
             return
-        reply, html = self._card_reply(o, corrected_from)
+        vault = self._services().vault
+        view = RoomView.between(vault, o.vault_path or "", language=vault.language,
+                                room=self._rooms.scope_bucket(self._rooms.room_by_id(room_id)))
+        reply, html = self._card_reply(o, corrected_from, view)
         metadata = {**NO_MENTIONS}
         if o.envelope:
-            metadata["dev.famstack.event"] = o.envelope
+            metadata["dev.famstack.event"] = view.event(o.envelope)
         await self._bot._answer(room_id, reply, reply_to, metadata=metadata, html=html)
 
     def _failure_reply(self, o: CaptureOutcome) -> str | None:
@@ -363,10 +365,10 @@ class ArchivistCaptures:
         return None
 
     def _card_reply(
-        self, o: CaptureOutcome, corrected_from: dict | None,
+        self, o: CaptureOutcome, corrected_from: dict | None, view: RoomView,
     ) -> tuple[str, str | None]:
         """The reply that shows the card: its plain body and, for a
-        correction, its HTML with the card folded away."""
+        correction, its HTML with the card folded away; tags as `view` shows."""
         kind = card_type(o.envelope)
         # The title links to the card; without a home base, to the page a
         # link capture came from. "(capture)" is a placeholder, not a link.
@@ -378,10 +380,10 @@ class ArchivistCaptures:
             # the plain body shows it open.
             answer = render_capture_correction_reply(
                 self._bot.t,
-                before=shown_in_chat(corrected_from),
-                after=shown_in_chat(o.classification),
+                before=view.of(shown_in_chat(corrected_from)),
+                after=view.of(shown_in_chat(o.classification)),
                 link=link, card_type=kind, captured_at=o.captured_at,
-                language=self._bot.language, changes=_shown_changes(o.changes),
+                language=self._bot.language, changes=view.of_changes(_shown_changes(o.changes)),
                 source=o.display_link,
             )
             reply, html = answer.body, answer.html
@@ -389,7 +391,7 @@ class ArchivistCaptures:
             reply = render_capture_reply(
                 self._bot.t,
                 source_title_hint=o.source_title_hint,
-                classification=shown_in_chat(o.classification),
+                classification=view.of(shown_in_chat(o.classification)),
                 link=link,
                 transcript=o.transcript,
                 card_type=kind,

@@ -522,7 +522,7 @@ The schemas are checked in two places:
 The `urn:famstack:vault` resource holds three formats:
 
 - `person_id`: the declared people;
-- `topic_id`: the ontology and the topic cards' folders;
+- `topic_id`: the ontology and the folders of the topic cards that the readers of the card may read. A card in the shared folder gets the shared topic cards. A card in a person's folder also gets that person's topic cards (`stack.filing.vocabulary`);
 - `tag`: a topic id, or a keyword checked as `format: keyword` by `stack.tags.is_tag`.
 
 A test holds the host's reader to the verdict of `jsonschema`.

@@ -390,6 +390,7 @@ class ArchivistCorrections:
             sender_mxid=sender_mxid,
             initial_classification=initial_classification,
             write_in=self._rooms.write_in(ctx),
+            read_in=self._rooms.scope_bucket(self._rooms.room_by_id(room_id)),
             caption=caption,
             reply_text=reply_text,
             capture_id=capture_id,

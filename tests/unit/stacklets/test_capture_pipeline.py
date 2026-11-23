@@ -116,7 +116,8 @@ class FakeClassifier:
                                initial_classification=None,
                                extract_action_items=False,
                                current_list="", write_in=None,
-                               kind="note", clean_words=False, classify_only=False):
+                               kind="note", clean_words=False, classify_only=False,
+                               topics=None):
         # Recorded so a test can assert the classifier was shown the list it
         # is about to add to; extracting blind is what grew one list from
         # thirteen items to twenty-seven.
@@ -130,6 +131,7 @@ class FakeClassifier:
         self.saw_images = images
         self.saw_clean_words = clean_words
         self.saw_classify_only = classify_only
+        self.saw_topics = topics
         if self._raises:
             raise self._raises
         return self._payload
@@ -174,18 +176,6 @@ class FakeMirror:
     _stored: dict = {}
 
 
-class FakeTags:
-    def __init__(self):
-        self.recorded: list[tuple] = []
-
-    def top(self, n):
-        return []
-
-    def record(self, tags, when):
-        self.recorded.append((tuple(tags), when))
-
-    def save(self):
-        pass
 
 
 class FakePaperless:
@@ -216,12 +206,10 @@ def _pipeline(*, mirror=_UNSET, classifier=None, capture_keep_body=False,
         or FakeExtractor(_source(source_uri="http://embedded")),
         classifier=classifier or FakeClassifier(),
         mirror=FakeMirror() if mirror is _UNSET else mirror,
-        capture_tags=FakeTags(),
         paperless=FakePaperless(),
         bot_name="archivist-bot",
         classify_max_chars=10000,
         capture_keep_body=capture_keep_body,
-        capture_tag_prompt_size=50,
         llm=llm,
         vault=vault,
     )
@@ -335,11 +323,9 @@ class TestCaptureText:
             text_extractor=FakeExtractor(None),  # nothing extracted
             classifier=FakeClassifier(),
             mirror=FakeMirror(),
-            capture_tags=FakeTags(),
             paperless=FakePaperless(),
             bot_name="b", classify_max_chars=100,
-            capture_keep_body=False, capture_tag_prompt_size=50,
-        )
+            capture_keep_body=False, )
         out = await pipe.capture_text(text="   ", sender_mxid="@marge:s")
         assert out.status == "empty"
 
@@ -485,92 +471,6 @@ class TestCaptureBinaryFailures:
         )
         assert out.status == "extract_failed"
         assert out.failure_reason == "binary"
-
-
-class TestTopicSeedMerge:
-    """The static merge helper pins the tag-seed semantics: seed first,
-    classifier additions second, duplicates collapsed. The room-based
-    routing in the archivist (Step 3) leans on this contract; the
-    merge function is exposed as static so the archivist can verify
-    its own seed handling without instantiating a pipeline."""
-
-    def test_seed_survives_empty_classifier_tags(self):
-        """The strongest property: a capture filed in a topic room
-        retains the seed even when the classifier returns no tags
-        at all. Room beats classifier in the empty case."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": []}, seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping"]
-
-    def test_seed_first_then_classifier_additions(self):
-        """Seed precedes classifier tags in the merged list. This
-        is load-bearing for downstream consumers that read the first
-        tag as the canonical topic (e.g. the dream cycle's pattern
-        detection)."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear", "italy-2026"]},
-            seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping", "gear", "italy-2026"]
-
-    def test_seed_deduplicates_when_classifier_repeats_it(self):
-        """The classifier may include the seed tag in its output
-        despite the prompt's guidance. The merge collapses the
-        duplicate; the seed's position wins."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["camping", "gear"]},
-            seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping", "gear"]
-
-    def test_no_seed_is_noop(self):
-        """Non-topic-room captures pass `seed_topics=None` (or omit
-        the kwarg). The classifier's tags are returned unchanged."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear"]}, seed_topics=None,
-        )
-        assert merged["tags"] == ["gear"]
-        merged_empty = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear"]}, seed_topics=[],
-        )
-        assert merged_empty["tags"] == ["gear"]
-
-    def test_classifier_missing_tags_key(self):
-        """When the classifier degraded (no tags key in the payload),
-        the seed still applies. The result has a fresh `tags` list."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"persons": ["Homer"]}, seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping"]
-
-    def test_classifier_returns_string_for_tags(self):
-        """`_tag_list` already tolerates the classifier returning a
-        bare string for `tags:` (some prompts produce that). The
-        merge does the same coercion so the seed prepends cleanly."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": "gear"}, seed_topics=["camping"],
-        )
-        assert merged["tags"] == ["camping", "gear"]
-
-    def test_seed_with_multiple_entries(self):
-        """A topic room with multiple guaranteed tags (forward
-        compatibility for `default_topics: [camping, outdoor]`)
-        keeps all of them in order."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["italy-2026"]},
-            seed_topics=["camping", "outdoor"],
-        )
-        assert merged["tags"] == ["camping", "outdoor", "italy-2026"]
-
-    def test_seed_skips_whitespace_and_non_string(self):
-        """Defensive: malformed seed entries don't pollute the
-        merged list. Empty strings and non-strings drop silently."""
-        merged = CapturePipeline._merge_seed_topics(
-            {"tags": ["gear"]},
-            seed_topics=["camping", "", None, "  ", 42],  # type: ignore[list-item]
-        )
-        assert merged["tags"] == ["camping", "gear"]
 
 
 class TestPdfBodyCap:
@@ -885,37 +785,6 @@ class TestTopicSeedEndToEnd:
         assert "vans" in tags
         # Seed first, then classifier additions in order.
         assert tags == ["van-life", "gear", "vans"]
-
-    @pytest.mark.asyncio
-    async def test_seed_recorded_in_capture_tag_cache(self):
-        """The capture-tag cache feeds the next capture's prompt as
-        existing-tags context. A seeded topic-room capture should
-        push the seed into that cache so the camping tag stays warm
-        even when the classifier never invented it on its own."""
-        mirror = FakeMirror()
-        tags = FakeTags()
-        pipe = CapturePipeline(
-            url_extractor=FakeExtractor(_source(source_uri="http://src")),
-            text_extractor=FakeExtractor(_source(source_uri="http://embedded")),
-            classifier=FakeClassifier(payload={
-                "title": "Note", "tags": [], "persons": ["Homer"],
-            }),
-            mirror=mirror,
-            capture_tags=tags,
-            paperless=FakePaperless(),
-            bot_name="archivist-bot",
-            classify_max_chars=10000,
-            capture_keep_body=False,
-            capture_tag_prompt_size=50,
-        )
-        await pipe.capture_text(
-            text="some pasted thought",
-            sender_mxid="@homer:s",
-            seed_topics=["camping"],
-        )
-        # The seed survives into the topic-tag list the cache records.
-        all_recorded = [t for entry in tags.recorded for t in entry[0]]
-        assert "camping" in all_recorded
 
     @pytest.mark.asyncio
     async def test_bucket_override_routes_to_topic_folder(self):

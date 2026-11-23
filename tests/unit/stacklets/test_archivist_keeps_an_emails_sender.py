@@ -54,15 +54,6 @@ class Classifier:
                 "summary": "The class visits the plant on Friday."}
 
 
-class Tags:
-    def top(self, n):
-        return []
-
-    def record(self, tags, when):
-        pass
-
-    def save(self):
-        pass
 
 
 @pytest.fixture
@@ -85,9 +76,8 @@ def archivist(tmp_path, memory) -> ArchivistBot:
                        memory=MemoryAPI.from_container(memory.environ))
     capture = CapturePipeline(
         url_extractor=None, text_extractor=None, classifier=Classifier(), mirror=mirror,
-        capture_tags=Tags(), paperless=None, bot_name="archivist-bot",
-        classify_max_chars=10000, capture_keep_body=False, capture_tag_prompt_size=50,
-        vault=vault)
+        paperless=None, bot_name="archivist-bot",
+        classify_max_chars=10000, capture_keep_body=False, vault=vault)
     bot = ArchivistBot(homeserver="http://h", user_id=BOT_ID, password="x",
                        session_dir=tmp_path / "session",
                        services=SimpleNamespace(capture=capture))

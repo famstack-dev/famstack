@@ -106,6 +106,7 @@ from pathlib import Path
 # from `lib` rather than relying on a package install.
 from ..lib import (
     brain_path_for,
+    get_ontology,
     keywords_to_regex,
     search_memory,
     split_alternatives,
@@ -114,6 +115,7 @@ from ..lib import (
 
 from ._common import dispatch_capture
 from ._curator import pull_now
+from ._shared_bucket import shared_bucket
 
 # The `/go` namespace owns its own URL shapes; we join, never build.
 from stack.links import go_card, public
@@ -336,6 +338,8 @@ def run(args, stacklet, config) -> dict | None:
         persons=ns.person, tags=ns.tag,
         scopes=ns.scope or None,
         limit=ns.limit,
+        # The instance's shared bucket titles a topic id two buckets share.
+        ontology=get_ontology(vault, shared_bucket(config)),
     )
 
     # Before the results, and before the no-results exit: a rewrite

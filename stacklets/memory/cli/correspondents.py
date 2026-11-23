@@ -17,11 +17,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..lib import (
-    DEFAULT_SHARED_BUCKET,
     correspondents_dir,
     load_correspondents_from_vault,
     vault_path_for,
 )
+from ._shared_bucket import shared_bucket
 
 HELP = "Inspect correspondent wiki pages"
 
@@ -31,19 +31,12 @@ def _vault(config):
     return vault_path_for(Path(data_dir)) if data_dir else None
 
 
-def _shared_bucket(config) -> str:
-    if not config:
-        return DEFAULT_SHARED_BUCKET
-    stack_cfg = config.get("stack") or {}
-    return (stack_cfg.get("core") or {}).get("shared_bucket") or DEFAULT_SHARED_BUCKET
-
-
 def run(args, stacklet, config):
     vault = _vault(config)
     if vault is None:
         return {"error": "stack data_dir not configured"}
 
-    bucket = _shared_bucket(config)
+    bucket = shared_bucket(config)
     correspondents = load_correspondents_from_vault(vault, bucket)
 
     if args and args[0] == "show":

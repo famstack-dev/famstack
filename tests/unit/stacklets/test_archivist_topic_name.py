@@ -49,15 +49,6 @@ class Words:
         return SimpleNamespace(text=text, source_uri=None, title_hint=None)
 
 
-class Tags:
-    def top(self, n):
-        return []
-
-    def record(self, tags, when):
-        pass
-
-    def save(self):
-        pass
 
 
 class Room:
@@ -113,8 +104,8 @@ class Archivist:
         binding = await self.binding(room_name, members)
         pipeline = CapturePipeline(
             url_extractor=None, text_extractor=Words(), classifier=Classifier(), mirror=self.mirror,
-            capture_tags=Tags(), paperless=None, bot_name="archivist-bot", classify_max_chars=10000,
-            capture_keep_body=False, capture_tag_prompt_size=50, vault=self.vault)
+            paperless=None, bot_name="archivist-bot", classify_max_chars=10000,
+            capture_keep_body=False, vault=self.vault)
         return await pipeline.capture_text(text=words, sender_mxid="@marge:simpson",
                                            bucket=binding.bucket, seed_topics=binding.seed_topics)
 

@@ -21,9 +21,10 @@ value unchecked.
 
 **A tag's keyword half is a format.** A tag is a topic id or a keyword
 (ADR-017 §4): lowercase words joined by hyphens, at least one letter, and
-no spelling of a topic's label. That is `stack.tags.is_tag`, a rule over
-Unicode letter classes and the ontology, which a `pattern` describes only
-approximately. The resource gives it as `"format": "keyword"`, asserted
+no spelling of a topic's label, and no id of a topic the card's readers
+may not read (`VaultValues.withheld`). That is `stack.tags.is_tag`, a rule
+over Unicode letter classes and the ontology, which a `pattern` describes
+only approximately. The resource gives it as `"format": "keyword"`, asserted
 here with that rule; a tool without the checker reads the format as a note.
 
     schemas = CardSchemas.load()
@@ -71,6 +72,9 @@ class VaultValues:
 
     person_ids: Iterable[str] = ()
     ontology: Ontology = field(default_factory=Ontology)
+    # The ids of topics the card's readers may not read (`Vocabulary.withheld`):
+    # no keyword, since search would show the card under that topic's title.
+    withheld: frozenset[str] = frozenset()
 
     def resource(self) -> dict:
         """`urn:famstack:vault`, the schema the card schemas refer to for these values."""
@@ -87,7 +91,8 @@ class VaultValues:
 
     def formats(self) -> FormatChecker:
         checker = FormatChecker(formats=())
-        checker.checks("keyword")(lambda tag: not isinstance(tag, str) or is_tag(tag, self.ontology))
+        checker.checks("keyword")(lambda tag: not isinstance(tag, str)
+                                  or (is_tag(tag, self.ontology) and tag not in self.withheld))
         return checker
 
 

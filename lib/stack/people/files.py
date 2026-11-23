@@ -38,9 +38,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
-from .cards import CARD_ID, is_view, new_card_id
-from .frontmatter import FrontmatterError, dump, parse
-from .vault import DEFAULT_SHARED_BUCKET, slug
+from ..cards import CARD_ID, is_view, new_card_id
+from ..frontmatter import FrontmatterError, dump, parse
+from ..vault import DEFAULT_SHARED_BUCKET, slug
 
 PEOPLE_DIR = "people"
 

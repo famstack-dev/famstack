@@ -1,122 +1,106 @@
-"""Tests for the archivist's capture-tag cache.
+# ruff: noqa: F811  (a fixture imported from another test module is the test's parameter)
+"""The archivist keeps no capture tag cache: one person's tags never reach another's prompt.
 
-A small frequency/recency-tracked dictionary persisted to the bot's
-data dir. Loaded at startup, updated after each `publish_capture`,
-top-N rendered into the capture prompt so the LLM reuses existing
-vocabulary instead of inventing variants ("LLMs" not "llm" not
-"Large Language Models").
+The archivist once kept the tags of every filed capture in one file,
+`capture-tags.json` in its data dir, and offered the most used ones in the
+next capture's prompt, whoever sent it. One file for the whole bot holds
+the tags of every bucket, so Marge's private "Homers 40th" reached the
+prompt of Homer's family note, and no filter on one shared file keeps it
+private. So the cache is neither read nor written. A file a bot left from
+before stays where it is, unread.
 
-These tests pin the cache logic in isolation — no Matrix, no
-Forgejo, no LLM. The cache is plain JSON on disk.
+These tests build the archivist's services as the bot does
+(`archivist_services.build_services`) with its data dir in the test's
+folder, and file through its capture pipeline into the real curator of
+memory's test instance (`running_memory`), with one model standing in for
+the AI (`tests.household`). The household is the Simpsons.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-from pathlib import Path
 
 import pytest
 
-_BOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "stacklets" / "docs" / "bot"
+from stacklets.docs.bot.archivist import ArchivistBot
+from stacklets.docs.bot.archivist_services import build_services
+from tests.unit.stacklets.test_capture_names_people_and_tags import (  # noqa: F401  (fixtures)
+    household, memory)
 
-from stacklets.docs.bot.capture_tags import CaptureTagCache  # noqa: E402
+CACHE = "capture-tags.json"
 
 
 @pytest.fixture
-def cache(tmp_path):
-    return CaptureTagCache(tmp_path / "capture-tags.json")
+def session(tmp_path):
+    """The archivist's data dir, as the bot runner mounts it."""
+    folder = tmp_path / "archivist-session"
+    folder.mkdir()
+    return folder
 
 
-# ── Load / save round-trip ───────────────────────────────────────────────
+@pytest.fixture
+def services(memory, household, session, monkeypatch):
+    """The archivist's services as the bot builds them, with the household's
+    model and the memory's curator."""
+    monkeypatch.setenv("OPENAI_URL", household.url)
+    monkeypatch.setenv("OPENAI_KEY", "k")
+    monkeypatch.setenv("MEMORY_API_URL", memory.environ["MEMORY_API_URL"])
+    monkeypatch.setenv("CARDS_WRITE_TOKEN", memory.environ["CARDS_WRITE_TOKEN"])
 
-class TestPersistence:
-    def test_empty_when_file_missing(self, cache):
-        cache.load()
-        assert cache.top(10) == []
+    async def built():
+        bot = ArchivistBot(homeserver="http://h", user_id="@archivist-bot:simpson", password="x",
+                           session_dir=session)
+        bot.shared_bucket = "family"
+        services = build_services(bot)
+        return bot, services
 
-    def test_record_then_load_round_trip(self, cache, tmp_path):
-        cache.load()
-        cache.record(["LLMs", "Apple Silicon"], when="2026-05-17")
-        cache.save()
-
-        fresh = CaptureTagCache(tmp_path / "capture-tags.json")
-        fresh.load()
-        assert set(fresh.top(10)) == {"LLMs", "Apple Silicon"}
-
-    def test_corrupt_file_starts_empty(self, cache, tmp_path):
-        (tmp_path / "capture-tags.json").write_text("not json")
-        cache.load()
-        assert cache.top(10) == []
-
-
-# ── Counting + ranking ───────────────────────────────────────────────────
-
-class TestRanking:
-    """`top(n)` returns the most-frequent tags. Frequency wins — recency
-    is recorded but doesn't affect ordering yet (dream-cycle rebuild can
-    add decay later if tag drift becomes an issue)."""
-
-    def test_top_by_frequency(self, cache):
-        cache.load()
-        cache.record(["LLMs"], when="2026-05-15")
-        cache.record(["LLMs"], when="2026-05-16")
-        cache.record(["LLMs"], when="2026-05-17")
-        cache.record(["AI"], when="2026-05-17")
-        cache.record(["Privacy"], when="2026-05-15")
-
-        top = cache.top(2)
-        # LLMs (3) before AI (1) / Privacy (1) — those two are tied;
-        # we don't pin their order against each other.
-        assert top[0] == "LLMs"
-
-    def test_top_respects_limit(self, cache):
-        cache.load()
-        for i in range(10):
-            cache.record([f"tag{i}"], when="2026-05-17")
-        assert len(cache.top(5)) == 5
-
-    def test_dedup_within_single_record(self, cache):
-        # The classifier sometimes returns duplicates ("LLMs" twice in
-        # the same response). Recording should count each tag once
-        # per capture, not once per LLM emission.
-        cache.load()
-        cache.record(["LLMs", "LLMs", "AI"], when="2026-05-17")
-        cache.record(["LLMs"], when="2026-05-17")
-        # Now LLMs has 2 (two captures), AI has 1 — not LLMs=3.
-        ranked = cache._sorted_tags()
-        scores = dict(ranked)
-        assert scores["LLMs"] == 2
-        assert scores["AI"] == 1
+    bot, services = asyncio.run(built())
+    yield services
+    # The bot's shutdown: its HTTP session, which Paperless's client shares.
+    asyncio.run(bot._aclose())
 
 
-# ── Robustness ───────────────────────────────────────────────────────────
+def files(services, words: str, *, by: str, bucket: str | None = None) -> str:
+    outcome = asyncio.run(services.capture.capture_text(
+        text=words, sender_mxid=f"@{by}:simpson", bucket=bucket))
+    assert outcome.status == "captured", outcome
+    return outcome.vault_path
 
-class TestRobustness:
-    def test_ignores_blank_and_non_string_tags(self, cache):
-        cache.load()
-        cache.record(["LLMs", "", "  ", None, 42, "AI"], when="2026-05-17")
-        assert set(cache.top(10)) == {"LLMs", "AI"}
 
-    def test_strips_whitespace_on_tags(self, cache):
-        cache.load()
-        cache.record(["  LLMs  ", "AI"], when="2026-05-17")
-        assert "LLMs" in cache.top(10)
+def test_marges_tags_never_reach_homers_prompt(services, household):
+    """Given Marge filed a note in her DM that the model tagged "Homers 40th
+    Party Cake", when Homer files a family note, then his prompt holds no
+    word of her tag."""
+    household.says(persons=["Homer"], tags=["Homers 40th Party Cake"])
+    files(services, "Order the cake for Saturday", by="marge")
+    household.says(persons=["Homer"], tags=["Camper Van"])
 
-    def test_case_preserved(self, cache):
-        # We keep the casing the classifier produced. The dream-cycle
-        # canonicalizes ("llm" → "LLMs") later; the cache is a faithful
-        # record of what's been written, not a normalizer.
-        cache.load()
-        cache.record(["LLMs"], when="2026-05-17")
-        cache.record(["llms"], when="2026-05-17")
-        assert set(cache.top(10)) == {"LLMs", "llms"}
+    files(services, "We drove to the lake", by="homer", bucket="family")
 
-    def test_save_creates_parent_dir(self, tmp_path):
-        nested = tmp_path / "sub" / "deep" / "capture-tags.json"
-        cache = CaptureTagCache(nested)
-        cache.load()
-        cache.record(["LLMs"], when="2026-05-17")
-        cache.save()
-        assert nested.exists()
-        data = json.loads(nested.read_text())
-        assert "LLMs" in data["tags"]
+    assert "Party Cake" not in household.prompts[-1]
+    assert "40th" not in household.prompts[-1]
+
+
+def test_a_cache_file_left_from_before_is_not_read_and_stays(services, household, session):
+    """Given a cache file from before that holds "Homers 40th", when Homer
+    files a family note, then his prompt holds none of it, and the file is
+    left as it was."""
+    old = json.dumps({"Homers 40th": {"count": 9, "last_seen": "2026-11-01"}})
+    (session / CACHE).write_text(old, encoding="utf-8")
+    household.says(persons=["Homer"], tags=["Camper Van"])
+
+    files(services, "We drove to the lake", by="homer", bucket="family")
+
+    assert "40th" not in household.prompts[-1]
+    assert (session / CACHE).read_text(encoding="utf-8") == old
+
+
+def test_a_capture_writes_no_cache_file(services, household, session):
+    """Given a bot with no cache file, when Marge files a tagged note, then
+    the bot's data dir holds no `capture-tags.json` afterwards."""
+    household.says(persons=["Marge"], tags=["Camper Van"])
+
+    files(services, "Fabric for the quilt", by="marge")
+
+    assert not (session / CACHE).exists()

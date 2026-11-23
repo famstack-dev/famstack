@@ -27,7 +27,7 @@ import pytest
 
 from stack.frontmatter import parse
 from tests.springfield import REPO
-from tests.memory.unit.simpsons_cards import ONTOLOGY, VAULT
+from tests.memory.unit.simpsons_cards import FAMILY_NOTE, ONTOLOGY, VAULT
 
 from tests.memory.unit.dsl import commit
 
@@ -97,6 +97,42 @@ def test_a_change_that_changes_nothing_commits_nothing(memory, marge):
 
     assert memory.new_commits() == []
     assert marge.was_told("Nothing to change on person-bart")
+
+
+# ── Tags, against the topics of the card's place ────────────────────────
+#
+# Marge's topic card "Homers 40th" (`surprise-party`) is hers alone. The
+# editor checks a card's tags against the topics everyone who may read the
+# card may read, so Homer may tag the family's barbecue `homers-40th`, and
+# a refusal he gets never lists her topic.
+
+SURPRISE = {"marge/surprise-party/topic.md": (
+    "---\ntype: topic\ncard_id: topic-surprise-party\ntitle: Homers 40th\n---\n\n# Homers 40th\n")}
+BARBECUE = "family/notes/2026/10/barbecue.md"
+
+
+@pytest.mark.parametrize("memory", [{**VAULT, **FAMILY_NOTE, **SURPRISE}], indirect=True)
+def test_homer_may_tag_a_family_card_with_the_keyword_of_marges_topics_title(memory):
+    """Given Marge's topic "Homers 40th", when Homer adds `homers-40th` to
+    the family's barbecue note, then the note carries it: on a family card
+    the title names no topic, so its slug is a plain keyword."""
+    memory.person("homer").edits("note-1a2b3c4d5e", "--add", "tags=homers-40th")
+
+    assert parse(memory.page(BARBECUE))["tags"] == ["homers-40th"]
+
+
+@pytest.mark.parametrize("memory", [{**VAULT, **FAMILY_NOTE, **SURPRISE}], indirect=True)
+def test_a_tag_refused_on_a_family_card_lists_none_of_marges_topics(memory):
+    """Given Marge's topic, when Homer adds a tag that is no tag ("Homers
+    40th") to the family's note, then nothing is committed, and the topics
+    he is told are allowed hold none of Marge's."""
+    homer = memory.person("homer")
+    homer.edits("note-1a2b3c4d5e", "--add", "tags=Homers 40th")
+
+    assert memory.new_commits() == []
+    assert homer.was_told("tags")
+    assert homer.was_told("itchy-scratchy-land"), "the shared topic cards are listed as allowed"
+    assert "surprise-party" not in homer.told
 
 
 # ── A correspondent written by hand ──────────────────────────────────────
