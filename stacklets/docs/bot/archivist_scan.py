@@ -12,6 +12,12 @@ into one PDF and files it as one document. One page is filed as it is;
 no page at all cancels the scan. Every caption on the way (the opener's,
 a page's, the closer's) is joined into the hint the classifier reads.
 
+Only photos and files are pages. A line of text or a voice message sent
+during a scan is filed as it is outside the scan, as a note of its own,
+and `say_still_open` tells the person that the scan waits for `)`. A
+typed line counts as handed over on purpose while the scan is open, so
+even a short one is kept (the router asks `is_open` for that).
+
 The sessions live in the process only: a restart in the middle of a
 scan loses its pages, and the person sends them again.
 """
@@ -43,7 +49,8 @@ class ArchivistScan:
         self.sessions: dict[str, dict] = {}
 
     def is_open(self, sender: str) -> bool:
-        """Whether `sender` has a scan open; their next upload is a page."""
+        """Whether `sender` has a scan open; their next upload is a page,
+        and their next typed line is a note."""
         return sender in self.sessions
 
     async def open(self, room_id: str, sender: str, caption: str, reply_to: str) -> None:
@@ -51,6 +58,11 @@ class ArchivistScan:
         sender_name = sender.split(":")[0].replace("@", "").capitalize()
         self.sessions[sender] = {"files": [], "room_id": room_id, "caption": caption}
         await self._bot._send(room_id, self._bot.t("scan_started", sender=sender_name), reply_to)
+
+    async def say_still_open(self, room_id: str, reply_to: str) -> None:
+        """Say that the scan is still open, in reply to a message that was
+        filed beside it, so that the person knows `)` still ends it."""
+        await self._bot._send(room_id, self._bot.t("scan_still_open"), reply_to)
 
     async def close(
         self, room_id: str, sender: str, caption: str, reply_to: str,

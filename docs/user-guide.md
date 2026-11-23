@@ -162,7 +162,7 @@ You can correct the filing in the thread. The archivist answers with one line th
 
 Write a caption with the upload ("this is for the tax file") and the archivist takes it into account when filing.
 
-For multi-page documents, type `(` to open a scan session, send the pages one by one, then `)` to close it. The pages become one document.
+For multi-page documents, type `(` to open a scan session, send the pages one by one, then `)` to close it. The pages become one document. A text line or a voice memo that you send during the scan becomes a note of its own. The archivist replies that the scan is still open.
 
 Useful in the Documents Room:
 
@@ -288,7 +288,7 @@ When a mailbox is first connected, the admin can pull in existing mail from a ch
 
 Send a voice message in any capture room. The archivist transcribes it locally (nothing leaves the Mac), cleans up the transcript, echoes it back so you can check it, and files it as a note.
 
-Several thoughts in a row? Type `(`, send your voice memos, type `)`. The batch becomes one combined note instead of five fragments.
+Each voice memo becomes a note of its own. Several voice memos are several notes, also between `(` and `)`. The scan (`(` ... `)`) combines only photos into one document.
 
 Driving home and something crosses your mind: hold the mic button, talk, done. The thought is captured, transcribed and findable. Never miss a thought.
 
