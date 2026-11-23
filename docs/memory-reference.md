@@ -217,6 +217,7 @@ The archivist writes every record's tags through this rule. It slugs a tag that 
 |---|---|
 | `memory/0005` | Brought the files written before to the same shape. It left a tag that it cannot read as it is, and named it. |
 | `memory/0010` | Brought the diary cards, which had held the topic's label. It signed them again where the compile still owned them, and left a person's card unsigned. |
+| `memory/0013` | Took a person's private topic id off every card outside that person's bucket. Earlier runs of 0005, 0010 and 0011 read the topics of every bucket, and these migrations now read the topics of the card's place. A tag that a person added by hand stays, and the migration names the card. |
 
 The label that a reader sees comes from the ontology in the instance's language. The card browser shows it.
 `stack memory find`, memory search and the wiki find a topic by its id and by its label in every language.

@@ -130,10 +130,15 @@
     "lib/stack/tags.py",
     "lib/stack/vault.py",
     "stacklets/memory/lib.py",
+    "stacklets/memory/place_tags.py",
 ]
 "stacklets/memory/migrations/0012_give_diary_cards_their_sources.py" = [
     "stacklets/memory/lib.py",
     "stacklets/memory/old_diary_cards.py",
+]
+"stacklets/memory/migrations/0013_take_private_topics_off_other_cards.py" = [
+    "stacklets/memory/lib.py",
+    "stacklets/memory/place_tags.py",
 ]
 
 # R2  No stacklet imports another stacklet's code

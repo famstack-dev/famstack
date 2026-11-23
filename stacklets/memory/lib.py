@@ -2208,71 +2208,24 @@ def declare_cards(memory: MemoryAPI, vault: Path, *,
 # they are signed (`stack.digest`), and 0010 signs the ones the compile
 # still owns again, so they stay the compile's.
 
-def topic_tags_for(vault: Path) -> CardLinks:
-    """What tags the topics of the working copy `vault`'s cards by id.
-
-    Each tag that names a topic of the vault's ontology (`ontology.toml`,
-    else the shipped seed), by its id or its label in any language,
-    becomes the id; every other tag is lowercased with hyphens; two that
-    become one are one, in the place of the first. A tag that is no
-    keyword even so stays as it is and is listed in `left`
-    (`stack.tags.with_topic_tags`). Diary cards are left alone: they are
-    `diary_topic_tags_for`'s.
-    """
-    from stack.tags import with_topic_tags
-
-    ontology = get_ontology(vault)
-    texts = _markdown_files(vault)
-    found = CardLinks()
-    for path in sorted(texts):
-        if _parse_frontmatter(texts[path], path).get("type") == "diary":
-            continue
-        text, left = with_topic_tags(texts[path], ontology)
-        found.left += [f"{path}: tag {tag!r} is no topic and no keyword" for tag in left]
-        if text != texts[path]:
-            found.changes[path] = text
-    return found
-
-
-def tag_topics_by_id(memory: MemoryAPI, vault: Path, *,
+def tag_topics_by_id(memory: MemoryAPI, vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET,
                      trailer: str = "") -> tuple[CardLinks, str | None]:
     """Tag the topics of `vault`'s cards by id (`topic_tags_for`), in one
     commit by the memory bot; what the pass found and the commit's sha."""
-    found = topic_tags_for(vault)
+    from .place_tags import topic_tags_for
+
+    found = topic_tags_for(vault, shared_bucket=shared_bucket)
     title = f"tag topics by id in {len(found.changes)} card(s)"
     return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 
 
-def diary_topic_tags_for(vault: Path) -> CardLinks:
-    """What tags the topics of the working copy `vault`'s diary cards by id.
-
-    The rule of every other card (`topic_tags_for`): a topic's label in
-    any language becomes its id, every other tag is lowercased with
-    hyphens, and a tag that is no keyword even so stays and is listed in
-    `left`. A card the compile still owns is signed again
-    (`stack.digest.signed`), so it is what the compile writes today; a
-    card a person changed gets ids too, and stays unsigned and theirs.
-    """
-    from stack.digest import changed_by_hand, signed
-    from stack.tags import with_topic_tags
-
-    ontology = get_ontology(vault)
-    found = CardLinks()
-    for path, text in sorted(_markdown_files(vault).items()):
-        if _parse_frontmatter(text, path).get("type") != "diary":
-            continue
-        new, left = with_topic_tags(text, ontology)
-        found.left += [f"{path}: tag {tag!r} is no topic and no keyword" for tag in left]
-        if new != text:
-            found.changes[path] = new if changed_by_hand(text) else signed(new)
-    return found
-
-
-def tag_diary_topics_by_id(memory: MemoryAPI, vault: Path, *,
+def tag_diary_topics_by_id(memory: MemoryAPI, vault: Path, *, shared_bucket: str = DEFAULT_SHARED_BUCKET,
                            trailer: str = "") -> tuple[CardLinks, str | None]:
     """Tag the topics of `vault`'s diary cards by id (`diary_topic_tags_for`),
     in one commit by the memory bot; what the pass found and the commit's sha."""
-    found = diary_topic_tags_for(vault)
+    from .place_tags import diary_topic_tags_for
+
+    found = diary_topic_tags_for(vault, shared_bucket=shared_bucket)
     title = f"tag topics by id in {len(found.changes)} diary card(s)"
     return found, _commit(memory, vault, found.changes, title=title, trailer=trailer)
 
