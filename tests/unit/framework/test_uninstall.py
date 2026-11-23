@@ -65,41 +65,42 @@ def _make_env(tmp_path, stacklet_ids):
         sdir.mkdir(parents=True, exist_ok=True)
         (sdir / "stacklet.toml").write_text(
             f'id = "{sid}"\nname = "{sid.title()}"\ncategory = "test"\n')
+        # A compose file, so a teardown reaches Docker and `_torn_down` sees it.
+        (sdir / "docker-compose.yml").write_text("services: {}\n")
 
     output = CollectorOutput()
     stck = Stack(root=tmp_path, data=tmp_path / "data", output=output)
     return stck
 
 
+def _torn_down(docker) -> list[str]:
+    """The stacklets whose containers the uninstall took down, by the
+    compose file each `docker compose -f <file> down` named."""
+    return sorted(Path(argv[argv.index("-f") + 1]).parent.name
+                  for argv in docker.commands() if argv[:1] == ["compose"] and "down" in argv)
+
+
 class TestUninstallSelectivity:
 
-    def test_skips_clean_stacklets(self, terminal, tmp_path):
+    def test_skips_clean_stacklets(self, terminal, tmp_path, docker):
         """Stacklets with no data, no marker, no container are not destroyed."""
-        from stack.cli import handle_uninstall
+        from stack.removal import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha", "beta", "gamma"])
 
         # Only beta has data on disk
         (tmp_path / "data" / "beta").mkdir(parents=True)
 
-        destroyed = []
-        original_destroy = stck.destroy
-
-        def tracking_destroy(sid):
-            destroyed.append(sid)
-            return original_destroy(sid)
-
-        stck.destroy = tracking_destroy
         args = Namespace(yes=True)
 
         terminal.types("")
         handle_uninstall(stck, args)
 
-        assert destroyed == ["beta"]
+        assert _torn_down(docker) == ["beta"]
 
-    def test_destroys_stacklet_with_marker(self, tmp_path):
+    def test_destroys_stacklet_with_marker(self, tmp_path, docker):
         """Stacklets with a setup-done marker are destroyed."""
-        from stack.cli import handle_uninstall
+        from stack.removal import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha", "beta"])
 
@@ -107,46 +108,29 @@ class TestUninstallSelectivity:
         marker = tmp_path / ".stack" / "alpha.setup-done"
         marker.touch()
 
-        destroyed = []
-        original_destroy = stck.destroy
-
-        def tracking_destroy(sid):
-            destroyed.append(sid)
-            return original_destroy(sid)
-
-        stck.destroy = tracking_destroy
         args = Namespace(yes=True)
 
         handle_uninstall(stck, args)
 
-        assert "alpha" in destroyed
-        assert "beta" not in destroyed
+        assert _torn_down(docker) == ["alpha"]
 
     def test_destroys_stacklet_with_container(self, tmp_path, docker):
         """Stacklets with lingering Docker containers are destroyed."""
-        from stack.cli import handle_uninstall
+        from stack.removal import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha", "beta", "gamma"])
 
-        destroyed = []
-        original_destroy = stck.destroy
-
-        def tracking_destroy(sid):
-            destroyed.append(sid)
-            return original_destroy(sid)
-
-        stck.destroy = tracking_destroy
         args = Namespace(yes=True)
 
         # gamma has a stopped container in Docker
         docker.running(gamma="stopped")
         handle_uninstall(stck, args)
 
-        assert destroyed == ["gamma"]
+        assert _torn_down(docker) == ["gamma"]
 
     def test_not_setup_prints_message(self, tmp_path, capsys):
         """When nothing is set up, prints info message instead of uninstalling."""
-        from stack.cli import handle_uninstall
+        from stack.removal import handle_uninstall
         from stack import Stack
         from stack.output import CollectorOutput
 
@@ -162,7 +146,7 @@ class TestUninstallSelectivity:
 
     def test_removes_config_files(self, tmp_path):
         """Config files are removed after stacklet destruction."""
-        from stack.cli import handle_uninstall
+        from stack.removal import handle_uninstall
 
         stck = _make_env(tmp_path, [])
         args = Namespace(yes=True)
@@ -186,27 +170,24 @@ class TestUninstallNotFlag:
     marker untouched.
     """
 
-    def test_excluded_stacklet_is_not_destroyed(self, terminal, tmp_path):
-        from stack.cli import handle_uninstall
+    def test_excluded_stacklet_is_not_destroyed(self, terminal, tmp_path, docker):
+        from stack.removal import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha", "beta", "ai"])
         # Both alpha and ai have markers; only alpha should get destroyed.
         (tmp_path / ".stack" / "alpha.setup-done").touch()
         (tmp_path / ".stack" / "ai.setup-done").touch()
 
-        destroyed: list[str] = []
-        original_destroy = stck.destroy
-        stck.destroy = lambda sid: (destroyed.append(sid), original_destroy(sid))[1]
 
         args = Namespace(yes=True, exclude=["ai"])
 
         terminal.types("")
         handle_uninstall(stck, args)
 
-        assert destroyed == ["alpha"]
+        assert _torn_down(docker) == ["alpha"]
 
     def test_excluded_stacklet_keeps_setup_marker(self, terminal, tmp_path):
-        from stack.cli import handle_uninstall
+        from stack.removal import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha", "ai"])
         (tmp_path / ".stack" / "alpha.setup-done").touch()
@@ -223,7 +204,7 @@ class TestUninstallNotFlag:
 
     def test_without_not_flag_marker_dir_is_fully_removed(self, terminal, tmp_path):
         """Sanity check: plain uninstall still wipes .stack/ as before."""
-        from stack.cli import handle_uninstall
+        from stack.removal import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha"])
         (tmp_path / ".stack" / "alpha.setup-done").touch()
@@ -239,7 +220,7 @@ class TestUninstallNotFlag:
         """Even when the user confirms 'delete' on the data prompt, the
         excluded stacklet's data subdirectory must stay intact — that's
         the whole reason this flag exists (avoid redownloading models)."""
-        from stack.cli import handle_uninstall
+        from stack.removal import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha", "ai"])
         (stck.data / "alpha").mkdir(parents=True)

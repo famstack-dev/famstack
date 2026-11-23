@@ -37,13 +37,13 @@ from typing import NoReturn
 from . import app as menubar_app
 from . import docker
 from . import doctor
-from . import global_command
 from . import logscan
 from .plugins import plugin_help, stacklet_commands
 from .migrations import MigrationError
 from .secrets import SecretsUnreadable
 from . import runs
 from . import run_log
+from .removal import handle_destroy, handle_uninstall
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .devices import cli as devices_cli
 from .config_file import StackTomlUnreadable, configured_data_dir, read_stack_toml
@@ -931,9 +931,18 @@ class CLI:
     def destroy(self, stacklet_id: str) -> dict:
         """Destroy: Docker compose down + Stack.destroy(), in its run lock."""
         with self._run(stacklet_id):
-            return self._ended(stacklet_id, self._destroy(stacklet_id))
+            return self._ended(stacklet_id, self._removed(stacklet_id, self.stack.destroy))
 
-    def _destroy(self, stacklet_id: str) -> dict:
+    def tear_down(self, stacklet_id: str) -> dict:
+        """Docker compose down + Stack.tear_down(), in its run lock: a
+        destroy that keeps the stacklet's data folder (`stack uninstall`)."""
+        with self._run(stacklet_id):
+            return self._ended(stacklet_id, self._removed(stacklet_id, self.stack.tear_down))
+
+    def _removed(self, stacklet_id: str, remove) -> dict:
+        """Stop the stacklet's containers, then `remove(stacklet_id)`
+        (`Stack.destroy` or `Stack.tear_down`). Containers that do not stop
+        end it before `remove` runs."""
         stacklet = self.stack._find_stacklet(stacklet_id)
         if not stacklet:
             return {"error": f"Stacklet '{stacklet_id}' not found"}
@@ -952,7 +961,7 @@ class CLI:
                 return {"error": "Failed to stop containers", "output": output}
             self.stack.output.step("Containers removed")
 
-        result = self.stack.destroy(stacklet_id)
+        result = remove(stacklet_id)
         self._reload_proxy()
         return result
 
@@ -1767,88 +1776,6 @@ def _down_in_its_run(stck, cli, args, ids) -> None:
         if args.stacklet != "messages":
             _notify(stck, _server_room_lines(stck)["stopped"].format(name=name))
         _refresh_core(stck, args.stacklet)
-    else:
-        print_error(result)
-        sys.exit(1)
-
-
-def handle_destroy(stck, args):
-    ids = _many_ids(args)
-    if not ids:
-        _destroy_one(stck, args)
-        return
-
-    unknown = [sid for sid in ids if not stck._find_stacklet(sid)]
-    if unknown:
-        print_error({"error": f"Unknown stacklet: {', '.join(unknown)}"})
-        sys.exit(1)
-    # Dependents first, as down does. Each one keeps its own confirmation.
-    for sid in _reverse_dependency_order(stck.discover(), set(ids)):
-        args.stacklet = sid
-        _destroy_one(stck, args)
-
-
-def _destroy_one(stck, args):
-    stacklet = stck._find_stacklet(args.stacklet)
-    if not stacklet:
-        print_error({"error": f"Stacklet '{args.stacklet}' not found"})
-        sys.exit(1)
-
-    name = stacklet.get("name", args.stacklet)
-    data_path = stck.data / args.stacklet
-
-    # Not installed and no containers: only data a failed setup left behind.
-    # A first `up` that failed after starting containers leaves those too,
-    # holding their names and ports, so that case takes the full path.
-    if not stck.is_installed(args.stacklet) and args.stacklet not in docker.all_project_ids():
-        if data_path.exists():
-            import shutil
-            # A first run in progress has made this folder and is filling it.
-            with runs.hold(stck.instance_dir, [args.stacklet], waiting=_waiting(stck)):
-                # Asked again once the run is ours: a start that ran while
-                # this one waited may have set the stacklet up, and then
-                # the folder holds its data, not a failed setup's.
-                if stck.is_installed(args.stacklet) or args.stacklet in docker.all_project_ids():
-                    result = {"error": f"{name} was set up while this waited; nothing was deleted",
-                              "hints": [f"To remove it: stack destroy {args.stacklet}"]}
-                    run_log.record_result(stck.instance_dir, args.stacklet, result)
-                    print_error(result)
-                    sys.exit(1)
-                shutil.rmtree(data_path)
-                run_log.record_result(stck.instance_dir, args.stacklet,
-                                      {"ok": True, "stacklet": args.stacklet})
-            print(f"  {GREEN}✓{RESET} Cleaned up leftover data for {name}")
-        else:
-            print(f"  {DIM}{name} is not set up — nothing to destroy.{RESET}")
-        return
-
-    if not getattr(args, "yes", False):
-        if not sys.stdin.isatty():
-            print_error({"error": "Pass --yes to confirm (non-interactive)"})
-            sys.exit(1)
-        print(f"\n  {ORANGE}⚠  Destroy {name}?{RESET}\n")
-        print("  This will permanently remove:")
-        print("    · Containers and volumes")
-        if data_path.exists():
-            print("    · All stored data")
-        print("    · Secrets and config\n")
-        print("  You may want to back up your data first.\n")
-        try:
-            answer = input("  Type 'destroy' to confirm: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-        if answer != "destroy":
-            print(f"  {DIM}Aborted{RESET}")
-            return
-
-    print(f"\n  Destroying {name}...\n", file=sys.stderr)
-    cli = CLI(stck)
-    result = cli.destroy(args.stacklet)
-    if result.get("ok"):
-        print(f"  {GREEN}✓{RESET} {name} destroyed")
-        if args.stacklet != "messages":
-            _notify(stck, _server_room_lines(stck)["uninstalled"].format(name=name))
     else:
         print_error(result)
         sys.exit(1)
@@ -2686,193 +2613,6 @@ def handle_install(stck, args):
             print(f"\n\n  {DIM}Cancelled: nothing was changed.{RESET}\n")
     finally:
         restore()
-
-
-def _belongs_to_stacklet(entry_name: str, sids: list[str]) -> bool:
-    """True when a .stack/ entry belongs to one of the named stacklets.
-
-    Setup markers look like `<sid>.setup-done`; any future per-stacklet
-    state under .stack/ is expected to use the same `<sid>.` prefix so
-    it gets preserved automatically when the user excludes that sid.
-    The .test-instance sentinel and global secrets (ADMIN_PASSWORD,
-    user passwords) don't carry a stacklet prefix and therefore get
-    wiped as part of the full-stack teardown, which is correct.
-    """
-    return any(entry_name.startswith(f"{sid}.") for sid in sids)
-
-
-def _destroy_every(stck, cli, stacklets: list[dict], exclude: list[str]) -> list[str]:
-    """Destroy each of `stacklets` that has state: data, a setup marker or
-    a container. `exclude` is only named, as preserved. Returns the ids
-    whose destroy failed, after trying every one: a stacklet whose service
-    still runs keeps its data and secrets (`Stack.destroy`), and the
-    others are destroyed all the same."""
-    failed: list[str] = []
-    for sid in exclude:
-        print(f"  {DIM}Preserving {sid} (excluded via --not){RESET}", file=sys.stderr)
-    container_ids = docker.all_project_ids()
-    for s in stacklets:
-        sid = s["id"]
-        has_data = (stck.data / sid).exists()
-        has_marker = s.get("enabled")
-        has_container = sid in container_ids
-        if not has_data and not has_marker and not has_container:
-            continue
-        print(f"  {ORANGE}Uninstalling {s['name']}...{RESET}", file=sys.stderr)
-        result = cli.destroy(sid)
-        if result.get("ok"):
-            print(f"  {GREEN}\u2713{RESET} {s['name']} uninstalled")
-        else:
-            print(f"  {RED}\u2717{RESET} {s['name']} not uninstalled: "
-                  f"{result.get('error', 'unknown error')}")
-            failed.append(sid)
-    return failed
-
-
-def handle_uninstall(stck, args):
-    # `--not X [Y ...]` excludes one or more stacklets from the uninstall.
-    # The state of excluded stacklets (container, setup marker, data dir)
-    # is preserved across this call so expensive state — most notably the
-    # ai stacklet's downloaded model weights — can survive a teardown
-    # without a multi-gigabyte re-download on the next install.
-    exclude = list(getattr(args, "exclude", None) or [])
-
-    # 'stack uninstall chatai' is a common mistake — catch it early. The
-    # values consumed by `--not` are intentional and must be filtered out
-    # before we treat a bare token as a "did you mean destroy?" signal.
-    remaining = [a for a in sys.argv[2:] if not a.startswith("-")]
-    remaining = [a for a in remaining if a not in exclude]
-    if remaining:
-        sid = remaining[0]
-        print(f"\n  {RED}✗{RESET}  'uninstall' removes the entire stack, not a single stacklet.")
-        print(f"  To remove {sid}, use: {TEAL}stack destroy {sid}{RESET}\n")
-        sys.exit(1)
-
-    name = stck.product_name()
-    config_exists = (stck.root / "stack.toml").exists()
-    state_exists = (stck.root / ".stack").exists()
-    has_containers = bool(docker.all_project_ids())
-    if not config_exists and not state_exists and not stck.data.exists() and not has_containers:
-        print(f"\n  {DIM}{name} is not set up. Run 'stack install' to get started.{RESET}\n")
-        return
-
-    if not sys.stdin.isatty() and not getattr(args, "yes", False):
-        print_error({"error": "Pass --yes to confirm (non-interactive)"})
-        sys.exit(1)
-
-    if not getattr(args, "yes", False):
-        print(f"\n  {ORANGE}\u26a0  Uninstall {name}?{RESET}\n")
-        print("  This will:")
-        print("    \u2022 Destroy all running services and their containers")
-        print("    \u2022 Remove stack.toml and users.toml")
-        print("    \u2022 Remove all runtime state (.stack/)")
-        print("    \u2022 Optionally remove all service data\n")
-        try:
-            answer = input("  Type 'uninstall' to confirm: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-        if answer != "uninstall":
-            print(f"  {DIM}Aborted{RESET}")
-            return
-
-    # Every stacklet's lock, the excluded ones too, for the whole
-    # uninstall and without a run log of its own (`runs.reserve`): a run
-    # of any stacklet (a preparation outside the queue included) refuses
-    # it before anything is deleted, and the uninstall deletes stack.toml
-    # and .stack/, which an excluded stacklet's run reads as well.
-    with runs.reserve(stck.instance_dir, [st["id"] for st in stck.discover()]):
-        _uninstall(stck, exclude, name)
-
-
-def _uninstall(stck, exclude: list[str], name: str) -> None:
-    """`handle_uninstall` once confirmed, holding every stacklet's lock."""
-    # Only destroy stacklets that actually have state, and never touch
-    # the excluded set. An excluded stacklet keeps its container, data
-    # dir, and setup marker: everything needed to survive the uninstall
-    # and resume on the next `stack up`.
-    cli = CLI(stck)
-    removed = [st for st in stck.discover() if st["id"] not in exclude]
-    failed = _destroy_every(stck, cli, removed, exclude)
-    if failed:
-        # The config, `.stack/` with the secrets and the data folder stay:
-        # a stacklet whose service still runs needs them, and its destroy
-        # kept them for that reason.
-        print_error({"error": f"Not uninstalled, a service still runs: {', '.join(failed)}. "
-                              "Stop it, then run 'stack uninstall' again."})
-        sys.exit(1)
-
-    # Remove config files
-    for filename in ("stack.toml", "users.toml"):
-        path = stck.root / filename
-        if path.exists():
-            path.unlink()
-            print(f"  {GREEN}\u2713{RESET} Removed {filename}")
-
-    # Remove runtime state. With exclusions, wipe entry by entry so the
-    # setup markers of the preserved stacklets (and anything else they
-    # own under .stack/) survive. Without exclusions, the whole directory
-    # goes as before.
-    state_dir = stck.root / ".stack"
-    if state_dir.exists():
-        import shutil
-        if exclude:
-            for item in state_dir.iterdir():
-                if _belongs_to_stacklet(item.name, exclude):
-                    continue
-                if item.is_dir():
-                    shutil.rmtree(item)
-                else:
-                    item.unlink()
-            print(f"  {GREEN}\u2713{RESET} Cleaned .stack/ (kept: {', '.join(exclude)})")
-        else:
-            shutil.rmtree(state_dir)
-            print(f"  {GREEN}\u2713{RESET} Removed .stack/")
-
-    # The installer puts the global command in place for the checkout's
-    # own instance, so only uninstalling that instance takes it away. A
-    # STACK_DIR instance (a test run, a sandbox) leaves it for the others.
-    if stck.instance_dir == stck.root and (bin_dir := global_command.bin_dir()):
-        if global_command.uninstall(stck.root, bin_dir):
-            print(f"  {GREEN}\u2713{RESET} Removed the {global_command.NAME} command")
-
-    # Offer to remove data
-    if stck.data.exists():
-        home = str(Path.home())
-        display = str(stck.data).replace(home, "~", 1)
-        print(f"\n  {RED}Data directory: {display}{RESET}")
-        print(f"  {RED}This contains all your photos, messages, documents, etc.{RESET}")
-        # Extension stacklets are source code, not data, and they live in
-        # the data dir by default. Say so before the wipe, not after.
-        doomed = [d for d in stck.extension_dirs
-                  if d.exists() and d.is_relative_to(stck.data)]
-        for d in doomed:
-            print(f"  {RED}It also contains your extension stacklets "
-                  f"({_short_path(d)}).{RESET}")
-        print(f"  {RED}This action is irreversible.{RESET}\n")
-        try:
-            rm_data = input("  Type 'delete' to remove all data: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            rm_data = ""
-        if rm_data == "delete":
-            import shutil
-            if exclude:
-                for item in stck.data.iterdir():
-                    if item.name in exclude:
-                        continue
-                    if item.is_dir():
-                        shutil.rmtree(item)
-                    else:
-                        item.unlink()
-                print(f"  {GREEN}\u2713{RESET} Removed {display} (kept: {', '.join(exclude)})")
-            else:
-                shutil.rmtree(stck.data)
-                print(f"  {GREEN}\u2713{RESET} Removed {display}")
-        else:
-            print(f"  {DIM}Data kept at {display}{RESET}")
-
-    print(f"\n  {GREEN}\u2713{RESET} {name} uninstalled")
-    print(f"  {DIM}Run 'stack install' to start fresh.{RESET}\n")
 
 
 def handle_update(stck, args):

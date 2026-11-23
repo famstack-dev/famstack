@@ -2052,13 +2052,32 @@ class Stack:
         return {"ok": True, "stacklet": stacklet_id, "path": s["path"]}
 
     def destroy(self, stacklet_id: str) -> dict:
-        """Remove a stacklet completely — back to available state.
+        """Remove a stacklet completely, back to available state.
 
-        on_stop → on_destroy → clear secrets → remove marker →
-        delete data → delete .env
+        `tear_down`, then its secrets and its data folder. A teardown that
+        fails (a service that still runs) deletes neither.
+        """
+        result = self.tear_down(stacklet_id)
+        if result.get("ok"):
+            self.secrets.clear(stacklet_id)
+            self.output.step("Secrets cleared")
+            if (data_dir := self.data / stacklet_id).exists():
+                shutil.rmtree(data_dir)
+                self.output.step("Data deleted")
+        return result
 
-        A failed on_stop ends it before anything is deleted: a service that
-        still runs keeps its data folder and its secrets.
+    def tear_down(self, stacklet_id: str) -> dict:
+        """Everything `destroy` removes except the secrets and the data folder.
+
+        on_stop → on_destroy → remove markers → delete .env
+
+        `stack uninstall` tears every stacklet down this way, and deletes
+        the data and the secrets only when the admin confirms it
+        afterwards. The data folder holds the family's photos, messages and
+        documents, and the secrets hold the passwords of its databases: a
+        declined delete keeps both, so a new install opens the kept data.
+
+        A failed on_stop ends it before anything is removed.
         """
         s = self._find_stacklet(stacklet_id)
         if not s:
@@ -2073,22 +2092,9 @@ class Stack:
                              f"{_hook_failure(resolver)}"}
         resolver.run("on_destroy", ctx)
 
-        self.secrets.clear(stacklet_id)
-        self.output.step("Secrets cleared")
-
-        marker = self._setup_done_marker(stacklet_id)
-        if marker.exists():
-            marker.unlink()
+        self._setup_done_marker(stacklet_id).unlink(missing_ok=True)
         self._up_stamp(stacklet_id).unlink(missing_ok=True)
-
-        data_dir = self.data / stacklet_id
-        if data_dir.exists():
-            shutil.rmtree(data_dir)
-            self.output.step("Data deleted")
-
-        env_file = stacklet_dir / ".env"
-        if env_file.exists():
-            env_file.unlink()
+        (stacklet_dir / ".env").unlink(missing_ok=True)
 
         self.write_caddyfile(stopping=stacklet_id)
 
