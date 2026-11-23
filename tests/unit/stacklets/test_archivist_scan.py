@@ -59,17 +59,6 @@ class Classifier:
         return {"title": text.split(".")[0][:40], "persons": [], "tags": [], "summary": "s"}
 
 
-class Tags:
-    def top(self, n):
-        return []
-
-    def record(self, tags, when):
-        pass
-
-    def save(self):
-        pass
-
-
 @pytest.fixture
 def memory(tmp_path, monkeypatch):
     with running_memory(tmp_path / "data", FILES, seeded_by="memory-bot",
@@ -90,12 +79,12 @@ async def archivist(tmp_path, memory):
                        memory=MemoryAPI.from_container(memory.environ))
     capture = CapturePipeline(
         url_extractor=None, text_extractor=TextExtractor(), classifier=Classifier(),
-        mirror=mirror, capture_tags=Tags(), paperless=None, bot_name="archivist-bot",
-        classify_max_chars=10000, capture_keep_body=False, capture_tag_prompt_size=50,
+        mirror=mirror, paperless=None, bot_name="archivist-bot",
+        classify_max_chars=10000, capture_keep_body=False,
         vault=vault)
     bot = ArchivistBot(homeserver="http://h", user_id=BOT_ID, password="x",
                        session_dir=tmp_path / "session",
-                       services=SimpleNamespace(capture=capture))
+                       services=SimpleNamespace(capture=capture, vault=vault))
     said: list[tuple[str, str]] = []
     documents: list[dict] = []
     searched: list[tuple[str, str]] = []
