@@ -53,7 +53,8 @@ def _make_env(tmp_path, stacklet_ids):
     from stack import Stack
     from stack.output import CollectorOutput
 
-    (tmp_path / "stack.toml").write_text('[core]\ntimezone = "UTC"\n')
+    (tmp_path / "stack.toml").write_text(
+        f'[core]\ntimezone = "UTC"\ndata_dir = "{tmp_path / "data"}"\n')
     (tmp_path / "users.toml").write_text(
         '[[users]]\nname = "Test"\nemail = "t@t"\npassword = "p"\nrole = "admin"\n')
     stack_dir = tmp_path / ".stack"
@@ -203,15 +204,16 @@ class TestUninstallNotFlag:
         assert not (tmp_path / ".stack" / "alpha.setup-done").exists()
 
     def test_without_not_flag_marker_dir_is_fully_removed(self, terminal, tmp_path):
-        """Sanity check: plain uninstall still wipes .stack/ as before."""
+        """A plain uninstall whose data is deleted wipes .stack/ with it."""
         from stack.removal import handle_uninstall
 
         stck = _make_env(tmp_path, ["alpha"])
         (tmp_path / ".stack" / "alpha.setup-done").touch()
+        (stck.data / "alpha").mkdir(parents=True)
 
         args = Namespace(yes=True, exclude=[])
 
-        terminal.types("")
+        terminal.types("delete")
         handle_uninstall(stck, args)
 
         assert not (tmp_path / ".stack").exists()

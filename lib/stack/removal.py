@@ -21,6 +21,11 @@ non-negotiable 13). So:
   `.stack/secrets.toml`) stay until the admin types `delete`. Any other
   answer, a closed terminal and Ctrl+C keep both, and a new install over
   the kept data opens it with the old passwords.
+  The secrets go only with the data this run deleted, or when nothing
+  was ever set up (`_secrets_may_go`). A data folder that is not known
+  (no stack.toml, one that does not parse or names no `data_dir`) or not
+  there (a disk that is not mounted, a moved folder) gets no question,
+  and its secrets stay.
 - **`destroy` asks before it deletes leftover data with files in it.** A
   stacklet that is not set up can still have a data folder: a failed
   setup leaves one, and so does a declined uninstall, whose folder holds
@@ -38,9 +43,11 @@ from __future__ import annotations
 
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 from . import docker, global_command, run_log, runs
+from .secrets import SecretsUnreadable
 from .prompt import DIM, GREEN, ORANGE, RED, RESET, TEAL
 
 __all__ = ["handle_destroy", "handle_uninstall"]
@@ -232,8 +239,16 @@ def _uninstall(stck, exclude: list[str], name: str) -> None:
     `.stack/secrets.toml` stay: the secrets hold the passwords of the
     databases in the data folders, and kept data without them cannot be
     opened by a new install.
+
+    Whether the secrets go is `_secrets_may_go`'s decision, made from
+    what this run saw before it removed anything.
     """
     from .cli import CLI, print_error
+
+    # Read before the teardown and `_remove_config` remove what they read:
+    # stack.toml, the setup markers.
+    data = _named_data_dir(stck)
+    set_up = _ever_set_up(stck)
 
     # An excluded stacklet keeps its container, data dir, setup marker and
     # secrets: everything needed to resume on the next `stack up`.
@@ -256,7 +271,7 @@ def _uninstall(stck, exclude: list[str], name: str) -> None:
         if global_command.uninstall(stck.root, bin_dir):
             print(f"  {GREEN}✓{RESET} Removed the {global_command.NAME} command")
 
-    if _data_deleted(stck, exclude):
+    if _secrets_may_go(stck, data, set_up, exclude):
         _remove_secrets(stck, [st["id"] for st in removed], exclude)
 
     print(f"\n  {GREEN}✓{RESET} {name} uninstalled")
@@ -338,6 +353,86 @@ def _remove_secrets(stck, stacklet_ids: list[str], exclude: list[str]) -> None:
     print(f"  {GREEN}✓{RESET} Secrets cleared (kept: {', '.join(exclude)})")
 
 
+# ── May the secrets go? ────────────────────────────────────────────────
+#
+# `.stack/secrets.toml` holds the passwords of the databases in the data
+# folders. Data kept without them cannot be opened by a new install,
+# because Postgres keeps the password a database was made with. So the
+# secrets go only with the data this run deleted, or when nothing was
+# ever set up. A data folder that cannot be seen is never taken for "no
+# data": the folder may be on a disk that is not mounted, or moved, and a
+# default folder is a guess at where it is (AGENTS.md, non-negotiable 14).
+
+def _named_data_dir(stck) -> Path | None:
+    """The data folder the instance's stack.toml names (`[core] data_dir`),
+    or None when stack.toml is missing, does not parse or names none.
+
+    Not `stck.data`: without a `data_dir`, the stack builds a default
+    folder, which may not be where the data is."""
+    try:
+        config = tomllib.loads((stck.instance_dir / "stack.toml").read_text())
+        return Path(config["core"]["data_dir"]).expanduser()
+    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError):
+        return None
+
+
+def _ever_set_up(stck) -> bool:
+    """Whether anything of the stack was set up: a setup marker or a run
+    stamp in `.stack/`, a stacklet's own secret (or a secrets file that
+    cannot be read), a container, or a stacklet's folder in the stack's
+    data folder. That folder is the one stack.toml names, or the default
+    one when it names none; it matters only when the named folder is not
+    there, so in practice it is the default folder.
+
+    The secret counts because a declined uninstall removes the markers
+    and stack.toml but keeps the secrets: a stacklet's generated password
+    (`photos__DB_PASSWORD`) is then the one sign left that its data exists
+    somewhere."""
+    state = stck.instance_dir / ".stack"
+    if any(state.glob("*.setup-done")) or any(state.glob("*.up")):
+        return True
+    ids = [s["id"] for s in stck.discover()]
+    try:
+        if any(key.startswith(f"{sid}__") for key in stck.secrets.all() for sid in ids):
+            return True
+    except SecretsUnreadable:
+        return True
+    if docker.all_project_ids():
+        return True
+    return any((stck.data / sid).exists() for sid in ids)
+
+
+def _secrets_may_go(stck, data: Path | None, set_up: bool, exclude: list[str]) -> bool:
+    """Ask the data question when the data folder is known and there, and
+    say whether the secrets may go: True when this run deleted the data,
+    or when nothing was ever set up; False when the data is kept, or when
+    its folder is not known or not there (`_keep_secrets`)."""
+    if data is not None and data.exists():
+        return _data_deleted(stck, data, exclude)
+    if not set_up:
+        return True
+    _keep_secrets(stck, data)
+    return False
+
+
+def _keep_secrets(stck, data: Path | None) -> None:
+    """Say that the secrets stay, why, where they are, and how to delete
+    them with the data later."""
+    from .cli import _short_path
+
+    secrets = stck.instance_dir / ".stack" / SECRETS_FILE
+    if not secrets.exists():
+        return
+    print(f"\n  {ORANGE}Kept the secrets in {_short_path(secrets)}{RESET}")
+    if data is None:
+        print("  No stack.toml names the data folder ([core] data_dir), so no data was deleted.")
+    else:
+        print(f"  The data folder {_short_path(data)} does not exist, so no data was deleted.")
+        print("  Is its disk mounted, or was the folder moved?")
+    print("  The secrets hold the passwords of the databases in the data folder.")
+    print(f"  {DIM}To delete both: 'stack install' with the same data folder, then 'stack uninstall'.{RESET}")
+
+
 def _belongs_to_stacklet(entry_name: str, sids: list[str]) -> bool:
     """True when a .stack/ entry belongs to one of the named stacklets.
 
@@ -348,28 +443,26 @@ def _belongs_to_stacklet(entry_name: str, sids: list[str]) -> bool:
     return any(entry_name.startswith(f"{sid}.") for sid in sids)
 
 
-def _data_deleted(stck, exclude: list[str]) -> bool:
-    """Ask the data question and delete on `delete`. True when the data is
-    gone or there was none, so its secrets may go too; False when it is
-    kept: any other answer, a closed terminal or Ctrl+C."""
+def _data_deleted(stck, data: Path, exclude: list[str]) -> bool:
+    """Ask the data question about `data` and delete it on `delete`. True
+    when it is gone, so its secrets may go too; False when it is kept: any
+    other answer, a closed terminal or Ctrl+C."""
     from .cli import _short_path
 
-    if not stck.data.exists():
-        return True
-    display = _short_path(stck.data)
+    display = _short_path(data)
     print(f"\n  {RED}Data directory: {display}{RESET}")
     print(f"  {RED}This contains all your photos, messages, documents, etc.{RESET}")
     # Extension stacklets are source code, not data, and they live in
     # the data dir by default. Say so before the wipe, not after.
     for d in stck.extension_dirs:
-        if d.exists() and d.is_relative_to(stck.data):
+        if d.exists() and d.is_relative_to(data):
             print(f"  {RED}It also contains your extension stacklets ({_short_path(d)}).{RESET}")
     print(f"  {RED}This action is irreversible.{RESET}\n")
     if not _typed("delete", "  Type 'delete' to remove all data: ", aborted=""):
         print(f"  {DIM}Data kept at {display}{RESET}")
         return False
     if exclude:
-        for item in stck.data.iterdir():
+        for item in data.iterdir():
             if item.name in exclude:
                 continue
             if item.is_dir():
@@ -378,7 +471,7 @@ def _data_deleted(stck, exclude: list[str]) -> bool:
                 item.unlink()
         print(f"  {GREEN}✓{RESET} Removed {display} (kept: {', '.join(exclude)})")
     else:
-        shutil.rmtree(stck.data)
+        shutil.rmtree(data)
         print(f"  {GREEN}✓{RESET} Removed {display}")
     return True
 
