@@ -23,8 +23,8 @@ from stacklets.docs.bot.capture_pipeline import CapturePipeline  # noqa: E402
 from stack.cards.events import TextEdit  # noqa: E402
 from stack.cards.history import CardHistory  # noqa: E402
 from stack.cards.sources import NOTE, Source  # noqa: E402
-from stacklets.docs.bot.git_mirror import Filed  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
+from tests.capture_mirror import FakeMirror  # noqa: E402
 from stacklets.docs.bot.vault_entry import capture_frontmatter, identity_for, render_capture, render_note  # noqa: E402
 from stack.frontmatter import dump as frontmatter_dump  # noqa: E402
 from stack.card_render import render_file  # noqa: E402
@@ -142,40 +142,6 @@ class FakeClassifier:
         # respected. Subclasses override to return None (LLM down /
         # not useful) or a short token to exercise the sanity guard.
         return f"# Reformatted\n\n{ocr_text[:max_chars]}"
-
-
-class FakeMirror:
-    def __init__(self):
-        self.captures: list[dict] = []
-        self.emails: list[dict] = []
-
-    async def card_history(self, card_id):
-        """No history read: the note is refiled from the card as it reads now."""
-        return None
-
-    async def publish_capture(self, **kwargs):
-        self.captures.append(kwargs)
-        # Mirrors the publish_capture contract: where the capture landed
-        # and its card id (or None on failure). Deterministic, so the
-        # envelope-emission branch in _publish executes.
-        kind = kwargs.get("kind") or "bookmark"
-        entity = "homer"
-        return Filed(f"{entity}/{kind}s/test-capture.md", f"{kind}-7f3a9c21e4")
-
-    async def publish_email_message(self, **kwargs):
-        # Email folds into a thread file via its own mirror entrypoint;
-        # the path is keyed by the thread, not the individual message.
-        self.emails.append(kwargs)
-        entity = kwargs.get("entity") or "homer"
-        return Filed(f"{entity}/emails/test-thread.md", "email-0b6e2d91aa")
-
-    async def read_capture(self, path):
-        # The simplest re-readable shape for reprocess tests.
-        return self._stored.get(path)
-
-    _stored: dict = {}
-
-
 
 
 class FakePaperless:

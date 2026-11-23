@@ -773,8 +773,32 @@ The API is on the curator, and through core's door at `http://127.0.0.1:42002/ca
 | `GET /files/<path>` | a file and the version to write it on |
 | `GET /tree/<dir>` | every file under a directory, likewise |
 | `GET /paths[/<dir>]` | the paths alone, of a directory or of the whole memory |
+| `GET /filed-from/<id>/<dir>` | the note filed from the message `<id>`, under the directory `<dir>` at any depth; 404 when none was |
 | `GET /pending` | the commits Forgejo does not have yet, and how the last cycle went |
 | `GET /cards/<card_id>/versions` | the card's history, followed across its moves |
+
+### How is a capture found again?
+
+A capture is found by the messages it was filed from, never by its words or its link. The filing asks the curator
+(`GET /filed-from/<id>/<dir>`, `MemoryAPI.filed_from`), because the curator's clone has every write as soon as it
+is made. The archivist's own copy can lag a write by minutes.
+
+- A note answers when one of its sources of role `original` has the id. A reply's id finds nothing, because a reply
+  corrects a card. It is not what the card was filed from.
+- A note without a sidecar answers when its frontmatter is `type: note` with this `capture_id`.
+- Only notes under `<dir>` count. The filing asks under `<entity>/notes`, the folder the capture files into: `marge`
+  for a capture in her own room, `homer/camping` for a personal topic.
+
+A note's first filing asks this before the model:
+
+- When a card holds the message already, nothing is written. A restart, a replay or a pin right after a filing does
+  this. The room is told about the card as it is: its path, `card_id`, people and tags. A hand edit of the card stays.
+- Else the note is written at the first free name of its path: `<name>.md`, `<name>-2.md`, `<name>-3.md`. A name is
+  free only when its sidecar is free too. The write has an empty base, so a file that appeared meanwhile makes the
+  curator refuse it. The filing then asks again before it tries the next name.
+
+A correction reaches its card by its path. A bookmark keeps the hash of its link as its identity, so a link pasted
+again updates its entry. An email keeps its thread.
 
 ### What does a write hold?
 

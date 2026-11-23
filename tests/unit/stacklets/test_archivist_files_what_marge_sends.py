@@ -15,9 +15,8 @@ model, the homeserver, the media repository and the web stand in at the
 boundary. The household is the Simpsons.
 
 A row of the wanted behavior that does not hold yet is marked with
-`THE_FILING_IS_ONE_PATH` or `A_REFILE_READS_ALL_ITS_SOURCES`: each is a
-strict `xfail`, so the test fails the day the behavior arrives, and the
-marker is removed then.
+`A_REFILE_READS_ALL_ITS_SOURCES`: a strict `xfail`, so the test fails
+the day the behavior arrives, and the marker is removed then.
 """
 
 from __future__ import annotations
@@ -29,16 +28,12 @@ import pytest
 from stack.frontmatter import parse
 from tests.archivist_chat import FAILED_MARK, FILED_MARK, MARGE, PIXEL, ChatRoom, ModelAnswers, ModelDown, Pages, a_pdf
 from tests.loopback import a_closed_port
-from tests.memory.unit.instance import git, running_memory
+from tests.memory.unit.instance import clone_of, git, running_memory
 from tests.model import Model
 
 PEOPLE = {f"family/people/{pid}.md": f"---\ntype: person\ncard_id: person-{pid}\ntitle: {name}\n---\n"
           for pid, name in (("homer", "Homer Simpson"), ("marge", "Marge Simpson"),
                             ("bart", "Bart Simpson"), ("lisa", "Lisa Simpson"))}
-# What the filing core makes true: one path for every capture, one card per thing sent.
-THE_FILING_IS_ONE_PATH = pytest.mark.xfail(strict=True, reason=(
-    "two notes that carry the same link stay two cards, because a note is "
-    "identified by what was sent and not by the page it names"))
 # What the refile makes true: a refile reads every message a note is made of.
 A_REFILE_READS_ALL_ITS_SOURCES = pytest.mark.xfail(strict=True, reason=(
     "a correction or a refile of a note made of several messages keeps every "
@@ -212,7 +207,6 @@ async def test_a_note_that_carries_a_link_and_the_bookmark_of_that_link_are_two_
     assert memory.text(bookmark) == before
 
 
-@THE_FILING_IS_ONE_PATH
 async def test_two_notes_that_carry_the_same_link_are_two_cards(chat, memory):
     """Given a note whose text carries a page's address, when Marge files a
     second note about the same page in other words, then the memory has
@@ -236,6 +230,113 @@ async def test_pinning_a_message_that_is_already_a_card_files_no_second_card(cha
     await chat.reacts(MARGE, "\U0001F4CC", to=sent.event_id)
 
     assert len(cards(memory, "marge/")) == 1
+
+
+async def test_a_reply_finds_no_card_by_its_own_id(chat, memory):
+    """Given Marge's note, corrected by her reply in its thread, then the
+    memory finds the note by the message it was filed from and by no
+    reply, and a pin of the reply files a note of its own: a reply's id
+    never makes another filing an update of the card it corrected."""
+    await chat.says(MARGE, GRILL, event_id="$grill")
+    [note] = cards(memory, "marge/")
+    await chat.says(MARGE, "Call it Charcoal and propane", event_id="$fix", thread="$grill")
+    corrected = memory.text(note)
+
+    assert memory.api.filed_from("$grill", under="marge/notes").path == note
+    assert memory.api.filed_from("$fix", under="marge/notes") is None
+
+    await chat.reacts(MARGE, "\U0001F4CC", to="$fix")
+
+    assert len(cards(memory, "marge/")) == 2 and memory.text(note) == corrected
+
+
+async def test_an_old_note_without_a_sidecar_is_found_by_its_capture_id(tmp_path, monkeypatch, httpserver):
+    """Given a note filed before notes had a sidecar, which names the
+    message only in its frontmatter (`capture_id`), when the drain hands
+    the archivist that message again, then the memory still has that one
+    note, unchanged, and the room's answer names it."""
+    old = "marge/notes/2025/10/grill-0a0a0a.md"
+    note = ("---\ntype: note\ncard_id: note-0a0a0a0a0a\ntitle: Grill\ncapture_id: $grill\n"
+            "filed_by: marge\ncreated: 2025-10-03\n---\n# Grill\n\n" + GRILL + "\n")
+    with running_memory(tmp_path / "data", {**PEOPLE, old: note}, seeded_by="memory-bot",
+                        seeded_as="seed: the Simpsons") as memory:
+        monkeypatch.setenv("MEMORY_VAULT_DIR", str(memory.vault))
+        monkeypatch.setenv("MEDIA_ARCHIVE_DIR", str(memory.media))
+        monkeypatch.setenv("LANGUAGE", "en")
+        chat = ChatRoom(tmp_path, memory, httpserver, ModelAnswers(FILED))
+        try:
+            await chat.says(MARGE, GRILL, event_id="$grill")
+
+            assert cards(memory, "marge/") == [old] and memory.text(old) == note
+            [notice] = chat.notices()
+            assert chat.envelope(notice)["data"]["vault_path"] == old
+        finally:
+            await chat.close()
+
+
+async def test_the_same_message_handed_over_again_keeps_a_hand_edit(chat, memory):
+    """Given Marge's note, which Lisa then edited in Forgejo, when the
+    drain hands the archivist Marge's message again (a restart), then the
+    card still has Lisa's line and nothing new is committed: a capture on
+    file is found by its message, and its words are not compared."""
+    sent = await chat.says(MARGE, GRILL, event_id="$grill")
+    [path] = cards(memory, "marge/")
+    memory.edited_in_forgejo(
+        {path: memory.text(path).replace("## Sources", "Lisa: the lighter fluid is gone too.\n\n## Sources", 1)},
+        by="lisa")
+    commits = len(memory.authors())
+
+    await chat.bot._on_text(chat.room, sent)
+
+    assert "Lisa: the lighter fluid is gone too." in memory.text(path)
+    assert len(memory.authors()) == commits and cards(memory, "marge/") == [path]
+
+
+async def test_the_same_message_handed_over_right_after_its_filing_files_nothing(chat, memory):
+    """Given Marge's note was just filed, when the drain hands the
+    archivist the same message at once, then nothing is written, the
+    model is not asked again, and the room's second answer names the
+    stored card with the people and tags the card has."""
+    sent = await chat.says(MARGE, GRILL, event_id="$grill")
+    [first] = chat.notices()
+    commits, asked = len(memory.authors()), len(chat.model.calls)
+
+    await chat.bot._on_text(chat.room, sent)
+
+    assert len(memory.authors()) == commits and len(chat.model.calls) == asked
+    [_, again] = chat.notices()
+    path, head, _ = the_card_of(chat, memory, again)
+    assert path == chat.envelope(first)["data"]["vault_path"]
+    data = chat.envelope(again)["data"]
+    assert data["card_id"] == head["card_id"]
+    assert (data.get("persons"), data.get("tags")) == (head.get("persons") or [], head.get("tags") or [])
+
+
+async def test_a_link_with_the_id_of_a_note_on_file_is_still_its_own_bookmark(chat, memory):
+    """Given Marge's note filed from a message, when a link arrives under
+    that message's id, then the link is filed as its own bookmark: only a
+    note's first filing is checked against the notes on file, and a
+    bookmark keeps its link as its identity."""
+    await chat.says(MARGE, GRILL, event_id="$grill")
+
+    await chat.says(MARGE, "https://krusty.test/tent", event_id="$grill")
+
+    kinds = sorted(parse(memory.text(c))["type"] for c in cards(memory, "marge/"))
+    assert kinds == ["bookmark", "note"]
+
+
+async def test_a_replay_is_found_while_the_archivists_copy_lags(chat, memory, tmp_path, monkeypatch):
+    """Given the archivist's copy of the memory is behind the curator (it
+    was taken before Marge's note was filed), when the drain hands the
+    archivist her message again, then the memory still has one card: the
+    capture is looked up in the curator, which has every write at once."""
+    monkeypatch.setenv("MEMORY_VAULT_DIR", str(clone_of(memory.forgejo, tmp_path / "lagging")))
+    sent = await chat.says(MARGE, GRILL, event_id="$grill")
+
+    await chat.bot._on_text(chat.room, sent)
+
+    assert len(cards(memory, "marge/")) == 1
+    assert len(chat.model.calls) == 1
 
 
 async def test_retrying_a_photo_whose_filing_failed_files_it_once(chat, memory):
@@ -408,6 +509,21 @@ async def test_the_same_text_through_the_command_line_is_the_same_note(memory_fo
     [source] = sidecar(memory, path)["sources"]
     assert source["id"].startswith("cli:") and (source["channel"], source["kind"]) == ("cli", "text")
     assert source["person"] == "marge"
+
+
+async def test_the_same_text_through_the_command_line_twice_is_two_notes(memory_for_commands, model):
+    """Given Marge files a text with `stack memory capture`, when she runs
+    the same command again, then the memory has two notes: each run is a
+    capture of its own, with its own id."""
+    memory = memory_for_commands
+    model.answers({**FILED, "clean": GRILL})
+
+    for _ in range(2):
+        assert "error" not in memory.person("marge").runs("memory", "capture", [GRILL, "--by", "marge"])
+
+    notes = cards(memory, "marge/")
+    assert len(notes) == 2
+    assert len({sidecar(memory, n)["sources"][0]["id"] for n in notes}) == 2
 
 
 @A_REFILE_READS_ALL_ITS_SOURCES

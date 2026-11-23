@@ -11,6 +11,8 @@ correction files through them again (`Refile`):
 
     capture, policy
       │ 1 the card's place      policy.bucket, else the sender's own bucket
+      │   on file?              a note's first filing: the card filed from
+      │                         its message, then nothing is written
       │ 2 the topics shown      the place's vocabulary, as the room may read it
       │ 3 the reading           Reader: the model's answer (the intake's port)
       │ 4 the people            who the card is about, by the household's ids
@@ -18,7 +20,7 @@ correction files through them again (`Refile`):
       │ 6 the write             Writer: one curator commit, then the after-steps
       │ 7 a renamed topic       written again under the topic's new id
       ▼
-    Filing: filed, not filed (why), or not changed
+    Filing: filed, not filed (why), not changed, or on file
 
 Why the steps live here: the archivist, the command line, email and the
 refile of a card all filed through one method of the archivist that knew
@@ -52,6 +54,7 @@ from loguru import logger
 from ..cards.lookup import renamed_topic
 from ..cards.sources import Source, now
 from .capture import Capture, Refile, original_of
+from .identity import OnFile
 from .card_tags import tag_list, with_chosen_topics, with_room_topic
 from .cards import code_commit
 from .people import People
@@ -119,7 +122,11 @@ class Household(Protocol):
 
 class Writer(Protocol):
     """Where a capture's card is written (`stack.filing.write`, through the
-    intake's mirror). Each call returns `Filed` or `NotFiled`, never raises."""
+    intake's mirror). Each call returns `Filed` or `NotFiled`, never raises.
+    `capture_on_file` is the note filed from a message, or None
+    (`stack.filing.identity.on_file`)."""
+
+    async def capture_on_file(self, *, entity: str, capture_id: str, by: str) -> OnFile | None: ...
 
     async def publish_capture(self, **card) -> Filed | NotFiled: ...
 
@@ -136,7 +143,9 @@ class Filing:
     """What filing a capture did.
 
     ``status`` is `filed`, `not_filed` (nothing written, ``reason`` says
-    why), or `not_changed` (a correction that wrote nothing). ``filed`` is
+    why), `not_changed` (a correction that wrote nothing), or `on_file`
+    (a note whose message the memory holds already: nothing written,
+    ``filed`` and ``classification`` are the card as it is). ``filed`` is
     where the card is. ``classification`` is what the card now holds: the
     answer with the card's people and tags as written. ``entity`` is the
     card's place, the topic's new one after a rename. A not-changed
@@ -163,9 +172,13 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
                base: str | None = None, sidecar_base: str | None = None) -> Filing:
     """File `capture` into the memory, as `policy` places it; `refile` files it again as its card.
 
-    Runs the steps of the module's diagram. ``base`` and ``sidecar_base``
-    are the versions a note's or a bookmark's card and sidecar are written
-    on ("" for a new file); None writes on the ones read at write time
+    Runs the steps of the module's diagram. A note's first filing asks
+    first whether its message is on file (`Writer.capture_on_file`): then
+    nothing is written and the `Filing` is `on_file`. ``base`` and ``sidecar_base``
+    are the versions a correction's or a bookmark's card and sidecar are
+    written on ("" for a new file); None writes on the ones read at write
+    time. A note's first filing names none: it is written on an empty base
+    at a free name, or on the card filed from its message
     (`stack.filing.write.write_capture`). ``household`` is None when the intake has no memory
     to read (no topics are shown, nobody is placed by id).
 
@@ -180,6 +193,18 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
     """
     origin = capture.origin
     entity = policy.bucket or origin.person
+    # A note's first filing whose message is on file already (a restart,
+    # a replay, a pin right after the filing) writes nothing and asks no
+    # model: the room is told about the card as it is. A correction
+    # reaches its card by its path; a bookmark and an email keep their
+    # own identity.
+    if capture.kind == "note" and refile is None and origin.capture_id:
+        stored = await writer.capture_on_file(entity=entity, capture_id=origin.capture_id,
+                                              by=origin.account)
+        if stored is not None:
+            return Filing("on_file", entity, dict(stored.card),
+                          Filed(stored.path, stored.card_id, card=dict(stored.card)),
+                          captured_at=stored.captured_at)
     resolver, shown = _vocabularies(capture, policy, household, folder=(refile.existing_path if refile else "") or entity)
 
     reading = await reader.read(

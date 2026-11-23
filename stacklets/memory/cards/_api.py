@@ -9,6 +9,7 @@ its routes; everything else here is translation, with no I/O of its own:
     GET  /files/<path>         `CardStore.read`: a file and the version to write it on
     GET  /tree/<dir>           `CardStore.files`: every file under a directory, likewise
     GET  /paths[/<dir>]        `CardStore.paths`: the paths alone, of a directory or of all
+    GET  /filed-from/<id>/<dir> `CardStore.filed_from`: the note filed from a message, under a directory
     GET  /pending              `CardStore.pending`, and how the last cycle went
     GET  /cards/<id>/versions  `CardStore.history` of the card with that id
 
@@ -57,6 +58,8 @@ PROBLEM = "application/problem+json"
 _COMMITS, _SYNC, _PENDING, _FILES, _TREE = "/commits", "/sync", "/pending", "/files/", "/tree/"
 _PATHS = "/paths"
 _VERSIONS = re.compile(r"^/cards/([^/]+)/versions$")
+# The id comes first and is quoted whole, so a directory of any depth follows it.
+_FILED_FROM = re.compile(r"^/filed-from/([^/]+)/(.+)$")
 
 
 class StoreAPI:
@@ -83,7 +86,8 @@ class StoreAPI:
 
     def serves(self, path: str) -> bool:
         return path in (_COMMITS, _SYNC, _PENDING, _PATHS) \
-            or path.startswith((_FILES, _TREE, _PATHS + "/")) or bool(_VERSIONS.match(path))
+            or path.startswith((_FILES, _TREE, _PATHS + "/")) or bool(_VERSIONS.match(path)) \
+            or bool(_FILED_FROM.match(path))
 
     def answer(self, method: str, path: str, headers: Mapping[str, str], body: bytes) -> Reply:
         """(status, headers, body) for `method` on one of the routes above.
@@ -105,6 +109,8 @@ class StoreAPI:
             return self._tree(unquote(path[len(_TREE):]))
         if path == _PATHS or path.startswith(_PATHS + "/"):
             return self._paths(unquote(path[len(_PATHS) + 1:]))
+        if filed := _FILED_FROM.match(path):
+            return self._filed_from(unquote(filed.group(1)), unquote(filed.group(2)))
         found = _VERSIONS.match(path)
         return self._versions(unquote(found.group(1))) if found else \
             _problem(404, "not-found", f"no route {path}")
@@ -161,6 +167,15 @@ class StoreAPI:
             return _json(200, {"paths": self.store.paths(under)})
         except StoreError as e:
             return _refusal(e)
+
+    def _filed_from(self, source_id: str, under: str) -> Reply:
+        try:
+            found = self.store.filed_from(source_id, under=under)
+        except StoreError as e:
+            return _refusal(e)
+        if found is None:
+            return _problem(404, "not-found", f"no note under {under} was filed from {source_id}")
+        return _json(200, {"path": found.path, "text": found.text, "version": found.version})
 
     def _versions(self, card_id: str) -> Reply:
         try:

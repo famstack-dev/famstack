@@ -80,6 +80,7 @@ from stack.filing.cards import (
     classified_persons, identity_for,
 )
 from stack.filing.cards import filer_of as _filer_localpart  # noqa: F401  (named for its test, see Debt)
+from stack.filing.identity import OnFile, on_file
 from stack.filing.vocabulary import Vocabulary
 from stack.filing.write import Filed, NotFiled, not_written, write_capture
 from stack.tags import card_tags
@@ -867,6 +868,12 @@ class GitMirror:
             submitter=submitter, kept_media=kept_media, caption=caption, replies=replies,
             clean=clean, sources=sources, made=made, ops=ops,
         )
+
+    async def capture_on_file(self, *, entity: str, capture_id: str, by: str) -> OnFile | None:
+        """The note filed from the message `capture_id` under `entity`, or
+        None (`stack.filing.identity.on_file`); its after-steps run again
+        with no items."""
+        return await on_file(self.memory, self, entity=entity, capture_id=capture_id, by=by)
 
     async def publish_capture(
         self, *,

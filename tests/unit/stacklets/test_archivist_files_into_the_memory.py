@@ -455,6 +455,81 @@ async def test_a_capture_is_written_on_the_version_its_caller_names(archivist, m
     assert isinstance(await a_link(archivist, "https://springfield.example/tent", title="Tent"), Filed)
 
 
+async def test_a_new_note_at_a_taken_name_gets_the_next_free_one_and_the_first_stays(archivist, memory):
+    """Given Marge's note, when another message with the same words and
+    title is filed, then it is a second note at `<name>-2.md` and the
+    first is as it was: a note's first filing never updates a file for
+    being at its path."""
+    first = await a_note(archivist, "Buy charcoal", capture_id="$one")
+    card = memory.text(first.path)
+
+    second = await a_note(archivist, "Buy charcoal", capture_id="$two")
+
+    assert second.path == first.path.removesuffix(".md") + "-2.md"
+    assert memory.text(first.path) == card
+    assert sorted(files_in(memory, r"^marge/notes/.*\.md$")) == sorted([first.path, second.path])
+
+
+class _HomerFilesAfterTheListing(MemoryAPI):
+    """The archivist's client, while Homer's note lands at `path` just after
+    the archivist listed the folder for a free name."""
+
+    def __init__(self, memory, path: str):
+        super().__init__(memory.environ["MEMORY_API_URL"], token=memory.environ["CARDS_WRITE_TOKEN"],
+                         where="the curator")
+        self._memory, self._path = memory, path
+
+    def paths(self, under: str = "") -> list[str]:
+        listed = super().paths(under)
+        if self._path:
+            self._memory.edited_in_forgejo({self._path: "Homer's note\n"}, by="homer")
+            self._path = ""
+        return listed
+
+
+async def test_a_name_taken_after_the_listing_is_left_and_the_next_one_is_tried(archivist, memory):
+    """Given a note at a name, when another note's free name is taken by a
+    file that lands after the folder was listed, then the curator refuses
+    the write on its empty base, and the note is filed at the next free
+    name: the file that landed stays as it was."""
+    first = await a_note(archivist, "Buy charcoal", capture_id="$one")
+    taken = first.path.removesuffix(".md") + "-2.md"
+    archivist.memory = _HomerFilesAfterTheListing(memory, taken)
+
+    second = await a_note(archivist, "Buy charcoal", capture_id="$two")
+
+    assert second.path == first.path.removesuffix(".md") + "-3.md"
+    assert memory.text(taken) == "Homer's note\n"
+
+
+async def test_a_name_whose_sidecar_is_left_is_not_free(archivist, memory):
+    """Given a sidecar at a note's name whose card is gone, then a new note
+    takes the next name: the sidecar still names another card's sources."""
+    first = await a_note(archivist, "Buy charcoal", capture_id="$one")
+    left = first.path.removesuffix(".md") + "-2.json"
+    memory.edited_in_forgejo({left: json.dumps({"sources": []})})
+
+    third = await a_note(archivist, "Buy charcoal", capture_id="$two")
+
+    assert third.path == first.path.removesuffix(".md") + "-3.md"
+
+
+async def test_a_note_found_by_its_message_is_updated_where_it_is(archivist, memory):
+    """Given Marge's note filed from `$one`, when the same message is
+    written again under another title (a pin while it was classified),
+    then the one note is updated where it is."""
+    first = await a_note(archivist, "Buy charcoal", capture_id="$one",
+                         sources=[Source("original", "marge", "2026-10-13T08:00:00+00:00", "chat",
+                                         "text", "$one", quote="Buy charcoal")])
+
+    again = await a_note(archivist, "Buy charcoal and propane", capture_id="$one",
+                         sources=[Source("original", "marge", "2026-10-13T08:00:00+00:00", "chat",
+                                         "text", "$one", quote="Buy charcoal")])
+
+    assert again.path == first.path and again.card_id == first.card_id
+    assert files_in(memory, r"^marge/notes/.*\.md$") == [first.path]
+
+
 CAMPSITE = "family/camping/notes/2026/10/campsite-3a338e.md"
 CAMPSITE_SIDECAR = CAMPSITE.removesuffix(".md") + ".json"
 
@@ -562,6 +637,25 @@ async def test_a_note_filed_into_a_topic_gives_the_topic_its_card_once(archivist
         "type": "topic", "card_id": "topic-itchy-scratchy-land", "title": "Itchy Scratchy Land"}
     assert [c for c in memory.forgejo.new_commits() if c.endswith(f"declare: {topic}")] == \
         [f"{ARCHIVIST} | {ARCHIVIST} | declare: {topic}"]
+
+
+async def test_a_note_on_file_declares_its_topic_again(archivist, memory):
+    """Given a note in a topic whose topic card is missing (the note's
+    commit landed, the step after it did not), when the note's message is
+    handed over again, then the topic gets its card: a replay runs the
+    steps after a filing, with no items."""
+    topic = "family/itchy-scratchy-land/topic.md"
+    filed = await a_note(archivist, "Book the hotel", entity="family/itchy-scratchy-land",
+                         capture_id="$hotel",
+                         sources=[Source("original", "marge", "2026-10-13T08:00:00+00:00", "chat",
+                                         "text", "$hotel", quote="Book the hotel")])
+    memory.edited_in_forgejo({}, removed=(topic,))
+
+    stored = await archivist.capture_on_file(entity="family/itchy-scratchy-land",
+                                             capture_id="$hotel", by="marge")
+
+    assert stored.path == filed.path
+    assert parse(memory.text(topic))["type"] == "topic"
 
 
 async def test_a_note_keeps_its_keywords_as_keywords(archivist, memory):

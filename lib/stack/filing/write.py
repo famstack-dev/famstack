@@ -21,9 +21,15 @@ After the commit the after-steps run (`AfterSteps`): the topic's card is
 declared, a note's to-dos are folded into its topic's list. The intake's
 writer fills them (the archivist's mirror); this module knows neither.
 
-The path of a capture is `stack.filing.cards.capture_filepath`. A capture
-already filed under another title is found by its hash (`lookup_capture_path`)
-and updated where it is, so a new title never moves a card.
+The path of a capture is `stack.filing.cards.capture_filepath`. A note on
+its first filing is found by the message it was filed from
+(`MemoryAPI.filed_from`, `stack.filing.identity`), right before the write,
+and updated where it is; else it is written at the first free name of its
+path, on an empty base, and a refusal because a file appeared there
+meanwhile looks it up again and tries the next name. A bookmark already
+filed under another title is found by the hash of its link
+(`lookup_capture_path`) and updated where it is. Either way a new title
+never moves a card.
 
 Failures are logged and returned, never raised: a capture is best-effort,
 and the intake tells the person what was not written.
@@ -39,8 +45,9 @@ from loguru import logger
 
 from ..cards.fields import FieldOp
 from ..cards.sources import Source, sidecar_path
-from ..memory import CuratorDown, MemoryAPI, Refused, put, why_not_written
+from ..memory import CuratorDown, File, MemoryAPI, Refused, put, why_not_written
 from .cards import CardContext, capture_entry, capture_filepath
+from .identity import NAMES_TRIED, free_name, notes_of
 
 __all__ = ["AfterSteps", "Filed", "NotFiled", "commit_card", "lookup_capture_path", "not_written",
            "write_capture"]
@@ -124,12 +131,17 @@ async def write_capture(
 
     Routes the card under `<entity>/<kind>s/...` (`capture_filepath`), with
     the link, else ``body_text``, as its hash. ``existing_path`` is a
-    refile's: the card is rewritten where it is, whatever its new title.
-    Without it a card of the same hash in the folder is updated where it
-    is (`lookup_capture_path`). The card is written on ``base`` and a
-    note's sidecar on ``sidecar_base`` (`commit_card`): "" for a file that
-    must not exist yet, else the version the caller read. None writes on
-    the version read at the path now.
+    refile's: the card is rewritten where it is, whatever its new title,
+    on ``base`` and a note's sidecar on ``sidecar_base`` (`commit_card`):
+    the version the caller read, None for the version read now.
+
+    Without it, a note is the card filed from its message ``capture_id``
+    (`MemoryAPI.filed_from`), updated on the version read now, else a new
+    card at the first free name of its path (`identity.free_name`), on an
+    empty base; a refusal because a file appeared there looks it up again
+    and tries the next name. A file at a note's path is never updated for
+    being there. A bookmark of the same hash in the folder is updated where
+    it is (`lookup_capture_path`), on ``base`` as above.
 
     ``via`` is the account that commits (the committer, ADR-015). The
     commit is by ``changed_by`` (a refile's corrector), else ``submitter``
@@ -150,21 +162,94 @@ async def write_capture(
     title = resolved_title or "Capture"
     target_path = capture_filepath(entity, kind, captured_at, title if resolved_title else None,
                                    source_uri or body_text)
-    try:
-        if existing_path is None:
-            existing_path = await lookup_capture_path(memory, target_path)
-        # A capture keeps the path it was first filed under. Topic pages,
-        # list items and the link in the chat point at it, so a new title
-        # or a correction from someone else in the room changes what the
-        # entry says, never where it is.
-        if existing_path:
-            target_path = existing_path
-        existing = await asyncio.to_thread(memory.file, target_path)
-        side = await asyncio.to_thread(memory.file, sidecar_path(target_path)) if kind == "note" else None
-    except (Refused, CuratorDown) as e:
-        logger.warning("[filing] Capture not filed for {}: {}", source_uri or "(paste)", e)
-        return not_written(e)
+    first_note = kind == "note" and existing_path is None
+    for _ in range(NAMES_TRIED if first_note else 1):
+        try:
+            place = await (_new_note_place(memory, target_path, entity=entity, capture_id=capture_id)
+                           if first_note else
+                           _capture_place(memory, target_path, kind=kind, existing_path=existing_path))
+        except (Refused, CuratorDown) as e:
+            logger.warning("[filing] Capture not filed for {}: {}", source_uri or "(paste)", e)
+            return not_written(e)
+        # A new note is written on an empty base: a file that appeared at
+        # its name is never overwritten. A note found by its message is
+        # written on the versions just read.
+        if first_note:
+            card_base, side_base = _version(None, place.existing), _version(None, place.side)
+        else:
+            card_base, side_base = _version(base, place.existing), _version(sidecar_base, place.side)
+        written = await _write_at(
+            memory, setting, after, place, via=via, kind=kind, source_uri=source_uri,
+            title_hint=title_hint, title=title, classification=classification,
+            captured_at=captured_at, model=model, tags=tags, capture_id=capture_id,
+            submitter=submitter, kept_media=kept_media, caption=caption, replies=replies,
+            clean=clean, sources=sources, made=made, ops=ops, changed_by=changed_by,
+            base=card_base, sidecar_base=side_base)
+        # A file that appeared at a new note's name meanwhile: the message
+        # is looked up again, then the next free name is tried.
+        if not (first_note and place.existing is None and written == NotFiled("changed")):
+            return written
+    return NotFiled("changed")
 
+
+class _Place(NamedTuple):
+    """Where a capture is written: its path, the card and the sidecar there
+    now (None when there is none), and where it was before ("" for none)."""
+
+    path: str
+    existing: "File | None"
+    side: "File | None"
+    previous: str
+
+
+async def _capture_place(memory: MemoryAPI, target_path: str, *, kind: str,
+                         existing_path: str | None) -> _Place:
+    """A bookmark's place, or a correction's: the path it is filed under.
+
+    A capture keeps the path it was first filed under. Topic pages, list
+    items and the link in the chat point at it, so a new title or a
+    correction from someone else in the room changes what the entry says,
+    never where it is. A bookmark is found by the hash of its link
+    (`lookup_capture_path`), so a re-pasted link updates its entry.
+    """
+    if existing_path is None:
+        existing_path = await lookup_capture_path(memory, target_path)
+    path = existing_path or target_path
+    existing = await asyncio.to_thread(memory.file, path)
+    side = await asyncio.to_thread(memory.file, sidecar_path(path)) if kind == "note" else None
+    return _Place(path, existing, side, existing_path or "")
+
+
+async def _new_note_place(memory: MemoryAPI, target_path: str, *, entity: str,
+                          capture_id: str | None) -> _Place:
+    """A note's place on its first filing: the card filed from its message,
+    else the first free name at its path (`identity.free_name`).
+
+    Only the lookup by its message (`MemoryAPI.filed_from`) makes a note's
+    first filing an update; a file at its path is never read to be updated,
+    so two notes with the same link and title stay two notes.
+    """
+    found = await asyncio.to_thread(memory.filed_from, capture_id, under=notes_of(entity)) \
+        if capture_id else None
+    if found is not None:
+        side = await asyncio.to_thread(memory.file, sidecar_path(found.path))
+        return _Place(found.path, found, side, found.path)
+    taken = await asyncio.to_thread(memory.paths, target_path.rpartition("/")[0])
+    return _Place(free_name(target_path, taken), None, None, "")
+
+
+async def _write_at(
+    memory: MemoryAPI, setting: CardContext, after: AfterSteps, place: _Place, *,
+    via: str, kind: str, source_uri: str | None, title_hint: str | None, title: str,
+    classification: dict, captured_at: str, model: str | None, tags: list[str] | None,
+    capture_id: str | None, submitter: str | None, kept_media: dict | None, caption: str,
+    replies: "list[tuple[str, str]] | tuple", clean: str | None, sources: "Sequence[Source]",
+    made: dict | None, ops: "Sequence[FieldOp]", changed_by: str | None,
+    base: str, sidecar_base: str,
+) -> Filed | NotFiled:
+    """Write the capture's card at `place`, on `base` and `sidecar_base`,
+    then run the after-steps; where it landed, or `NotFiled`."""
+    target_path, existing = place.path, place.existing
     entry = capture_entry(
         setting, target_path=target_path, existing=existing.text if existing else None,
         kind=kind, source_uri=source_uri, title_hint=title_hint,
@@ -184,14 +269,14 @@ async def write_capture(
     verb = ("reply" if changed_by else "update") if existing else "capture"
     refused = await commit_card(
         memory, target_path, entry.content, entry.sidecar if kind == "note" else None,
-        base=_version(base, existing), sidecar_base=_version(sidecar_base, side),
+        base=base, sidecar_base=sidecar_base,
         by=by, via=via, verb=verb, title=title, body=classification.get("summary") or "",
         trailers={"Source": source_uri or "(paste)", **({"Model": model} if model else {})},
         label=source_uri or "(paste)")
     if refused is not None:
         return refused
 
-    await after.after_filing(target_path, classification, by=by, previous_path=existing_path or "")
+    await after.after_filing(target_path, classification, by=by, previous_path=place.previous)
     fm = entry.frontmatter
     return Filed(target_path, str(fm.get("card_id") or ""), card={
         "persons": [*(fm.get("persons") or []), *entry.about.unknown], "tags": list(fm.get("tags") or [])})

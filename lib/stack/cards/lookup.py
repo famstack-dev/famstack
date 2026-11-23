@@ -2,12 +2,14 @@
 
 `find_card` finds a card by the id of its kind (`stack.cards.CARD_ID_FIELDS`:
 a capture's event id, a diary card's entry id), `find_document` a document
-card by its Paperless number, `find_list` a list by its name, `find_by_card_id` by its
-own `card_id` or one it had before, `card_id_at` reads the id of the card
-at a path the others answered, `renamed_topic` a topic by an id it
-had before a rename, `paths_with_card_id` every file that
-carries one `card_id` (a copy carries its original's), and `removal_of`
-says when the card with an id no file carries any more was removed.
+card by its Paperless number, `find_list` a list by its name,
+`find_by_card_id` by its own `card_id` or one it had before, `card_id_at`
+reads the id of the card at a path the others answered, `renamed_topic` a
+topic by an id it had before a rename, `find_filed_from` the note a capture
+was filed from by its message's id (the curator asks it, `GET
+/filed-from/`), `paths_with_card_id` every file that carries one `card_id`
+(a copy carries its original's), and `removal_of` says when the card with
+an id no file carries any more was removed.
 Every reader runs them over the copy of the family memory it reads from:
 core's tools server over the wiki's copy, so a `/go/` link lands on a
 page the wiki serves; the archivist over its own mount, before it
@@ -54,6 +56,9 @@ from ..vault import TOPIC_CARD
 
 # A record's sidecar, beside its card (ADR-018 §3).
 SIDECAR_SUFFIX = ".json"
+# The role of a source a card was filed from (`stack.cards.sources.ORIGINAL`,
+# spelled out because that module imports this one).
+_ORIGINAL = "original"
 
 
 # ── The lookup ────────────────────────────────────────────────────────
@@ -201,13 +206,66 @@ def find_by_source_id(source_id: str, *, root: Path | str) -> str | None:
     return None
 
 
+def find_filed_from(source_id: str, *, under: str, root: Path | str) -> str | None:
+    """Path of the note filed from the message `source_id`, under the folder `under`, or None.
+
+    A capture is found again by the messages it was filed from, never by
+    its words or its link (ADR-018). A note with a sidecar answers when one
+    of its sources of role `original` has the id; a reply's id finds
+    nothing, because a reply corrects a card and is not what it was filed
+    from. A note with no sidecar (filed before sidecars) answers when its
+    frontmatter is `type: note` with this `capture_id`; so does a note whose
+    sidecar does not parse. Only notes under
+    `under` (`marge/notes`, `family/camping/notes`), at any depth, count:
+    a capture files into one folder, whatever month it was sent in.
+
+    Unlike `find_by_source_id`, which a `/go/capture/<id>` link reaches
+    through `find_card` and which must keep matching replies.
+
+        find_filed_from("$grill", under="marge/notes", root=vault)
+        # 'marge/notes/2025/11/grill-charcoal-0c401e.md'
+        find_filed_from("$fix", under="marge/notes", root=vault)   # None: a reply
+    """
+    wanted = (source_id or "").strip()
+    folder = Path(root) / under
+    if not wanted or not under or not folder.is_dir():
+        return None
+    base = Path(root)
+    for card in sorted(folder.rglob("*.md")):
+        rel = card.relative_to(base)
+        if ".git" in rel.parts:
+            continue
+        # A sidecar that reads decides; one that does not parse (a hand
+        # edit gone wrong) leaves the card to its frontmatter, as before
+        # sidecars, so a damaged sidecar never makes a replay a second note.
+        originals = _source_ids_in(card.with_suffix(SIDECAR_SUFFIX), role=_ORIGINAL)
+        if originals is not None:
+            if wanted in originals:
+                return rel.as_posix()
+            continue
+        fields = _frontmatter_of(card)
+        if fields.get("type") == "note" and str(fields.get("capture_id") or "").strip() == wanted:
+            return rel.as_posix()
+    return None
+
+
 def _source_ids(sidecar: Path) -> set[str]:
+    """The ids of a sidecar's sources; none when it does not read."""
+    return _source_ids_in(sidecar) or set()
+
+
+def _source_ids_in(sidecar: Path, *, role: str = "") -> set[str] | None:
+    """The ids of a sidecar's sources, of `role` only when one is named;
+    None when there is no sidecar or it does not parse as one."""
     try:
         loaded = json.loads(sidecar.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError):
-        return set()
+        return None
     sources = loaded.get("sources") if isinstance(loaded, dict) else None
-    return {str(s.get("id")) for s in sources or [] if isinstance(s, dict) and s.get("id")}
+    if not isinstance(sources, list):
+        return None
+    return {str(s.get("id")) for s in sources
+            if isinstance(s, dict) and s.get("id") and (not role or s.get("role") == role)}
 
 
 @dataclass(frozen=True)
