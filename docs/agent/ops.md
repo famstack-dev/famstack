@@ -33,8 +33,8 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack down <id>...` | yes | no | stops containers; data preserved. Several ids: spaces or commas |
 | `./stack down all` | yes | no | stops every running stacklet in reverse dep order |
 | `./stack restart [<id>...]` | yes | no | `down` + `up`; several ids as for `down`; with no argument, only the stacklets running stale code |
-| `./stack destroy <id>...` | yes | **YES** | removes containers + `~/famstack-data/<id>/` + secrets |
-| `./stack uninstall` | yes | **YES, EVERYTHING** | tears down every stacklet, removes the config; deletes all data only when the admin types `delete` |
+| `./stack destroy <id>...` | yes | **YES** | removes containers + `~/famstack-data/<id>/` + secrets; a not set up stacklet's data folder with files only after its own question or `--yes` |
+| `./stack uninstall` | yes | **YES, EVERYTHING** | tears down every stacklet, removes the config; deletes all data and its secrets only when the admin types `delete` |
 | `./stack update [<tag>]` | yes | no | moves the checkout to a release; restarts nothing, prints what to restart |
 | `./stack extensions list` | yes | no | the catalog's extensions and what is installed; creates no extension dir |
 | `./stack extensions add <id\|git-url> [<id>]` | refuses a second time | no | copies one extension into the first extension dir and starts nothing; warns first for any repo but the catalog (`--yes` skips only the question) |

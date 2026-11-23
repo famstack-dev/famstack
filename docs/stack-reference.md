@@ -1234,13 +1234,22 @@ secrets, config. Requires confirmation.
 Global secrets (`global__ADMIN_PASSWORD`) survive destroy. The user's
 password doesn't change when they remove a single service.
 
+A stacklet that is not set up can still have a data folder. A failed
+setup leaves one, and so does a declined uninstall.
+Destroy then deletes only that folder. When the folder holds files, it
+names the folder and its file count and waits for `destroy` to be
+typed. `--yes` skips the question. Without a terminal and without
+`--yes` it refuses and deletes nothing.
+
 ### `stack uninstall`
 
-Tears down all stacklets: containers, hooks, secrets and setup markers.
-Then it removes the instance's runtime state (`.stack/`) and config files
-(`stack.toml`, `users.toml`). The teardown keeps every data folder. The
-last question is about the data folder: only the answer `delete` deletes
-it. Any other answer, a closed terminal and Ctrl+C keep it.
+Tears down all stacklets: containers, hooks and setup markers. Then it
+removes the instance's config files (`stack.toml`, `users.toml`) and its
+runtime state (`.stack/`) except `secrets.toml`. The last question is
+about the data folder. Only the answer `delete` deletes the data and the
+secrets. Any other answer, a closed terminal and Ctrl+C keep both. The
+secrets hold the passwords of the databases in the data folder, and a
+new install needs them to open the kept data.
 
 ### Hooks
 
