@@ -98,6 +98,7 @@ async def archivist(tmp_path, memory):
                        services=SimpleNamespace(capture=capture))
     said: list[tuple[str, str]] = []
     documents: list[dict] = []
+    searched: list[tuple[str, str]] = []
 
     async def _quiet(*_args, **_kwargs):
         return None
@@ -106,7 +107,11 @@ async def archivist(tmp_path, memory):
         return _photo()
 
     async def _to_paperless(room_id, filename, display_name, data, reply_to, **kw):
-        documents.append({"filename": filename, "data": data, "reply_to": reply_to})
+        documents.append({"filename": filename, "data": data, "reply_to": reply_to,
+                          "hint": kw.get("user_hint")})
+
+    async def _search(room_id, query, reply_to=None, **_):
+        searched.append((query, reply_to))
 
     async def _send(room_id, text, reply_to=None, *a, **kw):
         said.append(("send", reply_to))
@@ -122,12 +127,18 @@ async def archivist(tmp_path, memory):
     bot._set_typing = _quiet
     bot._download_media = _download
     bot._documents.file = _to_paperless
-    yield SimpleNamespace(bot=bot, said=said, documents=documents)
+    # Search asks Paperless, a service this lane does not run.
+    bot._search.search = _search
+    yield SimpleNamespace(bot=bot, said=said, documents=documents, searched=searched)
     await bot._aclose()
 
 
 ROOM = SimpleNamespace(room_id="!notes:simpson", canonical_alias=None, name="Homer's notes",
                        users={BOT_ID: object(), HOMER: object()})
+DOCUMENTS = SimpleNamespace(room_id="!documents:simpson", canonical_alias="#documents:simpson",
+                            name="Documents", users={BOT_ID: object(), HOMER: object()})
+FAMILY = SimpleNamespace(room_id="!family:simpson", canonical_alias=None, name="Family Room",
+                         users={BOT_ID: object(), HOMER: object(), "@marge:simpson": object()})
 
 
 def _text(event_id: str, body: str, *, spoken: bool = False):
@@ -138,8 +149,10 @@ def _text(event_id: str, body: str, *, spoken: bool = False):
                            server_timestamp=1_763_900_000_000, source={"content": content})
 
 
-def _photo_event(event_id: str):
-    content = {"msgtype": "m.image", "body": "IMG_0412.jpg", "url": "mxc://simpson/p1"}
+def _photo_event(event_id: str, caption: str = ""):
+    content = {"msgtype": "m.image", "body": caption or "IMG_0412.jpg", "url": "mxc://simpson/p1"}
+    if caption:
+        content["filename"] = "IMG_0412.jpg"
     return SimpleNamespace(body="IMG_0412.jpg", sender=HOMER, event_id=event_id,
                            server_timestamp=1_763_900_000_000, source={"content": content})
 
@@ -209,4 +222,47 @@ async def test_a_scan_of_photos_only_is_filed_as_one_document(archivist, memory)
 
     [document] = archivist.documents
     assert document["filename"].endswith("-2p.pdf") and document["data"].startswith(b"%PDF")
+    assert _notes(memory) == {}
+
+
+async def test_in_the_documents_room_a_line_during_a_scan_is_a_search(archivist, memory):
+    """Given a scan open in the Documents Room, when Homer types a line,
+    then it is a search, as outside a scan, and no note: in the Documents
+    Room any text is a search. The scan still files its photo."""
+    bot = archivist.bot
+    await bot._on_text(DOCUMENTS, _text("$open", "("))
+    await bot._on_file(DOCUMENTS, _photo_event("$page"))
+    await bot._on_text(DOCUMENTS, _text("$line", LINE))
+    await bot._on_text(DOCUMENTS, _text("$close", ")"))
+
+    assert archivist.searched == [(LINE, "$line")]
+    assert _notes(memory) == {}
+    assert "send" not in _replied_to(archivist, "$line")
+    assert len(archivist.documents) == 1
+
+
+async def test_a_line_in_another_room_is_read_as_if_no_scan_were_open(archivist, memory):
+    """Given Homer's scan open in his notes room, when he writes a short
+    line in the family room, then it stays chat there: no note and no
+    "still open" reply. A scan counts only in the room where it was opened."""
+    bot = archivist.bot
+    await bot._on_text(ROOM, _text("$open", "("))
+    await bot._on_text(FAMILY, _text("$line", LINE))
+
+    assert _notes(memory) == {}
+    assert _replied_to(archivist, "$line") == []
+    assert bot._scan.is_open(HOMER)
+
+
+async def test_a_caption_on_a_page_stays_the_pages_caption(archivist, memory):
+    """Given an open scan, when Homer sends a photo with a caption, then
+    the caption reaches the document's filing as its hint, and no note is
+    made of it: a caption belongs to its page, not to the lines between."""
+    bot = archivist.bot
+    await bot._on_text(ROOM, _text("$open", "("))
+    await bot._on_file(ROOM, _photo_event("$page", caption="new passports"))
+    await bot._on_text(ROOM, _text("$close", ")"))
+
+    [document] = archivist.documents
+    assert document["hint"] == "new passports"
     assert _notes(memory) == {}

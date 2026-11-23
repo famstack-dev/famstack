@@ -16,7 +16,9 @@ Only photos and files are pages. A line of text or a voice message sent
 during a scan is filed as it is outside the scan, as a note of its own,
 and `say_still_open` tells the person that the scan waits for `)`. A
 typed line counts as handed over on purpose while the scan is open, so
-even a short one is kept (the router asks `is_open` for that).
+even a short one is kept, but only in the room of the scan (the router
+asks `is_open_in`). In the Documents Room a line stays a search, as
+outside a scan.
 
 The sessions live in the process only: a restart in the middle of a
 scan loses its pages, and the person sends them again.
@@ -58,6 +60,13 @@ class ArchivistScan:
         sender_name = sender.split(":")[0].replace("@", "").capitalize()
         self.sessions[sender] = {"files": [], "room_id": room_id, "caption": caption}
         await self._bot._send(room_id, self._bot.t("scan_started", sender=sender_name), reply_to)
+
+    def is_open_in(self, sender: str, room_id: str) -> bool:
+        """Whether `sender` has a scan open in `room_id`. A line counts for
+        a scan only in the room where the scan was opened; in any other
+        room it is read as if no scan were open."""
+        session = self.sessions.get(sender)
+        return session is not None and session["room_id"] == room_id
 
     async def say_still_open(self, room_id: str, reply_to: str) -> None:
         """Say that the scan is still open, in reply to a message that was

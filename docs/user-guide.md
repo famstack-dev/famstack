@@ -162,7 +162,7 @@ You can correct the filing in the thread. The archivist answers with one line th
 
 Write a caption with the upload ("this is for the tax file") and the archivist takes it into account when filing.
 
-For multi-page documents, type `(` to open a scan session, send the pages one by one, then `)` to close it. The pages become one document. A text line or a voice memo that you send during the scan becomes a note of its own. The archivist replies that the scan is still open.
+For multi-page documents, type `(` to open a scan session, send the pages one by one, then `)` to close it. The pages become one document. A text line that you send during the scan in the Documents Room is a search, as outside a scan. In a [capture room](#save-anything-capture-rooms), a text line or a voice memo that you send during the scan becomes a note of its own. The archivist then replies that the scan is still open.
 
 Useful in the Documents Room:
 

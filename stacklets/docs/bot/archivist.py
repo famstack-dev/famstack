@@ -710,10 +710,12 @@ class ArchivistBot(MicroBot):
         # route, only to decide whether the message was handed to us
         # deliberately.
         transcribed = voice.was_transcribed(event.source.get("content", {}))
-        # With a scan open, the person is handing things to us: a line or
-        # a voice message between `(` and `)` is kept as a note of its
-        # own, never dropped as chat, and the reply says the scan waits.
-        scanning = self._scan.is_open(event.sender)
+        # With a scan open in this room, the person is handing things to
+        # us: a line or a voice message between `(` and `)` is kept as a
+        # note of its own, never dropped as chat, and the reply says the
+        # scan waits. Search, links and mentions come first, as outside
+        # a scan, so in the Documents Room a line stays a search.
+        scanning = self._scan.is_open_in(event.sender, room.room_id)
         if _is_just_url(query):
             # URL semantics don't change with mention — a URL in the
             # docs room means "ingest into Paperless"; anywhere else
