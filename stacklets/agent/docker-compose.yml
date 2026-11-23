@@ -39,6 +39,10 @@ services:
       AGENT_BOT_ID: ${AGENT_BOT_ID}
       # The agent's token for the host API, sent by the `stack` shim.
       STACK_API_TOKEN: ${STACK_API_TOKEN}
+      # The key the runtime signs a room's people with for each memory read.
+      # Not in the exec tool's allowed_env_keys (config.json), so the
+      # model's shell never gets it in its environment.
+      STACK_AUDIENCE_KEY: ${STACK_AUDIENCE_KEY}
       # The agent's chat password, which nanobot signs in with. It comes
       # through the environment, because the agent's shell and file tools
       # can read any file in the container: the stack's secret store is
@@ -63,6 +67,9 @@ services:
       # /app/runtime: that is a read-only mount itself, and Docker cannot
       # create a mountpoint inside it. /app/shared is on PYTHONPATH.
       - ../../lib/stack/name_trigger.py:/app/shared/name_trigger.py:ro
+      # The runtime signs a room's people with the module the host API checks
+      # them with, so both ends read one definition.
+      - ../../lib/stack/agent_audience.py:/app/shared/agent_audience.py:ro
       # The `stack` shim, live for the same reason. It is the agent's only
       # route to the CLI, so a bug in it takes out every vault tool at once —
       # and it stayed baked-only long enough for one to go unnoticed.

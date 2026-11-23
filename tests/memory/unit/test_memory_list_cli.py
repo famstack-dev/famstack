@@ -75,7 +75,7 @@ class TestStartingAList:
 
     def test_a_list_that_exists_is_not_started_again(self, run, groceries):
         result = run("create", "einkaufsliste", "--title", "Noch eine", "--as", "homer")
-        assert "already exists" in result["error"]
+        assert "is taken" in result["error"]
 
     def test_a_list_named_by_its_title_alone_gets_a_slug_from_it(self, run, store):
         result = run("create", "--title", "Garage aufräumen", "--as", "homer")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
+import os
 import re
 import sys
 import types
@@ -37,6 +38,10 @@ if str(_STACKLETS_DIR) not in sys.path:
 for _runtime_dir in sorted(REPO_ROOT.glob("stacklets/*/runtime")):
     if str(_runtime_dir) not in sys.path:
         sys.path.insert(0, str(_runtime_dir))
+
+# The agent's container mounts single framework files into `/app/shared`
+# under their own names (compose); here they are the same modules of `lib/stack`.
+sys.modules.setdefault("agent_audience", importlib.import_module("stack.agent_audience"))
 
 
 @pytest.fixture
@@ -138,6 +143,19 @@ def nanobot_stub():
         class ApplyPatchTool:
             async def execute(self, edits=None, **kwargs):
                 return f"stock patch {edits}"
+
+        class ExecTool:
+            # nanobot 0.3.5 agent/tools/shell.py: `execute` builds the
+            # command's environment with `_build_env`, inside the tool call,
+            # from a few basics and the keys config.json allows.
+            allowed_env_keys = ["PATH", "STACK_API_TOKEN"]
+
+            def _build_env(self):
+                env = {"HOME": os.environ.get("HOME", "/tmp"), "PYTHONUNBUFFERED": "1"}
+                for key in self.allowed_env_keys:
+                    if (val := os.environ.get(key)) is not None:
+                        env[key] = val
+                return env
 
         class MatrixChannel:
             def __init__(self):
@@ -305,6 +323,7 @@ def nanobot_stub():
         mod("nanobot.agent.tools.filesystem",
             WriteFileTool=WriteFileTool, EditFileTool=EditFileTool)
         mod("nanobot.agent.tools.apply_patch", ApplyPatchTool=ApplyPatchTool)
+        mod("nanobot.agent.tools.shell", ExecTool=ExecTool)
         mod("nanobot.channels")
         mod("nanobot.channels.matrix")
         mod("nanobot.channels.matrix.runtime", MatrixChannel=MatrixChannel)
@@ -320,7 +339,7 @@ SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
                    "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
                    "list_tool", "tool_trim", "voice_trigger", "open_question",
-                   "status_trace", "turn", "photo_before")
+                   "status_trace", "turn", "photo_before", "room_people")
 
 
 @pytest.fixture

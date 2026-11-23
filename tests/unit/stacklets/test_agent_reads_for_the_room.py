@@ -14,22 +14,28 @@ note and one shared note. The test then checks what the answer holds.
 
 Rows (the first four are the card's behavior, the fifth is the admin's):
 
-  1. Bart's chat: Marge's private note is in no answer.      leaks today
-  2. The family room: no person's own note, shared cards yes. leaks today
-  3. Marge's own chat: her private note is found.             holds, a pin
-  4. A room or people unknown: refused, never the admin view. leaks today
-  5. The admin's own `stack memory find` on the Mac sees all. holds, a pin
+  1. Bart's chat: Marge's private note is in no answer.
+  2. The family room: no person's own note, shared cards yes.
+  3. Marge's own chat: her private note is found.
+  4. A room or people unknown: refused, never the admin view.
+  5. The admin's own `stack memory find` on the Mac sees all.
+  6. A person's page: read only in that person's own chat.
+  7. An audience the shell names itself (its environment, its own line, a
+     changed or expired signature): nothing of Marge's in Bart's chat.
+  8. The history of a person's folder: shown only in that person's own chat.
+  9. A list in a person's folder: no list verb names its items elsewhere.
 
-Today Stacky's reads carry no audience, so rows 1, 2 and 4 are strict xfail
-under one marker, `STACKY_IGNORES_THE_ROOM`. The change that gives every read
-the room's people removes the marker, and the rows then pass.
+A last row pins a known limit, strict xfail: a shell that reads the
+runtime's own environment holds its key, and signs any people with it.
 
-The one seam: `Room` is how a test says who is in the room. A turn today
-carries the sender and the room's key (`turn.py`) and nothing about who else
-is there, so `Stacky.in_room` puts the people on the request context as
-`room_people`. The change that learns the room's people from Matrix adapts
-`in_room` and `host_api` (the host API's side of the shim's wire) and keeps
-every row.
+The one seam: `Room` is how a test says who is in the room. A message
+carries the people in its room in its metadata (`room_people.py`, filled
+from the Matrix client's members), and nanobot copies that metadata into the
+request context its tools run in. `Stacky.in_room` sets that request
+context. Exec's environment is the one nanobot's `ExecTool` builds under the
+runtime's shims, which sign the room's people with the runtime's key
+(`RUNTIME_KEY`), and `host_api` decides each line with the host API's own
+`agent_command`, checking with the same key.
 """
 
 from __future__ import annotations
@@ -42,7 +48,9 @@ import importlib.util
 import io
 import os
 import shlex
+import socket
 import subprocess
+import time
 import sys
 import types
 from dataclasses import dataclass
@@ -56,17 +64,12 @@ from tests.memory.unit.instance import running_memory
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-# The marker of every row where today's reads leak. Strict, so a row that
-# starts to hold fails until its marker goes.
-STACKY_IGNORES_THE_ROOM = pytest.mark.xfail(
-    strict=True,
-    reason="Stacky's reads carry no audience: a room's people do not narrow what it finds",
-)
-
-TOOL_MODULES = ("memory_tool", "person_tool", "history_tool", "list_tool", "calendar_tool",
-                "sitecustomize", "turn")
-
 RECENT = (date.today() - timedelta(days=2)).isoformat()
+
+
+# The key the runtime signs a room's people with, as `stack up agent` makes
+# it; the host API checks each memory read against it.
+RUNTIME_KEY = "runtime-audience-key-5c1e"
 
 
 # ── the people and the rooms ─────────────────────────────────────────
@@ -99,9 +102,14 @@ MARGES_NOTE = _note("Marge000000001", "Gift for the bowling night",
 BARTS_NOTE = _note("Bart0000000001", "Gift ramp plan", "Bart builds a gift ramp for Lisa.")
 SHARED_NOTE = _note("Family0000001", "Camping tent", "The tent for four is in the garage.")
 
+# Marge's page, in her own folder: what `memory_person` reads.
+MARGES_PAGE = ("---\ntitle: Marge\nslug: marge\ncanonical: Marge\n---\n\n"
+               "# Marge\n\nKeeps the spare key in the blue vase.\n")
+
 SEED = {"marge/notes/gift.md": MARGES_NOTE,
         "bart/notes/gift.md": BARTS_NOTE,
-        "family/notes/tent.md": SHARED_NOTE}
+        "family/notes/tent.md": SHARED_NOTE,
+        "marge/about.md": MARGES_PAGE}
 
 # What each card shows of itself in any answer: its id, its path or its title.
 MARGES_CARD = ("Marge00000", "marge/notes", "bowling night")
@@ -148,15 +156,9 @@ def memory(tmp_path):
 
 
 @pytest.fixture
-def tools(monkeypatch, nanobot_stub):
-    """Stacky's memory search tool, imported against a stub nanobot."""
-    for name, module in nanobot_stub().items():
-        monkeypatch.setitem(sys.modules, name, module)
-    for name in TOOL_MODULES:
-        monkeypatch.delitem(sys.modules, name, raising=False)
-    yield importlib.import_module("memory_tool").MemorySearchTool
-    for name in TOOL_MODULES:
-        sys.modules.pop(name, None)
+def runtime(nanobot):
+    """Stacky's runtime: the stub nanobot with every shim of `sitecustomize` on it."""
+    return nanobot()
 
 
 # ── Stacky, as a person meets it ─────────────────────────────────────
@@ -164,52 +166,87 @@ def tools(monkeypatch, nanobot_stub):
 class Stacky:
     """Stacky in one room, reading the memory as its runtime does.
 
-        stacky = Stacky(tools, bin_dir, port, monkeypatch)
+        stacky = Stacky(runtime, bin_dir, port, monkeypatch)
         stacky.in_room(BARTS_CHAT)
         stacky.searches("gift")            # the memory_search tool's answer
+        stacky.reads_page("marge")         # the memory_person tool's answer
         stacky.execs("memory find gift")   # a line the model runs with exec
 
-    Both reads start a real `stack` process: the container-side shim itself,
+    Every read starts a real `stack` process: the container-side shim itself,
     on `PATH`, talking to `host_api` below instead of the host's API.
     """
 
-    def __init__(self, search_tool, bin_dir: Path, port: int, monkeypatch):
-        self.search_tool = search_tool
+    def __init__(self, runtime, bin_dir: Path, port: int, monkeypatch):
+        self.runtime, self.port = runtime, port
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv("STACK_API_ADDR", f"127.0.0.1:{port}")
         monkeypatch.delenv("STACK_API_TOKEN", raising=False)
+        monkeypatch.setenv("STACK_AUDIENCE_KEY", RUNTIME_KEY)
+        # The address is the test's own port; in the container the shim's default.
+        runtime["nanobot.agent.tools.shell"].ExecTool.allowed_env_keys = ["PATH", "STACK_API_ADDR"]
         self.in_room(None)
 
     def in_room(self, room: Room | None) -> "Stacky":
         """The next reads happen in `room`; None is a read outside any turn.
 
         Sets what nanobot's request context answers, on the stub nanobot a
-        fixture builds for this one test."""
+        fixture builds for this one test: the message's metadata carries the
+        room's people as the Matrix shim puts them there, none when nobody
+        knows who is in the room."""
         context = sys.modules["nanobot.agent.tools.context"]
         request = None if room is None else types.SimpleNamespace(
             turn_id="t1", sender_id=f"@{room.asker}:simpson", session_key=f"matrix:{room.key}",
-            chat_id=room.key, room_people=room.people)
+            chat_id=room.key,
+            metadata={"room_people": list(room.people)} if room.people else {})
         context.current_request_context = lambda: request
         return self
 
     def searches(self, query: str) -> str:
         """What the `memory_search` tool answers to `query`, as the model reads it."""
-        return asyncio.run(self.search_tool().execute(query=query))
+        return asyncio.run(sys.modules["memory_tool"].MemorySearchTool().execute(query=query))
 
-    def execs(self, line: str) -> str:
-        """What exec prints for `stack <line>`."""
+    def reads_page(self, name: str) -> str:
+        """What the `memory_person` tool answers for `name`."""
+        return asyncio.run(sys.modules["person_tool"].MemoryPersonTool().execute(name=name))
+
+    def execs(self, line: str, **env: str) -> str:
+        """What exec prints for `stack <line>`, run in the environment nanobot's
+        exec tool builds for the turn; `env` is what the line sets itself
+        (`STACK_AUDIENCE=marge stack ...`)."""
         done = subprocess.run(["stack", *shlex.split(line)], capture_output=True, text=True,
-                              timeout=60)
+                              timeout=60, env={**self.exec_env(), **env})
         return done.stdout + done.stderr
+
+    def exec_env(self) -> dict[str, str]:
+        """The environment nanobot's exec tool builds for a command of the turn."""
+        return self.runtime["nanobot.agent.tools.shell"].ExecTool()._build_env()
+
+    def writes_line(self, line: str) -> str:
+        """What the API answers to `line`, written to its port by a shell
+        itself, past the shim, as any program holding the exec token can."""
+        with socket.create_connection(("127.0.0.1", self.port), timeout=60) as conn:
+            conn.sendall(f"{line}\n".encode())
+            conn.shutdown(socket.SHUT_WR)
+            return b"".join(iter(lambda: conn.recv(4096), b"")).decode()
+
+    def asks_history(self, scope: str) -> str:
+        """What the `memory_history` tool answers for `scope`."""
+        return asyncio.run(sys.modules["history_tool"].MemoryHistoryTool().execute(scope=scope))
+
+    def edits_list(self, op: str, items: list[str], list_: str | None = None) -> str:
+        """What the `list_edit` tool answers to `op` on `items` of `list_`."""
+        return asyncio.run(sys.modules["list_tool"].ListEditTool().execute(
+            op=op, list=list_, items=items))
 
 
 def host_api(memory, api, shim):
     """The host API's side of the shim's wire, as a handler for `serving`.
 
-    It does what `handle_plaintext` does for the agent: read the line, refuse
-    what `DOMAIN_ALLOW` does not list, run the rest, answer with the text and
-    a status line on failure. It runs the command on the test's memory, not
-    through the host's `./stack` (which would reach whatever runs on this Mac).
+    It does what `handle_plaintext` does for the agent: the API's own
+    `agent_command` turns the line into the command or a refusal, then the
+    command runs and the answer is the text, with a status line on failure.
+    It runs the command on the test's memory, not through the host's
+    `./stack` (which would reach whatever runs on this Mac).
     """
     def handle(conn) -> None:
         line = b""
@@ -218,11 +255,11 @@ def host_api(memory, api, shim):
             if not chunk:
                 break
             line += chunk
-        args = shlex.split(line.decode())
-        if any(args[:len(p)] == p for p in api.DOMAIN_ALLOW):
-            code, text = run_command(memory, args)
-        else:
-            code, text = 126, f"error: '{' '.join(args[:2])}' is not allowed\n"
+        args, refusal = api.agent_command(line.decode(), api.DOMAIN_ALLOW, RUNTIME_KEY)
+        if refusal:
+            conn.sendall(refusal.encode())
+            return
+        code, text = run_command(memory, args)
         if code:
             text = f"{text.rstrip(chr(10))}\n{shim.EXIT_MARKER} {code}\n"
         conn.sendall(text.encode())
@@ -244,13 +281,13 @@ def run_command(memory, args: list[str]) -> tuple[int, str]:
 
 
 @pytest.fixture
-def stacky(memory, api, shim, tools, tmp_path, monkeypatch):
+def stacky(memory, api, shim, runtime, tmp_path, monkeypatch):
     """Stacky, with a real `stack` shim on `PATH` that talks to `host_api`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "stack").symlink_to(REPO_ROOT / "stacklets" / "agent" / "client" / "stack")
     with serving(host_api(memory, api, shim)) as port:
-        yield Stacky(tools, bin_dir, port, monkeypatch)
+        yield Stacky(runtime, bin_dir, port, monkeypatch)
 
 
 # Every way Stacky reads a card of the memory, as a function of Stacky.
@@ -266,7 +303,6 @@ READS_BY_WORDS = {
 # ── 1. Bart's chat ───────────────────────────────────────────────────
 
 @pytest.mark.parametrize("read", READS_BY_WORDS)
-@STACKY_IGNORES_THE_ROOM
 def test_in_barts_chat_marges_private_note_is_found_by_no_search(stacky, read):
     """Given Marge's private note and Bart alone with Stacky, when Bart's words
     match it, then the answer does not show it.
@@ -278,7 +314,6 @@ def test_in_barts_chat_marges_private_note_is_found_by_no_search(stacky, read):
     assert not shows(answer, MARGES_CARD)
 
 
-@STACKY_IGNORES_THE_ROOM
 def test_in_barts_chat_marges_private_note_is_not_opened_by_its_id(stacky):
     """Given Bart knows the id of Marge's card, when Stacky opens it for him,
     then the card's text is not in the answer."""
@@ -287,7 +322,6 @@ def test_in_barts_chat_marges_private_note_is_not_opened_by_its_id(stacky):
     assert "gift for Homer" not in answer
 
 
-@STACKY_IGNORES_THE_ROOM
 def test_in_barts_chat_a_link_does_not_lead_to_marges_private_note(stacky):
     """Given the shared tent note is linked from Marge's note, when Stacky
     follows its links in Bart's chat, then Marge's card is not among them."""
@@ -308,7 +342,6 @@ def test_in_barts_chat_his_own_note_and_the_shared_one_are_found(stacky):
 # ── 2. The family room ───────────────────────────────────────────────
 
 @pytest.mark.parametrize("read", READS_BY_WORDS)
-@STACKY_IGNORES_THE_ROOM
 def test_in_the_family_room_no_persons_own_note_is_found(stacky, read):
     """Given the family room (Marge asks, with Homer, Bart and Lisa in it), when
     the words match her own note and Bart's, then neither is in the answer.
@@ -363,7 +396,6 @@ UNKNOWN = {"outside any turn": None, "a room whose people are not known": UNKNOW
 
 @pytest.mark.parametrize("room", UNKNOWN)
 @pytest.mark.parametrize("read", READS_BY_WORDS)
-@STACKY_IGNORES_THE_ROOM
 def test_a_read_with_no_known_people_is_refused_not_answered_from_the_admins_view(
         stacky, read, room):
     """Given a read where nobody can say who is in the room, then no private note
@@ -385,3 +417,167 @@ def test_the_admins_own_find_on_the_mac_still_sees_every_card(memory):
     _, answer = run_command(memory, ["memory", "find", "gift"])
 
     assert shows(answer, MARGES_CARD) and shows(answer, BARTS_CARD)
+
+
+# ── 6. A person's page ───────────────────────────────────────────────
+
+NOT_HERS_ALONE = {"Bart's chat": BARTS_CHAT, "the family room": FAMILY_ROOM,
+                  "nobody known": UNKNOWN_PEOPLE}
+
+
+@pytest.mark.parametrize("room", NOT_HERS_ALONE)
+def test_marges_page_is_not_read_where_anyone_else_may_listen(stacky, room):
+    """Given Marge's page, compiled from her own notes too, when Stacky reads it
+    in a room where she is not alone, then its text is not in the answer."""
+    answer = stacky.in_room(NOT_HERS_ALONE[room]).reads_page("marge")
+
+    assert "blue vase" not in answer
+
+
+def test_in_her_own_chat_marge_reads_her_page(stacky):
+    answer = stacky.in_room(MARGES_CHAT).reads_page("marge")
+
+    assert "blue vase" in answer
+
+
+
+# ── 7. An audience the shell makes up ───────────────────────────────
+
+def _forged_signature(stacky) -> str:
+    """The audience Bart's turn gives a command, with Marge as its people."""
+    given = stacky.in_room(BARTS_CHAT).exec_env().get("STACK_AUDIENCE", "")
+    return "marge" + given[len("bart"):]
+
+
+def _expired_signature() -> str:
+    """Marge's audience as the runtime signs it, signed long enough ago to be over."""
+    from stack.agent_audience import sign
+    return sign(["marge"], RUNTIME_KEY, now=time.time() - 3600)
+
+
+FORGED = {
+    "STACK_AUDIENCE=marge":
+        lambda s: s.execs("memory find gift", STACK_AUDIENCE="marge"),
+    "the audience word on the shim's line":
+        lambda s: s.execs("audience marge memory find gift", STACK_AUDIENCE=""),
+    "a raw line to the API's port":
+        lambda s: s.writes_line("audience marge memory find gift"),
+    "Bart's signature with Marge as its people":
+        lambda s: s.execs("memory find gift", STACK_AUDIENCE=_forged_signature(s)),
+    "Marge's signature, expired":
+        lambda s: s.execs("memory find gift", STACK_AUDIENCE=_expired_signature()),
+}
+
+
+@pytest.mark.parametrize("forge", FORGED)
+def test_in_barts_chat_an_audience_the_shell_names_reads_nothing_of_marges(stacky, forge):
+    """Given Bart's chat, when a command names Marge as its audience in any way
+    the shell can (its environment, its own line, a signature it changed or
+    kept), then nothing of Marge's is in the answer: the audience is the one
+    the runtime signed for the room."""
+    answer = FORGED[forge](stacky.in_room(BARTS_CHAT))
+
+    assert not shows(answer, MARGES_CARD)
+
+
+# ── 8. What changed in a person's folder ─────────────────────────────
+
+@pytest.fixture
+def marge_wrapped_it(memory):
+    """Marge's own change to her private note, in Forgejo, named in its subject."""
+    memory.edited_in_forgejo({"marge/notes/gift.md": MARGES_NOTE + "Wrapped in blue paper.\n"},
+                             by="marge", subject="Gift for the bowling night: wrapped")
+
+
+HISTORY = {
+    "the memory_history tool": lambda s: s.asks_history("marge"),
+    "exec memory history": lambda s: s.execs("memory history marge"),
+}
+
+
+@pytest.mark.parametrize("read", HISTORY)
+def test_in_barts_chat_the_history_of_marges_folder_shows_nothing_of_hers(
+        stacky, marge_wrapped_it, read):
+    answer = HISTORY[read](stacky.in_room(BARTS_CHAT))
+
+    assert not shows(answer, MARGES_CARD)
+
+
+@pytest.mark.parametrize("read", HISTORY)
+def test_in_her_own_chat_marge_sees_what_changed_in_her_folder(stacky, marge_wrapped_it, read):
+    answer = HISTORY[read](stacky.in_room(MARGES_CHAT))
+
+    assert shows(answer, MARGES_CARD)
+
+
+# ── 9. A list in a person's folder ───────────────────────────────────
+
+@pytest.fixture
+def marges_list(memory):
+    """Marge's own list, in her folder, made in Forgejo, beside a shared one:
+    a path can only leave a folder that is there (`family/lists/..`)."""
+    memory.edited_in_forgejo({"marge/lists/geschenke.md":
+                              "---\ntype: list\ntitle: Geschenke\n---\n\n- [ ] Bowling ball for Homer\n",
+                              "family/lists/einkauf.md":
+                              "---\ntype: list\ntitle: Einkauf\n---\n\n- [ ] Milk\n"},
+                             by="marge", subject="a list of her own")
+
+
+LIST_VERBS = {
+    "exec list tick on her list": lambda s: s.execs("memory list tick geschenke zzz --as bart"),
+    "exec list tick on no list named": lambda s: s.execs("memory list tick Bowling --as bart"),
+    "the list_edit tool": lambda s: s.edits_list("tick", ["zzz"], "geschenke"),
+    # `*/lists/<slug>.md` is the glob: `../marge/geschenke` names no file,
+    # `../../marge/lists/geschenke` names hers through `family/lists/`.
+    # `tick` takes its first word as a list only when it is a list's name,
+    # so a path there is read as an item.
+    "exec list show through the shared folder":
+        lambda s: s.execs("memory list show ../marge/geschenke"),
+    "exec list tick through the shared folder":
+        lambda s: s.execs("memory list tick ../marge/geschenke zzz --as bart"),
+    "exec list show through a list folder to hers":
+        lambda s: s.execs("memory list show ../../marge/lists/geschenke"),
+    "exec list tick through a list folder to hers":
+        lambda s: s.execs("memory list tick ../../marge/lists/geschenke zzz --as bart"),
+}
+
+
+@pytest.mark.parametrize("verb", LIST_VERBS)
+def test_in_barts_chat_no_list_verb_shows_marges_list(stacky, marges_list, verb):
+    """Given Marge's own list, when a list verb in Bart's chat names it or
+    looks for an item, then its title and items are in no answer, also not
+    in a refusal that names the lists or items to choose from."""
+    answer = LIST_VERBS[verb](stacky.in_room(BARTS_CHAT))
+
+    assert "for Homer" not in answer and "Geschenke" not in answer
+
+
+def test_in_barts_chat_a_write_through_the_shared_folder_into_marges_is_refused(
+        stacky, memory):
+    """Given a page named as a path that leaves the shared folder for
+    Marge's, when Bart's chat writes it, then it is refused and nothing is
+    written."""
+    before = memory.new_commits()
+    answer = stacky.in_room(BARTS_CHAT).execs(
+        "memory write family/../marge/notes/x.md --by bart")
+
+    assert "read only in" in answer
+    assert memory.new_commits() == before
+
+
+# ── A known limit ────────────────────────────────────────────────────
+
+@pytest.mark.xfail(strict=True, reason=(
+    "the exec shell runs as the runtime's user: it can read the key from the runtime's "
+    "environment (/proc/1/environ) and sign with agent_audience.sign, which is on PYTHONPATH"))
+def test_a_shell_that_reads_the_runtimes_environment_reads_nothing_of_marges(stacky):
+    """Given Bart's chat, when the shell takes the key from the runtime's own
+    environment and signs Marge as the audience, then it should read nothing
+    of hers. It does today: this row turns green, and fails as strict, the
+    day the memory tools run where the shell cannot reach them."""
+    from stack.agent_audience import sign
+    key = os.environ["STACK_AUDIENCE_KEY"]   # what /proc/1/environ holds in the container
+    answer = stacky.in_room(BARTS_CHAT).execs(
+        "memory find gift", STACK_AUDIENCE=sign(["marge"], key, now=time.time()))
+
+    assert not shows(answer, MARGES_CARD)

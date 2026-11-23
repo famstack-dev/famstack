@@ -13,6 +13,7 @@ only documented item route.
 from __future__ import annotations
 
 import asyncio
+import os
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.schema import (
@@ -21,6 +22,7 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+from room_people import audience_env
 from turn import Turn, current as current_turn
 
 
@@ -194,6 +196,7 @@ class ListEditTool(Tool):
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=audience_env(dict(os.environ), current_turn().people),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
         out = stdout.decode(errors="replace").strip()

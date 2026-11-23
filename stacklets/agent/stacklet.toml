@@ -29,8 +29,11 @@ build = true
 # The agent's own token for the host API: it opens the API's plaintext
 # surface, never the JSON one that starts and stops stacklets. The API
 # reads it from the secret store; the shim (client/stack) sends it.
+# The audience key signs the people in a room for each memory read
+# (`stack.agent_audience`): the runtime holds it, the API checks with it,
+# and nanobot's exec tool never passes it to a command.
 [env]
-generate = ["STACK_API_TOKEN"]
+generate = ["STACK_API_TOKEN", "STACK_AUDIENCE_KEY"]
 
 [env.defaults]
 AGENT_DATA_DIR = "{data_dir}/agent"
