@@ -68,30 +68,28 @@ def test_asking_the_vault_when_something_happened_is_a_tool(nanobot):
     assert "MemoryHistoryTool" in _discovered(mods)
 
 
-def test_the_briefing_is_one_of_nanobots_runtime_context_providers(nanobot, tmp_path):
+def test_the_briefing_is_one_of_nanobots_runtime_context_providers(nanobot):
     """Every turn, nanobot asks its providers for context and appends it.
 
     The briefing is how a shared room knows who is speaking. Through the
     provider seam it rides on the user's message, and nanobot keeps it
     with that message in the history, so the prompt the model cached last
-    turn is still the start of this one.
+    turn is still the start of this one. What it reads of the memory, for
+    the room's people, is in `test_agent_reads_for_the_room.py`; here the
+    room's people are unknown, so it reads nothing.
     """
     import asyncio
     import types as _types
 
-    profile = tmp_path / "vault" / "homer" / "about.md"
-    profile.parent.mkdir(parents=True)
-    profile.write_text("> Safety inspector at the plant\n")
     loop = nanobot()["nanobot.agent.loop"].AgentLoop()
-    request = _types.SimpleNamespace(sender_id="@homer:simpson", metadata={},
-                                     workspace=tmp_path)
+    request = _types.SimpleNamespace(sender_id="@homer:simpson", metadata={})
 
     [provider] = loop._runtime_context_providers
     block = asyncio.run(provider(request))
 
     assert block.source == "famstack-brief"
     assert block.content.splitlines()[1].startswith("Sent "), "the date comes first"
-    assert "You are speaking with homer (@homer). Safety inspector at the plant" in block.content
+    assert "You are speaking with homer (@homer)." in block.content
     assert block.content.startswith("[Runtime Context")
 
 

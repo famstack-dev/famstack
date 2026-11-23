@@ -1,4 +1,8 @@
-"""What the agent's brief says about the room's topic and its lists.
+"""What the brief says about the room's topic and its lists, read from the memory on disk.
+
+`brief_for` is the brief of a runtime with the memory on disk, the bot
+runner's agent. nanobot's brief reads through `stack memory` commands for
+the room's people; its rows are in `test_agent_reads_for_the_room.py`.
 
 A pointer, not the items: the brief goes stale within the turn, so it
 says which lists to fetch and how, and the agent reads the live list
@@ -17,7 +21,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "agent" / "runtime"))
 
-from brief import brief_for, brief_lines, topic_for_room_label, when_sent  # noqa: E402
+from brief import brief_for, topic_for_room_label, when_sent  # noqa: E402
 from stacklets.docs.bot.topic_rooms import parse_topic_name  # noqa: E402
 from tests.memory.unit.instance import running_memory  # noqa: E402
 
@@ -35,21 +39,12 @@ def _brief(tmp_path) -> list[str]:
     for slug, text in (("packliste", PACKING), ("erledigt", DONE), ("einkauf", GROCERIES)):
         (lists / f"{slug}.md").write_text(text)
     msg = SimpleNamespace(metadata={"room": "Camping"}, sender_id="")
-    return brief_lines(msg, tmp_path)
+    return brief_for(msg, vault)
 
 
 def test_names_only_the_topics_lists_with_open_items(tmp_path):
     assert ("This topic's lists with open items: packliste; run "
             "`stack memory list show <list>` to see one.") in _brief(tmp_path)
-
-
-def test_a_runtime_with_the_memory_elsewhere_gets_the_same_briefing(tmp_path):
-    """The bot runner mounts the family memory at its own path, not in
-    nanobot's workspace; a runtime there is briefed the same way."""
-    briefing = _brief(tmp_path)
-    msg = SimpleNamespace(metadata={"room": "Camping"}, sender_id="")
-
-    assert brief_for(msg, tmp_path / "vault") == briefing != []
 
 
 # ── Which topic a room is ────────────────────────────────────────────────
@@ -90,7 +85,7 @@ def test_the_agent_and_the_archivist_derive_the_same_topic(tmp_path, name):
 def test_the_brief_offers_no_overview_a_topic_does_not_have(tmp_path):
     vault = tmp_path / "vault"
     _vault_with_list(vault, "einkauf")
-    lines = brief_lines(SimpleNamespace(metadata={"room": "Thema: Einkauf"}, sender_id=""), tmp_path)
+    lines = brief_for(SimpleNamespace(metadata={"room": "Thema: Einkauf"}, sender_id=""), vault)
     assert lines[0] == "This room's topic is 'einkauf'."
     assert "einkaufsliste" in lines[1]
 
@@ -130,9 +125,7 @@ def test_a_room_whose_topic_was_renamed_is_the_topic_under_its_new_id(tmp_path):
 def test_the_brief_names_a_renamed_topic(tmp_path):
     msg = SimpleNamespace(metadata={"room": "Thema: Nähprojekte"}, sender_id="")
 
-    _renamed_vault(tmp_path / "vault")
-
-    lines = brief_lines(msg, tmp_path)
+    lines = brief_for(msg, _renamed_vault(tmp_path / "vault"))
 
     assert any("This room's topic is 'naehprojekte'" in line for line in lines)
 

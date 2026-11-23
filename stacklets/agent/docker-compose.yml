@@ -51,12 +51,13 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       # nanobot home: config.json (rendered), workspace, matrix-store, sessions.
+      # SAFETY: no part of the family memory is mounted. nanobot's file
+      # tools and exec read every file in the container, around every
+      # audience rule, so a mounted memory gave one person's chat another
+      # person's private notes. The agent reads the memory only through
+      # `stack memory` commands, for the people in the room
+      # (`runtime/room_people.py`, `stack.agent_audience`).
       - ${AGENT_DATA_DIR}:/home/nanobot/.nanobot
-      # The family memory vault (read-only) — Stacky's knowledge: person and
-      # topic pages, notes, todos. Mounted INSIDE the workspace so nanobot's
-      # workspace-scoped file tools (grep, read_file) can reach it, which is
-      # the retrieval path its own tool contract tells the model to prefer.
-      - ${MEMORY_VAULT_DIR}:/home/nanobot/.nanobot/workspace/vault:ro
       # Runtime-context shim (on PYTHONPATH). The Dockerfile COPYs it so the
       # image runs standalone, but a bind mount means an edit + restart takes
       # effect without a rebuild. Keep in sync with the Dockerfile COPY.

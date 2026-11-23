@@ -84,7 +84,7 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
     brief:       `nanobot.agent.loop.AgentLoop.__init__` (wrapped to register a provider),
                  `AgentLoop.register_runtime_context_provider(provider)`, where a provider is
                  `async (RequestContext) -> RuntimeContextBlock | None` and RequestContext
-                 carries `sender_id`, `metadata`, `workspace`;
+                 carries `sender_id` and `metadata` (with the room's people, `room_people`);
                  `nanobot.runtime_context.{RuntimeContextBlock, wrap_runtime_context_lines}`
     state_log:   `nanobot.agent.context.ContextBuilder.build_messages(...) -> list[dict]`
     memory_tool: `nanobot.agent.tools.loader.ToolLoader.discover(self) -> list[type[Tool]]`
@@ -167,10 +167,14 @@ try:
     from nanobot.runtime_context import RuntimeContextBlock as _Block
     from nanobot.runtime_context import wrap_runtime_context_lines as _wrap
 
+    import asyncio as _asyncio_brief
+
     async def _family_brief(request):
         lines = [_when_sent(_datetime.datetime.now().astimezone()), _ANSWER_LANGUAGE]
         try:
-            lines += _brief_lines(request, request.workspace)
+            # In a thread: the brief runs `stack memory` commands, which
+            # would otherwise hold up every other room while they answer.
+            lines += await _asyncio_brief.to_thread(_brief_lines, request)
         except Exception:
             # A briefing is an optimisation, never a dependency — never break a turn.
             _log.exception("brief failed; continuing without a briefing")
@@ -689,16 +693,11 @@ except Exception:
 # (see join_greeting.py for why generated rather than canned).
 try:
     import asyncio as _asyncio
-    import os.path as _ospath
-    from pathlib import Path as _Path
-
     import nanobot.channels.matrix.runtime as _matrix_join
-    from brief import topic_for_room_label as _topic_for_room_label
+    from brief import room_topic as _room_topic
     from join_greeting import greeting_prompt as _greeting_prompt
-
-    # Same workspace nanobot mounts the projection into; `state_log`
-    # above resolves its log the same way.
-    _WORKSPACE = _Path(_ospath.expanduser("~/.nanobot/workspace"))
+    from room_people import people_in as _people_in
+    from room_reads import RoomReads as _RoomReads
 
     _orig_on_room_invite = _matrix_join.MatrixChannel._on_room_invite
 
@@ -717,7 +716,10 @@ try:
                     break
                 await _asyncio.sleep(1)
 
-            topic = _topic_for_room_label(label, _WORKSPACE / "vault")
+            # The topic as the room's people may read the memory: a topic in
+            # one person's own folder is no topic of a room with others in it.
+            people = _people_in(getattr(joined, "users", None) or {}, self.config.user_id)
+            topic = await _asyncio.to_thread(_room_topic, label, _RoomReads(people))
             await self._handle_message(
                 sender_id=event.sender,
                 chat_id=room.room_id,

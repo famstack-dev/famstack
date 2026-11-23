@@ -78,6 +78,7 @@ from stack.vault import slug as vault_slug
 
 USAGE = """\
     stack memory list show                          every list, with its open items counted
+    stack memory list show --topic camping          only the lists that belong to that topic
     stack memory list show groceries [--all]        the open items (--all: the ticked ones too)
     stack memory list show calendar --days 7        the family calendar's next 7 days, each
                                                     entry with its weekday (2: today, tomorrow)
@@ -145,6 +146,7 @@ def _parser() -> argparse.ArgumentParser:
     show.add_argument("slug", nargs="?")
     show.add_argument("--all", action="store_true")
     show.add_argument("--days", type=int, default=None)
+    show.add_argument("--topic", default="")
 
     create = verbs.add_parser("create", add_help=False)
     # The slug is optional: a family names a list, and `Baumarkt` makes
@@ -236,7 +238,7 @@ def run(args, stacklet, config):
         if ns.verb == "show":
             _name_the_calendar(ns, _all_lists_at(vault, readable), config)
             _name_by_title(ns, _all_lists_at(vault, readable))
-            return show(vault, ns.slug, show_all=ns.all, days=ns.days,
+            return show(vault, ns.slug, show_all=ns.all, days=ns.days, topic=ns.topic,
                         language=_language(config), readable=readable)
         if not ns.actor.strip():
             # Every change is a commit with a person's name on it; one
@@ -292,8 +294,12 @@ def _every_list(path: str) -> bool:
 
 
 def show(vault: Path, slug: str | None, *, show_all: bool, days: int | None = None,
-         language: str = "", readable: Callable[[str], bool] = _every_list) -> dict:
+         topic: str = "", language: str = "",
+         readable: Callable[[str], bool] = _every_list) -> dict:
     """Print every list `readable` keeps, or one of their items under their sections.
+
+    Without a `slug`, `topic` keeps only the lists whose `topics:` name it:
+    the agent's brief asks which lists belong to a topic room this way.
 
     A calendar's entries carry their weekday and how far away they are,
     worked out here: a model asked for the week counts weekdays instead,
@@ -301,9 +307,10 @@ def show(vault: Path, slug: str | None, *, show_all: bool, days: int | None = No
     within that many days.
     """
     if not slug:
-        lists = _all_lists(vault, readable)
+        lists = [lst for lst in _all_lists(vault, readable) if not topic or topic in lst.topics]
         if not lists:
-            print("No lists yet. Start one with `stack memory list create`.")
+            print(f"No list belongs to the topic {topic!r}." if topic else
+                  "No lists yet. Start one with `stack memory list create`.")
         for lst in lists:
             about = f"  ({lst.description})" if lst.description else ""
             kind = f" ({lst.kind})" if lst.kind != TODO else ""
