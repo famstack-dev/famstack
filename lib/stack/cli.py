@@ -39,7 +39,7 @@ from . import docker
 from . import doctor
 from . import global_command
 from . import logscan
-from .plugins import plugin_help, stacklet_commands
+from .plugins import plugin_help, plugin_words, stacklet_commands
 from .migrations import MigrationError
 from .secrets import SecretsUnreadable
 from . import runs
@@ -3842,8 +3842,8 @@ def _main():
             # renders it. With --json that dict is the only thing on stdout;
             # what the command prints for people goes to stderr, and the flag
             # is taken out of the arguments before the command reads them.
-            _remaining = [a for a in _remaining if a != "--json"]
-            sys.argv = [a for a in sys.argv if a != "--json"]
+            _remaining = plugin_words(_remaining)
+            sys.argv = plugin_words(sys.argv)
             with contextlib.redirect_stdout(sys.stderr):
                 result = stck.run_cli_command(args.command, action, _remaining)
             json.dump(result or {}, sys.stdout, indent=2, default=str)

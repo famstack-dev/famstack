@@ -93,6 +93,15 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  (IntegerSchema takes keyword arguments only)
     person_tool: same symbols as memory_tool
     history_tool: same symbols as memory_tool
+    own_chat:    `nanobot.agent.memory.MemoryStore.append_history(self, entry, *, max_chars,
+                 session_key) -> int`; `resolve_workspace_path(..., include_media_dir=)` as
+                 imported by name into `nanobot.agent.tools.filesystem` and `.message`
+                 (from `nanobot.agent.tools.path_utils`), raising
+                 `nanobot.security.workspace_policy.WorkspaceBoundaryError`;
+                 `AgentLoop.__init__` and `AgentLoop.sessions.get_or_create(key).messages`
+                 with each message's `media`; `nanobot.agent.tools.base.ToolResult.error`;
+                 the three write tools below. Also that `tools.restrict_to_workspace`
+                 still turns on exec's `_guard_command` (allow_patterns are matched only then).
     vault_write: `nanobot.agent.tools.filesystem.WriteFileTool.execute(self, path, content) -> str`
                  `nanobot.agent.tools.filesystem.EditFileTool.execute(self, path, ...) -> str`
                  `nanobot.agent.tools.apply_patch.ApplyPatchTool.execute(self, edits, ...) -> str`
@@ -256,6 +265,20 @@ try:
         _log.info("state-log shim active")
 except Exception:
     _log.exception("state-log shim could not attach (nanobot internals changed?)")
+
+
+# ── own_chat: what one chat leaves behind reaches no other chat ─────────────
+# No shared history, a chat's own attachments only, no plain file written into
+# the workspace every chat reads. Installed before vault_write, which then
+# routes a memory page past the refused write. SAFETY: unlike every other
+# shim this one does not fail soft. An agent without it hands one chat's
+# words to another, so the process stops and the log names the cause.
+try:
+    importlib.import_module("own_chat").install()
+    _log.info("own-chat gates active")
+except Exception as _own_chat_error:
+    _log.exception("own-chat gates could not attach (nanobot internals changed?)")
+    raise SystemExit(f"the agent does not start without its own-chat gates: {_own_chat_error!r}")
 
 
 # ── vault tools: memory_search, memory_person, memory_history, writes ────────

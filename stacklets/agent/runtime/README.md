@@ -70,6 +70,14 @@ with anyone else in it the briefing names her and nothing of her page.
 - `dream_aside.py` — run once by the entrypoint, not a shim. nanobot's Dream
   is off in `config.json`; this moves what it wrote before (profile files,
   `MEMORY.md`, its own skills) into `~/.nanobot/dream-archive/`.
+- `own_chat.py`: what one chat leaves behind reaches no other chat. The
+  config keeps the file tools in the workspace and exec to plain `stack`
+  lines; this writes no shared history, gives a chat only its own
+  attachments, and refuses plain file writes into the workspace. It is the
+  one shim that stops the agent when it cannot attach.
+- `chat_aside.py`: run by the entrypoint at every start, not a shim. Moves a
+  shared history an earlier release left in the workspace into
+  `~/.nanobot/chat-archive/`; a file it cannot move stops the start.
 
 ```
 Dockerfile:  COPY runtime/ /app/runtime  +  ENV PYTHONPATH=/app/runtime

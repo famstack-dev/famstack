@@ -48,6 +48,8 @@ COPY runtime/ /app/runtime/
 # agent answers pill mentions only.
 # agent_audience.py is not baked either: the host API checks with the same
 # file. Without the mount the memory tools do not load.
+# agent_confirm.py is mounted the same way: the host API checks a person's
+# yes to deleting a list with it. Without the mount list_edit does not load.
 # Container-side `stack` shim: forwards allowlisted commands to the host's
 # famstack API (host.docker.internal) and prints the CLI's plaintext output.
 # See client/stack and stacklets/core/famstack-api.py.

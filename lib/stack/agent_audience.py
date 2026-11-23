@@ -35,13 +35,9 @@ environment never does (nanobot builds that from an allowlist), so the
 model's shell cannot sign people of its own choice. An `--audience` in the
 agent's own line is refused too.
 
-What it does not cover: the shell runs in the runtime's container as the
-same user, so it can read the key from the runtime's environment
-(`/proc/1/environ`) and sign with this file, which is on the container's
-`PYTHONPATH`. And a
-command's signature is in its own environment: a shell can keep one and use
-it in another room until it is over (`SIGNED_FOR_SECONDS`). Closing both
-needs the memory tools in a process the shell cannot reach.
+The agent's exec shell runs only plain `stack` lines (`allow_patterns` in
+the agent's config), so it cannot read the key from the runtime's
+environment, keep a command's signature, or run this file to sign.
 """
 
 from __future__ import annotations
@@ -118,7 +114,8 @@ def signed_people(signed: str, key: str, *, now: float) -> str:
         signed_people(sign(["marge"], key, now=t), key, now=t + 600)   # ""
     """
     listening, expires, mac = (signed.split(":") + ["", ""])[:3]
-    if not key or not expires.isdigit() or int(expires) < now:
+    # `isdigit` alone is true for "²", which `int` refuses.
+    if not key or not (expires.isascii() and expires.isdigit()) or int(expires) < now:
         return ""
     # SAFETY: a constant-time compare, so the answer's timing says nothing of the mac.
     if not hmac.compare_digest(mac.encode(), _mac(key, listening, int(expires)).encode()):

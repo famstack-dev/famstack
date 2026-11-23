@@ -360,13 +360,33 @@ the key, so the model's shell cannot sign people of its choice. The
 admin's own commands on the Mac do not pass through the API, so they keep
 the view that reads every card.
 
-Limits. The exec shell runs in the runtime's container as the same user.
-It can read the key from the runtime's environment (`/proc/1/environ`), and
-sign any people with `agent_audience.sign`, which is on the container's
-`PYTHONPATH` (`/app/shared`). It can also read a concurrent command's
-signature from that command's `/proc/<pid>/environ`. A command's own signature is in its environment, so a shell can keep
-one and use it in another room until it expires. Closing both needs the
-memory tools in a process the shell cannot reach.
+What the exec shell runs is limited to plain `stack` lines: `stack`, then
+words and quoted text, with no `$`, backquote, redirection, pipe, `;`, `&`
+or wildcard outside quotes. nanobot's exec guard refuses every other line.
+So the shell reads neither the key in the runtime's environment
+(`/proc/1/environ`) nor a command's signature, and runs no Python that
+could sign. nanobot's file tools stay in the agent's workspace, which holds
+neither.
+
+A list with open items is deleted only after the person said yes. The
+agent's `list_edit` tool asks first, and after a yes in a later message it
+signs a confirmation for that one list, valid for a minute, with the same
+key (`stack.agent_confirm`). The host API runs `memory list delete` with
+`--yes`, in any spelling the list command accepts, only with that
+confirmation. The shell cannot make one, because the key is not in its
+environment. A reminder never runs such a delete, because the scheduler
+runs it later without a person's yes. The API reads every agent line as the
+command reads it (`stack.plugins.plugin_words`), so a `--json` between the
+command's words hides nothing from these rules.
+
+What one chat says stays in that chat. nanobot keeps each chat in its own
+session, outside the workspace. The runtime writes nothing that holds more
+than one chat into the workspace: no shared history of summaries, no file
+from `write_file`, `edit_file` or `apply_patch` except a memory page through
+the memory store. A chat's file and message tools reach only the
+attachments of that chat. Each start moves a shared history an earlier
+release left in the workspace to `chat-archive/` in the agent's data, and
+deletes nothing.
 
 No part of the memory is mounted into the agent's container. nanobot's file tools
 (`read_file`, `grep`, `find_files`, `list_dir`) and its exec shell read

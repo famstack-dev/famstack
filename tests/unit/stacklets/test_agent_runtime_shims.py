@@ -646,10 +646,27 @@ def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
     mean a moved agent loop silently removed memory_search too, and
     the agent would lose vault access over an unrelated upgrade.
     """
-    mods = nanobot(drop="nanobot.agent.loop.AgentLoop")
+    mods = nanobot(drop="nanobot.runtime_context.RuntimeContextBlock")
 
     assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
                                  "MemoryHistoryTool", "ListEditTool", "CalendarTool"}
+
+
+@pytest.mark.parametrize("symbol", (
+    "nanobot.agent.memory.MemoryStore",
+    "nanobot.agent.loop.AgentLoop",
+    "nanobot.agent.tools.path_utils.resolve_workspace_path",
+    "nanobot.agent.tools.filesystem.WriteFileTool",
+))
+def test_a_moved_symbol_of_the_own_chat_gates_stops_the_agent(nanobot, symbol):
+    """The own-chat gates are the one shim that does not fail soft.
+
+    Without them one chat's words reach another (the shared history, every
+    chat's attachments, files written into the shared workspace), so an
+    agent that cannot attach them stops instead of answering.
+    """
+    with pytest.raises(SystemExit):
+        nanobot(drop=symbol)
 
 
 def test_the_stub_can_actually_express_a_detached_shim(nanobot):
@@ -798,14 +815,15 @@ def test_a_preview_stays_a_preview(nanobot, monkeypatch):
 
 
 def test_one_patch_may_touch_a_page_and_an_ordinary_file(nanobot, monkeypatch):
-    """Mixed edits are normal, and neither half may be dropped.
+    """Mixed edits are normal, and neither half may be dropped silently.
 
-    A patch that silently ignored its non-vault edits (or its vault ones)
-    would report success for work it never did.
+    The page reaches the store; the ordinary file is refused, and the
+    answer says so, because the workspace is read by every chat.
     """
     import asyncio
 
     mods = nanobot()
+    import own_chat
     import vault_write
 
     monkeypatch.setattr(vault_write, "patch_page",
@@ -818,13 +836,8 @@ def test_one_patch_may_touch_a_page_and_an_ordinary_file(nanobot, monkeypatch):
     ]))
 
     assert "stored family/camping/todos.md" in answer, "the page must reach the store"
-
-    # The stub echoes the edits it was handed, so its line says what the
-    # filesystem was asked to do — which must be the ordinary file and
-    # nothing else. Writing a page through both paths would double-apply it.
-    stock = next(line for line in answer.splitlines() if line.startswith("stock patch"))
-    assert "memory/notes.md" in stock
-    assert "camping" not in stock
+    assert own_chat.WRITE_REFUSAL in answer
+    assert "stock patch" not in answer
 
 
 def test_an_edit_file_is_pointed_at_the_two_that_work(nanobot):
@@ -842,24 +855,25 @@ def test_an_edit_file_is_pointed_at_the_two_that_work(nanobot):
     assert "family/camping/todos.md" in answer
 
 
-def test_files_outside_the_vault_keep_stock_behaviour(nanobot):
-    """The agent's own workspace notes are not the family's memory.
+def test_files_outside_the_vault_are_not_written(nanobot):
+    """The agent's workspace is read by every chat, so nothing is written there.
 
-    A shim that swallowed every write would break scratch files and cron
-    scripts, so the routing has to be narrow and this pins that it is.
+    A note or skill written in one chat would be read, or put into the
+    prompt, in every other chat. Only a memory page is written, through
+    the memory store.
     """
     import asyncio
+
+    import own_chat
 
     mods = nanobot()
     write_file, edit_file, apply_patch = _write_tools(mods)
 
     assert asyncio.run(write_file().execute(
-        path="memory/notes.md", content="x")) == "stock write memory/notes.md"
-    assert asyncio.run(edit_file().execute(
-        path="memory/notes.md")) == "stock edit memory/notes.md"
-    assert "stock patch" in asyncio.run(apply_patch().execute(
-        edits=[{"path": "memory/notes.md", "action": "replace"}]))
-
+        path="memory/notes.md", content="x")) == own_chat.WRITE_REFUSAL
+    assert asyncio.run(edit_file().execute(path="memory/notes.md")) == own_chat.WRITE_REFUSAL
+    assert asyncio.run(apply_patch().execute(edits=[
+        {"path": "memory/notes.md", "action": "add", "new_text": "y"}])) == own_chat.WRITE_REFUSAL
 
 # ── the people in the room go with each read ─────────────────────────────
 #

@@ -42,6 +42,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from agent_audience import AUDIENCE_KEY, listeners, sign
+from agent_confirm import CONFIRM_ENV
 
 __all__ = ["METADATA_KEY", "AUDIENCE_ENV", "people_in", "with_people", "audience_env"]
 
@@ -86,9 +87,11 @@ def audience_env(env: dict[str, str], people: Iterable[str]) -> dict[str, str]:
     key; without it when nobody is known or the runtime has no key.
 
     A value from the container's own environment never stands in, and the
-    key itself is never in what comes back.
+    key itself is never in what comes back, nor a confirmation to delete a
+    list: only `list_edit` adds one, to its own command (`agent_confirm`).
     """
-    env = {name: value for name, value in env.items() if name not in (AUDIENCE_ENV, AUDIENCE_KEY)}
+    env = {name: value for name, value in env.items()
+           if name not in (AUDIENCE_ENV, AUDIENCE_KEY, CONFIRM_ENV)}
     key = os.environ.get(AUDIENCE_KEY, "")
     people = list(people)
     if key and listeners(people):

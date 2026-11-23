@@ -1675,6 +1675,8 @@ Only APFS or HFS+ disks attached via USB or Thunderbolt. Network shares (SMB/NFS
 
 `~/famstack-data` holds every byte of user data. Even with the backup stacklet running you may want Time Machine or `restic` against this directory for full coverage (databases, AI model caches).
 
+The agent keeps its chats in `~/famstack-data/agent/`. The folder `chat-archive/` there holds the shared history of the chats that earlier releases wrote. Each start of the agent moves that history out of the agent's reach, because every chat could read it. Nothing reads `chat-archive/` after the move. Back it up with the rest of the folder, or delete it.
+
 What is **not** in `~/famstack-data` and needs separate handling:
 
 - `stack.toml`, `users.toml`, `.stack/secrets.toml` in the repo. Small but irreplaceable. Gitignored on purpose, so they will not survive a fresh `git clone`.

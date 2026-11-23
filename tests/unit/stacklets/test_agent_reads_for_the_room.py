@@ -29,9 +29,12 @@ Rows (the first four are the card's behavior, the fifth is the admin's):
      nothing of Marge's.
  11. The brief: it knows the speaker's profile and the room's topic, read
      for the room's people.
-
-A last row pins a known limit, strict xfail: a shell that reads the
-runtime's own environment holds its key, and signs any people with it.
+ 12. What is said in one chat stays in that chat: no tool of Bart's chat
+     (read_file, list_dir, grep, find_files, exec, message) returns a word
+     of Marge's own chat, of what an earlier release kept for every chat,
+     or of the runtime's key; no write leaves her words where another chat
+     reads them; and every `stack` line Stacky is told to run still runs.
+     These rows drive nanobot's real tools (`nanobot_agent.py`).
 
 The one seam: `Room` is how a test says who is in the room. A message
 carries the people in its room in its metadata (`room_people.py`, filled
@@ -46,11 +49,9 @@ runtime's shims, which sign the room's people with the runtime's key
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import importlib
 import importlib.machinery
 import importlib.util
-import io
 import os
 import shlex
 import socket
@@ -67,6 +68,10 @@ import pytest
 
 from tests.loopback import serving
 from tests.memory.unit.instance import running_memory
+from stack.agent_audience import AUDIENCE_KEY, sign
+from stack.agent_confirm import CONFIRM_ENV, confirm_delete
+from tests.unit.stacklets.nanobot_agent import RUNTIME_KEY as AGENT_PROCESS_KEY
+from tests.unit.stacklets.nanobot_agent import STACK_RAN, fabricated_home, running_agent
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -255,6 +260,14 @@ class Stacky:
         return asyncio.run(sys.modules["list_tool"].ListEditTool().execute(
             op=op, list=list_, items=items))
 
+    def deletes_list(self, list_: str, *, confirmed: bool | None = None,
+                     turn: str = "t1") -> str:
+        """What the `list_edit` tool answers to deleting `list_` in the
+        message `turn` of the room, `confirmed` as the model passes it."""
+        self.request.turn_id = turn
+        return asyncio.run(sys.modules["list_tool"].ListEditTool().execute(
+            op="delete", list=list_, confirmed=confirmed))
+
 
 def host_api(memory, api, shim):
     """The host API's side of the shim's wire, as a handler for `serving`.
@@ -289,17 +302,16 @@ def host_api(memory, api, shim):
 
 
 def run_command(memory, args: list[str]) -> tuple[int, str]:
-    """`./stack <args>` on the memory's instance: its exit code and what it printed."""
-    printed = io.StringIO()
-    code, answer = 0, {}
-    with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(printed):
-        try:
-            answer = memory.stack.run_cli_command(args[0], args[1], args[2:]) or {}
-        except SystemExit as stop:
-            code = stop.code if isinstance(stop.code, int) else 1
-    if "error" in answer:
-        code = code or 1
-    return code, printed.getvalue() + str(answer.get("error", ""))
+    """`./stack <args>` on the memory's instance, as `handle_plaintext` runs
+    it: the CLI's real entry point in a process of its own, so the API's
+    rules are tested against the reading of the line that runs (`main()`
+    takes `--json` out, for one). Its exit code and what it printed."""
+    done = subprocess.run(
+        [sys.executable, "-m", "stack", *args], capture_output=True, text=True, timeout=60,
+        cwd=str(REPO_ROOT),
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "lib"),
+             "STACK_DIR": str(memory.stack.instance_dir)})
+    return done.returncode, done.stdout or done.stderr
 
 
 @pytest.fixture
@@ -618,12 +630,13 @@ def _agent_mounts(compose_text: str, data_dir: Path = DATA_DIR) -> list[tuple[Pa
 
 
 # What the agent's container needs from the host, and nothing else: its own
-# data dir, its runtime shims, the two shared modules and the `stack` shim.
+# data dir, its runtime shims, the three shared modules and the `stack` shim.
 AGENT_NEEDS = {
     DATA_DIR / "agent",
     AGENT_DIR / "runtime",
     REPO_ROOT / "lib" / "stack" / "name_trigger.py",
     REPO_ROOT / "lib" / "stack" / "agent_audience.py",
+    REPO_ROOT / "lib" / "stack" / "agent_confirm.py",
     AGENT_DIR / "client" / "stack",
 }
 
@@ -842,19 +855,390 @@ def test_a_room_nobody_is_known_in_gets_no_brief_from_the_memory(stacky, camping
     assert "blue vase" not in brief and "packliste" not in brief
 
 
-# ── A known limit ────────────────────────────────────────────────────
+# ── 12. What is said in one chat stays in that chat ──────────────────
+#
+# These rows drive nanobot's own tools, as the gateway registers them under
+# the shipped config.json and runtime, in a process of their own
+# (`tests/unit/stacklets/nanobot_agent.py`). The agent's home holds what
+# Marge said in her own chat (its session, a summary nanobot's
+# consolidation archives) and what an earlier release left in the home
+# (the shared history, Dream's archive, a write buffer, an attachment of
+# hers). Bart then asks Stacky for any of it, by every tool the model has.
 
-@pytest.mark.xfail(strict=True, reason=(
-    "the exec shell runs as the runtime's user: it can read the key from the runtime's "
-    "environment (/proc/1/environ) and sign with agent_audience.sign, which is on PYTHONPATH"))
-def test_a_shell_that_reads_the_runtimes_environment_reads_nothing_of_marges(stacky):
-    """Given Bart's chat, when the shell takes the key from the runtime's own
-    environment and signs Marge as the audience, then it should read nothing
-    of hers. It does today: this row turns green, and fails as strict, the
-    day the memory tools run where the shell cannot reach them."""
-    from stack.agent_audience import sign
-    key = os.environ["STACK_AUDIENCE_KEY"]   # what /proc/1/environ holds in the container
-    answer = stacky.in_room(BARTS_CHAT).execs(
-        "memory find gift", STACK_AUDIENCE=sign(["marge"], key, now=time.time()))
+MARGES_ROOM = "!marge-and-stacky:simpson"
+BARTS_ROOM = "!bart-and-stacky:simpson"
 
-    assert not shows(answer, MARGES_CARD)
+# Each is said or kept in one place only, so an answer that holds it came from there.
+SAID_IN_HER_CHAT = "bowling bag for Homer"
+SUMMARY_OF_HER_CHAT = "Marge plans the surprise party"
+OLD_SHARED_HISTORY = "Rusty Barnacle on the twelfth"
+OLD_DREAM_NOTE = "skateboard with flames"
+OLD_WRITE_BUFFER = "Bleeding Gums Murphy notes"
+HER_ATTACHMENT = "Geheime Geschenkliste von Marge"
+EVERY_WORD = (SAID_IN_HER_CHAT, SUMMARY_OF_HER_CHAT, OLD_SHARED_HISTORY, OLD_DREAM_NOTE,
+              OLD_WRITE_BUFFER, HER_ATTACHMENT, AGENT_PROCESS_KEY)
+
+FAMILY_FILE = "rezepte.md"
+FAMILY_TEXT = "Grandma's meatloaf: 2 eggs"
+
+
+def _what_an_earlier_release_left(home: Path) -> None:
+    """The files a home of today's release holds after a few weeks."""
+    nanobot = home / ".nanobot"
+    memory = nanobot / "workspace" / "memory"
+    memory.mkdir(parents=True)
+    (memory / "history.jsonl").write_text(
+        '{"cursor": 1, "timestamp": "2026-11-20 10:00", "content": "'
+        + OLD_SHARED_HISTORY + '", "session_key": "matrix:' + MARGES_ROOM + '"}\n')
+    (memory / ".cursor").write_text("1")
+    (memory / ".dream_cursor").write_text("1")
+    (nanobot / "dream-archive").mkdir()
+    (nanobot / "dream-archive" / "USER.md").write_text(f"- Bart gets a {OLD_DREAM_NOTE}\n")
+    (nanobot / ".write-buffer").write_text(f"# Geschenke\n- {OLD_WRITE_BUFFER}\n")
+    media = nanobot / "media" / "matrix"
+    media.mkdir(parents=True)
+    (media / "AbCdEf_geschenke.txt").write_text(HER_ATTACHMENT)
+    # Stands in for /proc/<pid>/environ: a file outside the workspace that
+    # the runtime's user can read and that holds the runtime's key. macOS
+    # has no /proc; on Linux the rows below also try the real one.
+    (home / "runtime.environ").write_text(f"STACK_AUDIENCE_KEY={AGENT_PROCESS_KEY}\n")
+    (nanobot / "workspace" / FAMILY_FILE).write_text(FAMILY_TEXT)
+
+
+@pytest.fixture(scope="module")
+def agent(tmp_path_factory):
+    """Stacky's tools after Marge talked to it in her own chat."""
+    root = tmp_path_factory.mktemp("agent")
+    home = fabricated_home(root)
+    _what_an_earlier_release_left(home)
+    with running_agent(root, home) as agent:
+        attachment = str(agent.nanobot / "media" / "matrix" / "AbCdEf_geschenke.txt")
+        agent.said(MARGES_ROOM, "marge", f"Please remember: the {SAID_IN_HER_CHAT}.",
+                   media=[attachment])
+        agent.summarised(MARGES_ROOM, f"{SUMMARY_OF_HER_CHAT} with a {SAID_IN_HER_CHAT}.")
+        yield agent
+
+
+def _bart(agent):
+    return agent.in_room(BARTS_ROOM, "bart", ["bart"])
+
+
+def _marge(agent):
+    return agent.in_room(MARGES_ROOM, "marge", ["marge"])
+
+
+def _her_session(agent) -> str:
+    """The file nanobot keeps Marge's chat in (named by its session key, encoded)."""
+    return str(next(p for p in (agent.nanobot / "sessions").rglob("*.jsonl")
+                    if SAID_IN_HER_CHAT in p.read_text()))
+
+
+# The tool calls a model makes when asked for "any file of yours".
+BARTS_ASKS = {
+    "read_file the shared history": lambda a: _bart(a).calls(
+        "read_file", path="memory/history.jsonl"),
+    "read_file her session": lambda a: _bart(a).calls("read_file", path=_her_session(a)),
+    "read_file Dream's archive": lambda a: _bart(a).calls(
+        "read_file", path=str(a.nanobot / "dream-archive" / "USER.md")),
+    "read_file the write buffer": lambda a: _bart(a).calls(
+        "read_file", path=str(a.nanobot / ".write-buffer")),
+    "read_file her attachment": lambda a: _bart(a).calls(
+        "read_file", path=str(a.nanobot / "media" / "matrix" / "AbCdEf_geschenke.txt")),
+    "read_file the runtime's environment": lambda a: _bart(a).calls(
+        "read_file", path=str(a.home / "runtime.environ")),
+    "read_file /proc/1/environ": lambda a: _bart(a).calls("read_file", path="/proc/1/environ"),
+    "list_dir the agent's home": lambda a: _bart(a).calls("list_dir", path=str(a.nanobot),
+                                                          recursive=True),
+    "list_dir the media": lambda a: _bart(a).calls(
+        "list_dir", path=str(a.nanobot / "media" / "matrix")),
+    "grep the workspace": lambda a: _bart(a).calls("grep", pattern="Marge|Bart|Homer", path="."),
+    "grep the agent's home": lambda a: _bart(a).calls(
+        "grep", pattern="Marge|Bart|Homer|STACK_", path=str(a.home)),
+    "find_files the agent's home": lambda a: _bart(a).calls(
+        "find_files", pattern="*", path=str(a.nanobot)),
+    "exec cat the shared history": lambda a: _bart(a).execs("cat memory/history.jsonl"),
+    "exec cat her session": lambda a: _bart(a).execs(f"cat {_her_session(a)}"),
+    "exec grep the home": lambda a: _bart(a).execs("grep -r Marge ~"),
+    "exec the runtime's environment": lambda a: _bart(a).execs(
+        "cat ~/runtime.environ /proc/*/environ"),
+    "exec python reads a file": lambda a: _bart(a).execs(
+        "python3 -c \"print(open('memory/history.jsonl').read())\""),
+    "exec a file behind a stack line": lambda a: _bart(a).execs(
+        "stack memory list show; cat memory/history.jsonl"),
+    "exec a file inside a stack line": lambda a: _bart(a).execs(
+        "stack memory card \"$(cat memory/history.jsonl)\""),
+    "exec a file on its own line": lambda a: _bart(a).execs(
+        "stack memory list show\ncat memory/history.jsonl"),
+    "exec a file through a pipe": lambda a: _bart(a).execs(
+        "stack memory list show | cat ../dream-archive/USER.md"),
+}
+
+
+@pytest.mark.parametrize("ask", BARTS_ASKS)
+def test_in_barts_chat_no_tool_returns_a_word_of_marges_chat(agent, ask):
+    """Given Marge talked to Stacky in her own chat, and an earlier release
+    left the shared history, Dream's archive and a write buffer in the
+    agent's home, when Bart's chat asks for any file of the agent, then no
+    answer holds a word of hers, and none holds the runtime's key."""
+    answer = BARTS_ASKS[ask](agent)
+
+    assert not [word for word in EVERY_WORD if word in answer], answer
+
+
+def test_marges_chat_keeps_its_own_conversation(agent):
+    """Given Marge talked to Stacky in her own chat, then her chat's session
+    still holds what she said: a chat remembers itself as before."""
+    history = agent.request(op="history", room=MARGES_ROOM)["history"]
+
+    assert SAID_IN_HER_CHAT in history
+
+
+def test_a_summary_of_one_chat_is_kept_in_no_file_another_chat_reaches(agent):
+    """Given nanobot's consolidation archived a summary of Marge's chat, then
+    no file in the agent's workspace holds it: the workspace is all the file
+    tools reach."""
+    holders = [p for p in agent.workspace.rglob("*")
+               if p.is_file() and SUMMARY_OF_HER_CHAT in p.read_text(errors="ignore")]
+
+    assert holders == []
+
+
+def test_in_her_own_chat_marge_reads_her_attachment(agent):
+    """Given Marge sent a file in her own chat, then her chat may read it."""
+    answer = _marge(agent).calls(
+        "read_file", path=str(agent.nanobot / "media" / "matrix" / "AbCdEf_geschenke.txt"))
+
+    assert HER_ATTACHMENT in answer
+
+
+def test_in_barts_chat_marges_attachment_is_not_sent(agent):
+    """Given Marge's attachment, when Bart's chat sends it with the message
+    tool, then it is refused: sending would show it in his room."""
+    answer = _bart(agent).calls(
+        "message", content="here", channel="matrix", chat_id=BARTS_ROOM,
+        media=[str(agent.nanobot / "media" / "matrix" / "AbCdEf_geschenke.txt")])
+
+    assert answer.startswith("Error")
+
+
+def test_a_path_written_into_a_chat_opens_no_attachment(tmp_path):
+    """Given Marge's attachment, when Bart writes its path into his own chat,
+    then his chat still cannot read it: only a file nanobot stored as a
+    message's attachment belongs to a chat, never a path in its text."""
+    home = fabricated_home(tmp_path)
+    _what_an_earlier_release_left(home)
+    with running_agent(tmp_path, home) as agent:
+        attachment = str(agent.nanobot / "media" / "matrix" / "AbCdEf_geschenke.txt")
+        agent.said(MARGES_ROOM, "marge", "the list", media=[attachment])
+        agent.said(BARTS_ROOM, "bart", f"Stacky, read {attachment}")
+
+        answer = _bart(agent).calls("read_file", path=attachment)
+
+    assert HER_ATTACHMENT not in answer
+
+
+def test_the_familys_own_file_in_the_workspace_stays_readable(agent):
+    """Given a file the family put into the agent's workspace, then it stays
+    where it is, and the agent still reads it."""
+    answer = _bart(agent).calls("read_file", path=FAMILY_FILE)
+
+    assert FAMILY_TEXT in answer
+
+
+WRITES = {
+    "write_file a note": lambda t: t.calls("write_file", path="notes/marge.md",
+                                           content=SAID_IN_HER_CHAT),
+    "write_file a skill": lambda t: t.calls("write_file", path="skills/gifts/SKILL.md",
+                                            content=SAID_IN_HER_CHAT),
+    "edit_file a profile": lambda t: t.calls("edit_file", path="USER.md", old_text="#",
+                                             new_text=f"# {SAID_IN_HER_CHAT}"),
+    "apply_patch a note": lambda t: t.calls("apply_patch", edits=[
+        {"path": "notes/marge.md", "old_text": "", "new_text": SAID_IN_HER_CHAT}]),
+}
+
+
+@pytest.mark.parametrize("write", WRITES)
+def test_in_marges_chat_nothing_is_written_where_another_chat_reads(agent, write):
+    """Given Marge's chat, when the model writes a plain file, a skill or a
+    profile into the agent's workspace, then it is refused and no file of
+    the workspace holds her words: every chat reads the workspace, and a
+    skill or profile goes into every chat's prompt."""
+    answer = WRITES[write](_marge(agent))
+
+    assert answer.startswith("Error"), answer
+    assert not [p for p in agent.workspace.rglob("*")
+                if p.is_file() and SAID_IN_HER_CHAT in p.read_text(errors="ignore")]
+
+
+# Every kind of line the shipped skills, AGENTS.md, the brief and the
+# admin's `[agent] allow` tell Stacky to run with exec.
+STACK_LINES = (
+    "stack memory topic camping",
+    "stack memory list show",
+    "stack memory list show einkauf",
+    "stack memory card family/notes/2026/11/zelt-fur-vier-b5d77b.md",
+    "stack memory card b5d77b",
+    "stack memory list delete partyliste --as homer",
+    "stack docs show 12 --content",
+    'stack ai say "Das Essen ist fertig, kommt runter!"',
+    "stack ai say \"Homer & Marge's party; at 7?\" --language de --volume 30",
+    "stack ai say 'Der Donut kostet $2, Homer' --language en",
+    "stack kettle status",
+)
+
+
+@pytest.mark.parametrize("line", STACK_LINES)
+def test_the_stack_lines_stacky_is_told_to_run_still_run(agent, line):
+    """Given a line the skills or the admin's allowed commands tell Stacky
+    to run with exec, then it reaches the `stack` client with its words."""
+    answer = _bart(agent).execs(line)
+
+    assert answer.startswith(f"{STACK_RAN} {line.split(' ', 1)[1].split(' ')[0]}"), answer
+
+
+# ── 13. Only the person's yes deletes a list ───────────────────────────
+#
+# The list store deletes a list with open items only with `--yes`. Only
+# `list_edit` may pass it, after the person said yes in a later message:
+# the runtime signs that confirmation for the one list, and the host API
+# runs a `--yes` only with it. A shell line cannot make one, because the
+# key is not in its environment.
+
+PARTY_LIST = "family/lists/partyliste.md"
+
+
+@pytest.fixture
+def party_list(memory):
+    """The family's party list with two open items, beside the shopping list."""
+    memory.edited_in_forgejo({PARTY_LIST: "---\ntype: list\ntitle: Partyliste\n---\n\n"
+                                          "- [ ] Luftballons\n- [ ] Girlanden\n",
+                              "family/lists/einkauf.md":
+                              "---\ntype: list\ntitle: Einkauf\n---\n\n- [ ] Milk\n"},
+                             by="marge", subject="a list for the party")
+
+
+def _party_list_is_there(memory) -> bool:
+    return PARTY_LIST in memory.pages("family/lists")
+
+
+def test_after_the_persons_yes_the_tool_deletes_the_list(stacky, memory, party_list):
+    """Given the party list with open items, when Homer asks to delete it and
+    says yes in his next message, then `list_edit` deletes it."""
+    homer = stacky.in_room(Room("!family:simpson", FAMILY_ROOM.people, "homer"))
+    homer.deletes_list("partyliste", turn="t1")
+    assert _party_list_is_there(memory)
+
+    homer.deletes_list("partyliste", confirmed=True, turn="t2")
+
+    assert not _party_list_is_there(memory)
+
+
+SHELL_CONFIRMS = (
+    "memory list delete partyliste --as homer --yes",
+    "memory list delete partyliste --as homer '--yes'",
+    "memory 'list' delete partyliste --as homer --yes",
+    "memory list delete partyliste --as 'homer\n' --yes",
+    "memory list delete --ye partyliste --as homer",
+    # The CLI takes `--json` out wherever it stands, before the command reads its words.
+    "memory list --json delete partyliste --as homer --yes",
+    "memory list delete --json partyliste --as homer --yes",
+    "memory list delete partyliste --as homer --yes --json",
+)
+
+
+@pytest.mark.parametrize("line", SHELL_CONFIRMS)
+def test_the_shell_cannot_confirm_deleting_a_list(stacky, memory, party_list, line):
+    """Given the party list with open items, when the model runs a delete
+    with `--yes` through exec, in any spelling the shell reads as one, then
+    the list stays: the person was never asked."""
+    stacky.in_room(FAMILY_ROOM).execs(line)
+
+    assert _party_list_is_there(memory)
+
+
+def _confirmed_line(list_: str, *, now: float) -> str:
+    """A delete of the party list as the shim sends it, with a confirmation
+    the runtime signed for `list_` at `now`."""
+    people = sign(FAMILY_ROOM.people, RUNTIME_KEY, now=time.time())
+    confirmation = confirm_delete(list_, RUNTIME_KEY, now=now)
+    return (f"audience {people} confirmed {confirmation} "
+            "memory list delete partyliste --yes --as homer")
+
+
+def test_a_confirmation_for_this_list_deletes_it(stacky, memory, party_list):
+    """The control for the two below: the line they change deletes the list."""
+    stacky.writes_line(_confirmed_line("partyliste", now=time.time()))
+
+    assert not _party_list_is_there(memory)
+
+
+def test_a_confirmation_for_another_list_deletes_nothing(stacky, memory, party_list):
+    """Given Homer confirmed deleting the shopping list, then that
+    confirmation does not delete the party list."""
+    stacky.writes_line(_confirmed_line("einkauf", now=time.time()))
+
+    assert _party_list_is_there(memory)
+
+
+def test_a_confirmation_that_is_over_deletes_nothing(stacky, memory, party_list):
+    """Given a confirmation kept from an hour ago, then it deletes nothing."""
+    stacky.writes_line(_confirmed_line("partyliste", now=time.time() - 3600))
+
+    assert _party_list_is_there(memory)
+
+
+def test_the_key_is_not_in_the_shells_environment(stacky, monkeypatch):
+    """Given the runtime holds the key, and a confirmation in its own
+    environment, then neither reaches a command the model runs with exec."""
+    monkeypatch.setenv(CONFIRM_ENV, confirm_delete("partyliste", RUNTIME_KEY, now=time.time()))
+
+    env = stacky.in_room(FAMILY_ROOM).exec_env()
+
+    assert AUDIENCE_KEY not in env and CONFIRM_ENV not in env
+    assert not any(RUNTIME_KEY in value for value in env.values())
+
+
+def test_a_command_exec_runs_gets_neither_the_key_nor_a_confirmation(agent):
+    """Given nanobot's own exec tool with the agent's runtime, when the model
+    runs a `stack` line, then its environment holds no audience key and no
+    confirmation to delete a list."""
+    answer = _bart(agent).execs("stack memory list show")
+
+    assert answer.startswith(STACK_RAN)
+    assert AGENT_PROCESS_KEY not in answer
+    assert AUDIENCE_KEY not in answer and CONFIRM_ENV not in answer
+
+
+def test_a_reminder_cannot_delete_a_list_later(stacky, memory, party_list):
+    """Given the party list with open items, when the model sets a reminder
+    that deletes it with `--yes`, then the scheduler's run of that reminder
+    leaves the list: a reminder is never the person's yes, and it runs as
+    the admin, past the host API."""
+    added = stacky.in_room(FAMILY_ROOM).execs(
+        'core schedule add remind-party "in 10m" -- '
+        "memory list delete partyliste --as homer --yes")
+
+    ran = run_command(memory, ["core", "schedule", "run", "remind-party"])
+
+    assert _party_list_is_there(memory), (added, ran)
+
+
+@pytest.mark.parametrize("signature", ("\u00b2:abc", "\u0663:abc"))
+def test_a_confirmation_with_digits_of_another_script_is_refused(stacky, memory, party_list,
+                                                                 signature):
+    """Given an expiry in digits `int` does not read (a superscript two, an
+    Arabic-Indic three), then the API refuses the delete and answers."""
+    people = sign(FAMILY_ROOM.people, RUNTIME_KEY, now=time.time())
+    answer = stacky.writes_line(f"audience {people} confirmed {signature} "
+                                "memory list delete partyliste --yes --as homer")
+
+    assert "list_edit" in answer
+    assert _party_list_is_there(memory)
+
+
+def test_an_audience_with_digits_of_another_script_reads_nothing(stacky):
+    """Given a signed audience whose expiry is not ASCII digits, then the
+    API answers with a refusal instead of failing on the line."""
+    answer = stacky.writes_line("audience marge:\u00b2:abc memory find gift")
+
+    assert "error" in answer
