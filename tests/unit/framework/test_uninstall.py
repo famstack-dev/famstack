@@ -83,13 +83,13 @@ class TestUninstallSelectivity:
         (tmp_path / "data" / "beta").mkdir(parents=True)
 
         destroyed = []
-        original_destroy = stck.destroy
+        original_destroy = stck.tear_down
 
         def tracking_destroy(sid):
             destroyed.append(sid)
             return original_destroy(sid)
 
-        stck.destroy = tracking_destroy
+        stck.tear_down = tracking_destroy
         args = Namespace(yes=True)
 
         terminal.types("")
@@ -108,13 +108,13 @@ class TestUninstallSelectivity:
         marker.touch()
 
         destroyed = []
-        original_destroy = stck.destroy
+        original_destroy = stck.tear_down
 
         def tracking_destroy(sid):
             destroyed.append(sid)
             return original_destroy(sid)
 
-        stck.destroy = tracking_destroy
+        stck.tear_down = tracking_destroy
         args = Namespace(yes=True)
 
         handle_uninstall(stck, args)
@@ -129,13 +129,13 @@ class TestUninstallSelectivity:
         stck = _make_env(tmp_path, ["alpha", "beta", "gamma"])
 
         destroyed = []
-        original_destroy = stck.destroy
+        original_destroy = stck.tear_down
 
         def tracking_destroy(sid):
             destroyed.append(sid)
             return original_destroy(sid)
 
-        stck.destroy = tracking_destroy
+        stck.tear_down = tracking_destroy
         args = Namespace(yes=True)
 
         # gamma has a stopped container in Docker
@@ -195,8 +195,8 @@ class TestUninstallNotFlag:
         (tmp_path / ".stack" / "ai.setup-done").touch()
 
         destroyed: list[str] = []
-        original_destroy = stck.destroy
-        stck.destroy = lambda sid: (destroyed.append(sid), original_destroy(sid))[1]
+        original_destroy = stck.tear_down
+        stck.tear_down = lambda sid: (destroyed.append(sid), original_destroy(sid))[1]
 
         args = Namespace(yes=True, exclude=["ai"])
 
