@@ -100,11 +100,13 @@ def _lists(topic: Card, found: list[ListCard]) -> list[dict]:
 def entry(card: Card) -> dict:
     """A note in full: its `text` (without the title and the sources), `title`,
     `day`, `sender` (who filed it), `sources` with their quotes, and `made`,
-    whether a model wrote the text (its sidecar records the prompt template)."""
+    whether a model wrote the text (its sidecar records the prompt template), and
+    `made_at`, when it did ("" for a note no model wrote)."""
     side = card.sidecar or {}
     made = side.get("made") or {}
     return item(card, text=_text(card), sender=str(side.get("filed_by") or card.meta.get("filed_by") or ""),
-                sources=_sources(card), made=bool(made.get("prompt_template")))
+                sources=_sources(card), made=bool(made.get("prompt_template")),
+                made_at=str(made.get("at") or "") if made.get("prompt_template") else "")
 
 
 def _sources(card: Card) -> list[dict]:

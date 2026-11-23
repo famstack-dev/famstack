@@ -192,7 +192,8 @@ def test_a_topics_page_shows_its_cards_people_and_senders(tools):
     page = opens(phone(tools, person="marge"), f"/memory/topic/{CAMPING}")
 
     assert page.texts("title") == ["Camping"]
-    assert set(cards_in(page, "cards")) == {TENT, OLDER_RECEIPT}
+    assert cards_in(page, "cards") == [OLDER_RECEIPT], "the notes are the entries"
+    assert set(cards_in(page, "entries")) == {TENT}
     assert {"/memory/person/lisa", "/memory/person/marge", "/memory/person/homer"} <= hrefs(page, "links")
     assert f"/memory/sender/{KWIK}" in hrefs(page, "links")
     assert f"/memory/topic/{CAMPING}" not in hrefs(page, "links"), "the topic is not its own link"
@@ -313,7 +314,7 @@ def test_another_persons_own_topic_says_what_to_do_instead(tools):
 def test_the_mac_reads_homers_own_topic(tools):
     page = opens(this_mac(tools), f"/memory/topic/{BOWLING}")
 
-    assert cards_in(page, "cards") == [BOWLING_NOTE]
+    assert set(cards_in(page, "entries")) == {BOWLING_NOTE}
 
 
 # ── The menu, German, navigation ──────────────────────────────────────────

@@ -25,3 +25,19 @@
 
 /* The states that say what to do: an empty topic, and a topic that is another person's own. */
 .topic-empty, .topic-refusal { max-width: 40rem; margin: var(--space-3, 1rem) 0; line-height: 1.5; }
+
+/* The entries: each note in full, with no box. ✦ beside the date marks the AI's text. */
+.entry { padding: 1rem 0 1.1rem; border-bottom: 1px solid var(--fs-border-light); }
+.entry:last-of-type { border-bottom: 0; }
+.entry-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--gray); }
+.entry-who { font-weight: 600; color: var(--dark); }
+.entry-title { margin: 0.35rem 0 0.2rem; font-size: 1.15rem; }
+.entry-title a { color: var(--dark); text-decoration: none; }
+.entry-later { margin: 0.2rem 0; font-size: 0.85rem; color: var(--secondary); }
+.entry-text { overflow-wrap: anywhere; }
+.entry-text > :first-child { margin-top: 0.3rem; }
+.entry-foot { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.4rem 1rem; margin-top: 0.6rem; font-size: 0.9rem; }
+.entry-messages { min-width: 0; }
+.entry-messages[open] { flex: 1 1 100%; order: 2; }
+.show-messages { min-height: var(--tap); display: inline-flex; align-items: center; color: var(--secondary); cursor: pointer; }
+.entry-open { min-height: var(--tap); display: inline-flex; align-items: center; }

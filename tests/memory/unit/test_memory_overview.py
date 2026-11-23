@@ -677,7 +677,7 @@ def _trip_files() -> dict[str, str]:
         "card_id": "note-trip-0", "filed_by": "marge",
         "sources": [{"role": "original", "person": "marge", "time": "2026-09-01T10:00:00Z",
                      "channel": "chat", "kind": "text", "id": "$E0"}],
-        "made": {"model": "qwen3", "prompt_template": "abc123"}})
+        "made": {"at": "2026-09-01T10:30:00Z", "model": "qwen3", "prompt_template": "abc123"}})
     items = "".join(f"- [ ] Item {i}\n" for i in range(7)) + "- [x] Done\n"
     files["family/trip/lists/packing.md"] = (
         "---\ntype: list\ncard_id: list-packing\ntitle: Packing\ntags:\n  - trip\n---\n\n" + items)
@@ -740,6 +740,7 @@ def test_the_newest_ten_entries_come_in_full_and_older_notes_stay_in_cards(trip)
     assert (oldest["title"], oldest["day"], oldest["sender"]) == ("Note 0", "2026-09-01", "marge")
     assert "Text of note 0." in oldest["text"]
     assert [s["quote"] for s in oldest["sources"]] == ["words 0"] and oldest["made"] is True
+    assert oldest["made_at"] == "2026-09-01T10:30:00Z" and page["entries"][0]["made_at"] == ""
     assert page["entries"][0]["made"] is False and page["entries"][0]["sources"] == []
     assert page["cards"]["count"] == 21
 

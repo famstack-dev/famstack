@@ -22,6 +22,7 @@ Pure: no I/O.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from html import escape
 
 from memory_home import addresses, sections
@@ -33,10 +34,11 @@ from memory_home.words import counted, words
 __all__ = ["sheet"]
 
 
-def sheet(answer: dict, context: Context, *, about: int | None) -> tuple[str, str]:
+def sheet(answer: dict, context: Context, *, about: int | None, media: Mapping | None = None) -> tuple[str, str]:
     """(the browser tab's title, the page's sheet) for the overview
     `answer` of one topic. `about` is how many of its cards are about the
-    person looking, None for a device that is no person's."""
+    person looking, None for a device that is no person's. `media` is the
+    media store's record of each file the entries draw (`topic.entries`)."""
     w = words(context.language)
     about_topic = answer.get("topic") or {}
     title = about_topic.get("title") or about_topic.get("id", "")
@@ -48,12 +50,22 @@ def sheet(answer: dict, context: Context, *, about: int | None) -> tuple[str, st
     if not total:
         return title, f'<article class="sheet home">{head}{topic_parts.states.empty(context)}</article>'
     shown = _without_itself(answer, about_topic.get("id", ""))
-    body = (sections.up_next(shown, context) + topic_parts.main_list(answer, context)
-            + sections.cards(shown, context)
+    notes = topic_parts.entries.section(answer, context, media=media or {}, names=context.names)
+    body = (sections.up_next(shown, context) + topic_parts.main_list(answer, context) + notes
+            + _cards(shown, context, has_notes=bool(notes))
             + pager(answer.get("cards") or {}, addresses.topic(about_topic.get("id", "")), context)
             + sections.links(shown, context))
     return title, (f'<article class="sheet home">{head}{topic_parts.chips(answer, context)}{topic_parts.panels(answer, context)}'
                    f'<div class="sections">{body}</div></article>')
+
+
+def _cards(answer: dict, context: Context, *, has_notes: bool) -> str:
+    """The cards list: every card as a row, or, when the entries section
+    draws the notes, the other cards only, and nothing when none is left."""
+    if not has_notes:
+        return sections.cards(answer, context)
+    rest = topic_parts.entries.without_notes(answer)
+    return sections.cards(rest, context) if rest["cards"]["items"] else ""
 
 
 def _whose(owner: str, context: Context) -> str:

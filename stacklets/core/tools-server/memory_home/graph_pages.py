@@ -38,6 +38,7 @@ from memory_home.items import Context
 from memory_home.looking import Looking, device_person
 from memory_home.menu import menu_of
 from memory_home.notices import NeverSetUp, no_answer, not_found
+from memory_home.topic import entries
 from memory_home.topic import states as topic_states
 from memory_home.words import words
 from memory_ui.pages import Answer
@@ -63,14 +64,16 @@ async def open_topic(topic_id: str, reads: Reads, looking: Looking, *, language:
                      never_set_up: NeverSetUp, part: int = 1) -> Answer:
     """`/memory/topic/<card id>`: one topic's cards (part `part`), people
     and senders, with how many are about the person looking."""
+    kept: dict = {}
+
     def draw(answer: dict, context: Context, mine: list[dict]) -> tuple[str, str]:
         about = (next((t.get("about", 0) for t in mine if t.get("id") == topic_id), 0)
                  if context.looker else None)
-        return topic_page.sheet(answer, context, about=about)
+        return topic_page.sheet(answer, context, about=about, media=kept)
 
     return await _open(f"topic/{topic_id}", addresses.topic(topic_id), draw,
                        reads, looking, language=language, never_set_up=never_set_up, part=part,
-                       refused=topic_states.not_yours)
+                       records=(entries.media_paths, kept), refused=topic_states.not_yours)
 
 
 async def open_sender(sender_id: str, reads: Reads, looking: Looking, *, language: str,
@@ -116,14 +119,16 @@ async def open_senders(reads: Reads, looking: Looking, *, language: str,
 
 async def _open(view: str, here: str, draw: Draw, reads: Reads, looking: Looking, *, language: str,
                 never_set_up: NeverSetUp, part: int = 1,
+                records: tuple[Callable[[dict], list[str]], dict] | None = None,
                 refused: Callable[[str], str] | None = None) -> Answer:
     """A graph page: the memory's overview `view` for the device's
     audience, part `part` of its list, drawn by `draw`, at the address
     `here`, the first part's, which the menu marks on every part. A 404
     from the memory is the "not found" page, or the page `refused` draws
     where a kind of page has its own (a topic: the same for a hidden one
-    and a missing one); no answer is the page that
-    says so."""
+    and a missing one); no answer is the page that says so. `records` is
+    for a page that draws the media store's files: the paths its answer
+    names, and the dict their records go into before `draw` runs."""
     (status, answer), names, menu = await asyncio.gather(reads.overview(view, part), reads.names(),
                                                          menu_of(reads, looking))
     person = device_person(looking, names)
@@ -136,6 +141,9 @@ async def _open(view: str, here: str, draw: Draw, reads: Reads, looking: Looking
         return await no_answer(looking, language=language, never_set_up=never_set_up)
     me = (answer.get("person") or {}).get("id", "")
     context = Context.of(answer, names, language=language, me=me, looker=person[0] if person else "")
+    if records:
+        paths = records[0](answer)
+        records[1].update(zip(paths, await asyncio.gather(*(reads.kept(p) for p in paths))))
     title, sheet = draw(answer, context, menu.topics)
     return Answer(200, document(sheet, title=title, language=language, here=here, person=person,
                                 menu=menu))
