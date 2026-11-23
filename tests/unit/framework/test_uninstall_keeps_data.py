@@ -213,8 +213,14 @@ def test_a_stack_toml_that_names_no_data_folder_keeps_the_secrets(
     default.parent.mkdir(parents=True)
     default.write_text("not this instance's")
 
-    _uninstall(checkout, answer="delete")
+    run = checkout.stack("uninstall", "--yes", answer="delete")
 
+    # A stack.toml that does not parse stops every command before it
+    # changes anything, the uninstall too, and names the file.
+    if config.startswith("[core\n"):
+        assert run.returncode == 1 and "does not parse" in run.stderr + run.stdout
+    else:
+        assert run.returncode == 0, run.stderr
     assert _family_files(tmp_path) == _as_written()
     assert _secrets(instance).get("photos", "DB_PASSWORD") == password
     assert default.read_text() == "not this instance's"
