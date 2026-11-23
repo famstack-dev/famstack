@@ -1251,6 +1251,10 @@ secrets. Any other answer, a closed terminal and Ctrl+C keep both. The
 secrets hold the passwords of the databases in the data folder, and a
 new install needs them to open the kept data.
 
+Without `stack.toml` the data folder is not known, because only
+`[core] data_dir` names it. An uninstall then asks no data question,
+deletes no data and keeps `secrets.toml`.
+
 ### Hooks
 
 Each lifecycle transition can trigger stacklet-specific hooks.
