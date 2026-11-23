@@ -16,7 +16,8 @@ A topic's lists are read and changed with `stack memory list`.
 `search` and `find` take it: only a page in a folder they may all read is
 shown or named (`stack.cards.audience.readable`), so a topic in Marge's own
 folder is not there in Bart's chat. Without it, every page is, as the admin
-sees it on the Mac.
+sees it on the Mac. A rename with `--audience` is refused: renaming is the
+admin's, and its plan names files in folders the audience may not read.
 
 A rename runs on memory's side of the bot runner, which plans it and
 commits it through the curator (`bot/cli/topic.py` has the whole plan);
@@ -37,10 +38,18 @@ from ._update import still_to_follow
 
 HELP = "Show a topic's overview, or rename a topic"
 
+RENAME_IS_THE_ADMINS = ("a topic is renamed by the admin on the Mac "
+                        "(`stack memory topic rename`), not for a room")
+
 
 def run(args, stacklet, config):
     args, audience = take_audience(args)
     if args[:1] == ["rename"]:
+        # SAFETY: an audience means the agent runs this for a room. A rename
+        # is the admin's decision, and its plan names every file it moves,
+        # also in a folder the room may not read, so it is refused here.
+        if audience is not None:
+            return {"error": RENAME_IS_THE_ADMINS}
         return rename(list(args[1:]), config)
     words = [a for a in args if not a.startswith("-")]
     if len(words) > 1 and words[1] in ("todo", "todos"):

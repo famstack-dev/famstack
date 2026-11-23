@@ -1765,9 +1765,8 @@ runtime = "nanobot"                   # the default
 ### What the agent may run
 
 The agent (the `agent` stacklet) runs `stack` commands through the core
-API, never the CLI itself. The API runs a fixed set of `memory` commands,
-`docs show` and `ai say`, plus the stacklet commands the admin lists in
-`stack.toml`:
+API, never the CLI itself. The API runs a fixed set of `memory` commands
+and `ai say`, plus the stacklet commands the admin lists in `stack.toml`:
 
 ```toml
 [agent]
@@ -1788,7 +1787,15 @@ allow = ["kettle"]                    # every command of the kettle stacklet
 - Anything allowed runs, including commands that change something. That
   is the admin's decision. Limits ("never above 80 degrees") belong in
   the command as checks, not in the agent's prompt.
-- One exception: a `messages` command that names its sender with `--as`
+- One exception: a `memory` or `docs` command runs only when
+  `stack.agent_audience` names it. `AUDIENCE_COMMANDS` read for the people
+  in the agent's room. `NO_PRIVATE_READS` read no person's own card. The
+  API refuses every other `memory` or `docs` command in every room, also
+  when `allow` names it. An example is `memory ask`, because it answers
+  from every person's own notes.
+- A reminder runs no command of `AUDIENCE_COMMANDS`, because the scheduler
+  runs it later without the people in the room.
+- A `messages` command that names its sender with `--as`
   runs only as `--as agent`. Allowing `messages` lets the agent send as
   itself or as the system account, never as a person; writing in a
   person's name stays a tool for the terminal.

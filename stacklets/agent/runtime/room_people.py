@@ -41,7 +41,7 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from agent_audience import AUDIENCE_KEY, listeners, sign
+from agent_audience import AUDIENCE_KEY, audience_of, sign
 from agent_confirm import CONFIRM_ENV
 
 __all__ = ["METADATA_KEY", "AUDIENCE_ENV", "people_in", "with_people", "audience_env"]
@@ -94,6 +94,6 @@ def audience_env(env: dict[str, str], people: Iterable[str]) -> dict[str, str]:
            if name not in (AUDIENCE_ENV, AUDIENCE_KEY, CONFIRM_ENV)}
     key = os.environ.get(AUDIENCE_KEY, "")
     people = list(people)
-    if key and listeners(people):
+    if key and audience_of(people):
         env[AUDIENCE_ENV] = sign(people, key, now=time.time())
     return env

@@ -223,6 +223,32 @@ def test_an_allowed_command_is_the_only_one_the_agent_sees(instance, tmp_path):
     assert "boil" not in skill
 
 
+def test_the_agent_is_not_told_of_a_memory_command_the_api_refuses(instance, tmp_path):
+    """Given `[agent] allow` names the whole memory stacklet, then the
+    agent's command list holds its commands that read for the room, and
+    not `memory ask`, which the API refuses in every room because it reads
+    every person's own notes."""
+    instance("memory")
+
+    write_command_skill(Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path),
+                        tmp_path / "workspace")
+
+    skill = skill_for(tmp_path).read_text()
+    assert "stack memory find" in skill
+    assert "stack memory ask" not in skill
+
+
+def test_an_entry_of_only_refused_memory_commands_gives_no_command_list(instance, tmp_path):
+    """Given `[agent] allow` names only `memory ask`, then the agent gets no
+    command list, as when nothing is allowed: nothing in it would run."""
+    instance("memory ask")
+
+    write_command_skill(Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path),
+                        tmp_path / "workspace")
+
+    assert not skill_for(tmp_path).parent.exists()
+
+
 def test_with_nothing_allowed_the_agent_gets_no_command_list(instance, tmp_path):
     """No list at all, rather than an empty one: the agent's prompt stays
     exactly as it is on an instance that never used `[agent] allow`."""
@@ -468,7 +494,7 @@ def test_asking_an_allowed_stacklet_for_its_help_still_works(instance, api):
 
 
 @pytest.mark.parametrize("command", [
-    "-- memory list show dates",
+    "-- memory lookup schule",
     "-- messages send chat hi --as agent",
     # An album, not a path: `--from` is a path only to `memory write`.
     "-- photos album holiday --from summer",

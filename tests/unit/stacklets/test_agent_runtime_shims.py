@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import sys
 import time
 import types
 
 import pytest
 
-from stack.agent_audience import signed_people
+from stack.agent_audience import signed_audience
+from stack.bot.microbot import MicroBot
 
 from pathlib import Path
 
@@ -921,6 +924,41 @@ def test_a_message_from_a_room_the_client_does_not_know_carries_no_people(nanobo
     assert "room_people" not in channel.handled[0]["metadata"]
 
 
+# Members of a room as Synapse names them: people, the stack's bots, the
+# tech admin, the agent itself, and names that only look like a bot's.
+MEMBERS = ["@marge:home.local", "@Bart:home.local", "@archivist-bot:home.local",
+           "@mail-bot:home.local", "@stackadmin:home.local", "@stacky:home.local",
+           "@lisa:home.local", "@bot:home.local", "@robot-fan:home.local"]
+
+
+def test_the_runtime_counts_the_same_people_in_a_room_as_the_framework(nanobot):
+    """Given the members of a room, then the agent's runtime counts as its
+    people exactly the members the framework's bots count as people
+    (`MicroBot.is_bot_user`): the runtime carries its own copy of that rule,
+    and a copy that drops a person makes the audience smaller than the room,
+    which shows that person's own notes to everyone in it."""
+    nanobot()
+    agent = "@stacky:home.local"
+
+    framework = sorted(member.split(":")[0].lstrip("@").lower() for member in MEMBERS
+                       if member != agent and not MicroBot.is_bot_user(member))
+
+    assert sys.modules["room_people"].people_in(MEMBERS, agent) == framework
+
+
+def test_the_test_lane_and_the_agents_image_pin_one_nanobot():
+    """Given the nanobot the unit lane installs (`pyproject.toml`), then it is
+    the release the agent's image installs (`Dockerfile`): the tests drive
+    nanobot's own tools, so a bump of one alone tests another nanobot than
+    the one that runs."""
+    pin = re.compile(r'"nanobot-ai==([^"]+)"')
+    root = STACKLETS.parent
+
+    assert (pin.findall((root / "pyproject.toml").read_text())
+            == pin.findall((STACKLETS / "agent" / "Dockerfile").read_text()))
+    assert pin.findall((root / "pyproject.toml").read_text())
+
+
 RUNTIME_KEY = "runtime-audience-key-91fe"
 
 
@@ -933,7 +971,7 @@ def test_exec_runs_a_command_for_the_people_of_its_turn_signed(nanobot, monkeypa
 
     env = mods["nanobot.agent.tools.shell"].ExecTool()._build_env()
 
-    assert signed_people(env["STACK_AUDIENCE"], RUNTIME_KEY, now=time.time()) == "bart,marge"
+    assert signed_audience(env["STACK_AUDIENCE"], RUNTIME_KEY, now=time.time()) == "bart,marge"
     assert RUNTIME_KEY not in env.values()
 
 

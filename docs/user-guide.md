@@ -328,6 +328,15 @@ Plain words work as search ("Duff Insurance", "vaccination Bart"). Questions get
 
 If the first pass isn't enough, it tells you it's looking deeper and reads the actual documents. Search is young (this is version 0.1 of it) but it's already the fastest way to settle "when did we..." questions at the dinner table.
 
+### What does Stacky read in a room?
+
+Stacky answers only from what every person in the room may read. Your own notes, your page and your own lists are for you alone.
+
+- In your own chat with Stacky, it reads your own notes and everything the family shares.
+- In a room with other people, it reads only what the family shares.
+- In a room where Stacky cannot tell who is in it, it answers without the family's memory.
+- A reminder from Stacky does not read the memory. It runs later, when nobody is in the room.
+
 ---
 
 ## The family wiki
