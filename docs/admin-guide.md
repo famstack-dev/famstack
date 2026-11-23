@@ -1884,10 +1884,17 @@ Stops every stacklet and removes its containers, then removes `stack.toml`, `use
 
 Then it asks about the data folder (`~/famstack-data`). Type `delete` to delete the data and its secrets in `.stack/secrets.toml`. Any other answer, or Ctrl+C, keeps every file and the secrets. The secrets hold the passwords of the databases in the data folder, so that a new install can open the kept data. `--not <stacklet>` keeps that stacklet's state, secrets and data in both cases.
 
-A second `./stack uninstall` after a kept data folder does not ask about the data again. Only `stack.toml` names the data folder, and the first run removed it. The second run deletes no data, keeps `.stack/secrets.toml` and shows where it is. To delete the data and its secrets later, do these steps:
+The uninstall asks about the data only when `stack.toml` names the data folder (`[core] data_dir`) and the folder exists. In these cases it does not ask, deletes no data and keeps `.stack/secrets.toml`:
 
-1. Run `./stack install` with the same data folder.
-2. Run `./stack uninstall` and type `delete`.
+- There is no `stack.toml`, for example in a second `./stack uninstall` after a kept data folder.
+- `stack.toml` does not parse, or it names no `data_dir`.
+- The data folder does not exist, for example because its disk is not mounted or the folder was moved.
+
+The uninstall then shows where the secrets are, and the missing data folder. The secrets go without the question only when nothing was set up. To delete the data and its secrets later, do these steps:
+
+1. Mount the disk or move the folder back, if necessary.
+2. Run `./stack install` with the same data folder.
+3. Run `./stack uninstall` and type `delete`.
 
 `./stack destroy <stacklet>` of a stacklet that is not set up deletes its data folder too. When the folder holds files, it shows the folder and asks first. The files can be data that an uninstall kept. `--yes` skips the question.
 

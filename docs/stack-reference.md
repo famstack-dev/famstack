@@ -1240,9 +1240,12 @@ secrets. Any other answer, a closed terminal and Ctrl+C keep both. The
 secrets hold the passwords of the databases in the data folder, and a
 new install needs them to open the kept data.
 
-Without `stack.toml` the data folder is not known, because only
-`[core] data_dir` names it. An uninstall then asks no data question,
-deletes no data and keeps `secrets.toml`.
+Only `[core] data_dir` in a `stack.toml` that parses names the data
+folder. The folder can also be missing: a disk that is not mounted, or
+a moved folder. In both cases the uninstall asks no data question and
+deletes no data. It keeps `secrets.toml`. The secrets go without the
+question only when nothing was set up: no setup marker, no stacklet's
+secret, no container and no stacklet's data folder.
 
 ### Hooks
 
