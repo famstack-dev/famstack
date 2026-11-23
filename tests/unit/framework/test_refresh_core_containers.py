@@ -79,6 +79,16 @@ def checkout(tmp_path, monkeypatch, docker):
     (helper / "docker-compose.yml").write_text("services:\n  helper:\n    image: busybox\n")
     (helper / "bot" / "bot.toml").write_text('id = "helper-bot"\nname = "Helper"\n')
 
+    # Documents and photos as their first run leaves core's env: each writes
+    # the token core's env reads (`{docs__API_TOKEN}`, `{photos__API_KEY}`).
+    for sid, port, secret in (("docs", 42020, "API_TOKEN"), ("photos", 42010, "API_KEY")):
+        folder = tmp_path / "stacklets" / sid
+        (folder / "hooks").mkdir(parents=True)
+        (folder / "stacklet.toml").write_text(f'id = "{sid}"\nname = "{sid}"\nport = {port}\n')
+        (folder / "docker-compose.yml").write_text(f"services:\n  {sid}:\n    image: busybox\n")
+        (folder / "hooks" / "on_install.py").write_text(
+            f'def run(ctx):\n    ctx.secret("{secret}", "written-by-the-first-run")\n')
+
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("STACK_DIR", raising=False)
 
@@ -116,6 +126,27 @@ def test_a_first_run_after_the_ai_route_recreates_only_the_bot_runner(checkout, 
 
     assert docker.recreated("core") == [[BOT_RUNNER]]
     assert docker.container_env(BOT_RUNNER)["OPENAI_URL"] == "http://host.docker.internal:42060/v1"
+    assert docker.container_env(TOOLS) == tools_before
+
+
+@pytest.mark.parametrize("stacklet, key", [("docs", "PAPERLESS_TOKEN"), ("photos", "IMMICH_API_KEY")])
+def test_a_first_run_that_writes_a_service_token_leaves_the_tools_server_running(
+        checkout, docker, stacklet, key):
+    """Given core is up with the setup page open,
+    when documents' or photos' first run writes the token core's env
+    holds for that service,
+    then the bot runner is recreated with the token, and the tools server
+    is not: the page is served by the same process throughout.
+
+    A recreate of the tools server leaves the setup page without an answer
+    for seconds; the tools server reads these tokens when a search needs
+    them, from the host API."""
+    tools_before = docker.container_env(TOOLS)
+
+    assert stack("up", stacklet) == 0
+
+    assert docker.recreated("core") == [[BOT_RUNNER]]
+    assert docker.container_env(BOT_RUNNER)[key] == "written-by-the-first-run"
     assert docker.container_env(TOOLS) == tools_before
 
 
