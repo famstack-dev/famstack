@@ -162,6 +162,26 @@ def test_the_teardown_still_removes_markers_and_config(checkout, instance):
     assert sorted(p.name for p in (instance / ".stack").iterdir()) == ["secrets.toml"]
 
 
+@pytest.mark.parametrize("second_answer", ["delete", None])
+def test_a_second_uninstall_keeps_the_secrets_of_the_kept_data(
+        checkout, tmp_path, instance, second_answer):
+    """Given a first uninstall whose delete was declined, over a data folder
+    that is not the default one, when the admin uninstalls again, then
+    the data and its secrets are still there, and the output names the
+    secrets file. The first run removed stack.toml, the one place that
+    names the data folder: the second run must not take the default
+    folder, empty here, as "no data" and remove the secrets of the data
+    it cannot see."""
+    password = _db_password(checkout)
+    _uninstall(checkout, answer="no")
+
+    run = _uninstall(checkout, answer=second_answer)
+
+    assert _family_files(tmp_path) == _as_written()
+    assert _secrets(instance).get("photos", "DB_PASSWORD") == password
+    assert str(instance / ".stack" / "secrets.toml").replace(str(tmp_path), "~") in run.stdout
+
+
 def test_the_checkouts_own_config_stays(checkout):
     """Given STACK_DIR names an instance other than the checkout, when the
     admin uninstalls it, then the checkout's own stack.toml, users.toml
