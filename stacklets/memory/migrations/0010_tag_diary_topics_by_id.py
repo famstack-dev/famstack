@@ -6,8 +6,9 @@ language (`Gesundheit`), where every other card holds the topic's id
 memory's ontology (`ontology.toml`), by its id or by its label in any of
 the ontology's languages, becomes the id; every other tag is lowercased
 with hyphens (`Family Life` becomes `family-life` where the ontology has
-no such topic), by the rule migration 0005 applied to every other card.
-Only the `tags` field changes.
+no such topic), by the rule migration 0005 applied to every other card:
+the topics of the card's place, so a person's private topic is a topic
+only on a card in that person's bucket. Only the `tags` field changes.
 
 A card the compile still owns is signed again with the digest of its
 new text, so it stays the compile's and the next compile, a rebuild
@@ -26,6 +27,7 @@ revert the commit in family/memory.
 from __future__ import annotations
 
 from ..lib import (
+    DEFAULT_SHARED_BUCKET,
     memory_for_migration,
     tag_diary_topics_by_id,
 )
@@ -36,7 +38,8 @@ REPO = "family/memory"
 def run(ctx):
     memory, vault = memory_for_migration(ctx)
     found, commit = tag_diary_topics_by_id(
-        memory, vault, trailer=ctx.trailer)
+        memory, vault, shared_bucket=ctx.env.get("SHARED_BUCKET") or DEFAULT_SHARED_BUCKET,
+        trailer=ctx.trailer)
     for line in found.left:
         ctx.step(f"Memory: {line}; left as it is")
     if found.changes:

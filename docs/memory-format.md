@@ -446,6 +446,7 @@ A program reads the frontmatter; people and link graphs read the body.
   The private topic's id (`surprise-party`) is no tag there at all: the
   curator refuses it, because search would list the card under the
   private title.
+  Documents and email follow the same rule as notes.
 - **A note and a diary entry choose topics from a list.** The model sees
   the names of the topics of the card's place, the topic cards first. A
   chosen name gives the topic's id by its id, name or title, and then by
