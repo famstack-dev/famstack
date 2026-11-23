@@ -1085,8 +1085,10 @@ Core's tools server serves the setup page and the dashboard. It gets only
 the values of core's `.env` that its code reads, listed under
 `environment:` in core's compose file, so a value only the bot runner
 reads (the AI's address and key, which the setup page's AI step writes)
-does not recreate it. A key the tools server's code reads must be on that
-list: a unit test fails when it is not.
+does not recreate it. The tokens that documents and photos write in their
+first run are not on the list: the tools server reads them from the host
+API (`stack env core`) when a search needs them. A key the tools server's
+code reads must be on that list: a unit test fails when it is not.
 
 A stacklet's preparation does not wait in this queue. `stack <id>
 prepare` runs the stacklet's `on_prepare` hook holding only that

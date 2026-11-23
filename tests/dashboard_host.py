@@ -231,6 +231,11 @@ class DashboardHost:
             return [{"passwords": passwords.of_people(self._stack(), request.get("people"))}]
         if cmd == "configure":
             return [self.configure(request.get("answers", {}))]
+        # A stacklet's rendered env from the instance's real secrets, as
+        # `stack env <id> --json` answers it for the host API.
+        if cmd == "env":
+            from stack.cli import _env_result
+            return [_env_result(self._stack(), request.get("stacklet", ""))]
         if cmd == "firewall":
             return [self.firewall]
         # The AI step's two reads run for real on the instance, as the host
