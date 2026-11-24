@@ -29,7 +29,8 @@
     }
   },
   "tools": {
-    "exec": {"enable": true, "allowed_env_keys": ["PATH", "STACK_API_TOKEN"], "deny_patterns": ["\\blist\\s+delete\\b.*\\s--y"]},
+    "restrict_to_workspace": true,
+    "exec": {"enable": true, "allowed_env_keys": ["PATH", "STACK_API_TOKEN"], "allow_patterns": ["stack(?:[ \\t]+(?:[^\\s'\"`$<>|;&()\\\\*?\\[\\]{}~]+|'[^']*'|\"[^\"`$\\\\]*\")+)*"]},
     "web": {"enable": false},
     "file": {"enable": true},
     "cli_apps": {"enable": false},

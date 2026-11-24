@@ -18,7 +18,21 @@ instead of the breakage reaching the rig as a log line nobody reads.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import re
+import sys
+import time
+import types
+
 import pytest
+
+from stack.agent_audience import signed_audience
+from stack.bot.microbot import MicroBot
+
+from pathlib import Path
+
+STACKLETS = Path(__file__).resolve().parents[3] / "stacklets"
 
 # The stub nanobot (`nanobot_stub`) and the fixture that imports
 # `sitecustomize` against it (`nanobot`) live in conftest, shared with the
@@ -57,30 +71,28 @@ def test_asking_the_vault_when_something_happened_is_a_tool(nanobot):
     assert "MemoryHistoryTool" in _discovered(mods)
 
 
-def test_the_briefing_is_one_of_nanobots_runtime_context_providers(nanobot, tmp_path):
+def test_the_briefing_is_one_of_nanobots_runtime_context_providers(nanobot):
     """Every turn, nanobot asks its providers for context and appends it.
 
     The briefing is how a shared room knows who is speaking. Through the
     provider seam it rides on the user's message, and nanobot keeps it
     with that message in the history, so the prompt the model cached last
-    turn is still the start of this one.
+    turn is still the start of this one. What it reads of the memory, for
+    the room's people, is in `test_agent_reads_for_the_room.py`; here the
+    room's people are unknown, so it reads nothing.
     """
     import asyncio
     import types as _types
 
-    profile = tmp_path / "vault" / "homer" / "about.md"
-    profile.parent.mkdir(parents=True)
-    profile.write_text("> Safety inspector at the plant\n")
     loop = nanobot()["nanobot.agent.loop"].AgentLoop()
-    request = _types.SimpleNamespace(sender_id="@homer:simpson", metadata={},
-                                     workspace=tmp_path)
+    request = _types.SimpleNamespace(sender_id="@homer:simpson", metadata={})
 
     [provider] = loop._runtime_context_providers
     block = asyncio.run(provider(request))
 
     assert block.source == "famstack-brief"
     assert block.content.splitlines()[1].startswith("Sent "), "the date comes first"
-    assert "You are speaking with homer (@homer). Safety inspector at the plant" in block.content
+    assert "You are speaking with homer (@homer)." in block.content
     assert block.content.startswith("[Runtime Context")
 
 
@@ -637,10 +649,29 @@ def test_a_moved_symbol_does_not_take_the_others_down(nanobot):
     mean a moved agent loop silently removed memory_search too, and
     the agent would lose vault access over an unrelated upgrade.
     """
-    mods = nanobot(drop="nanobot.agent.loop.AgentLoop")
+    mods = nanobot(drop="nanobot.runtime_context.RuntimeContextBlock")
 
     assert _discovered(mods) == {"MemorySearchTool", "MemoryPersonTool",
                                  "MemoryHistoryTool", "ListEditTool", "CalendarTool"}
+
+
+@pytest.mark.parametrize("symbol", (
+    "nanobot.agent.memory.MemoryStore",
+    "nanobot.agent.loop.AgentLoop",
+    "nanobot.agent.loop.AgentLoop._restore_turn",
+    "nanobot.agent.loop.TurnKind",
+    "nanobot.agent.tools.path_utils.resolve_workspace_path",
+    "nanobot.agent.tools.filesystem.WriteFileTool",
+))
+def test_a_moved_symbol_of_the_own_chat_gates_stops_the_agent(nanobot, symbol):
+    """The own-chat gates are the one shim that does not fail soft.
+
+    Without them one chat's words reach another (the shared history, every
+    chat's attachments, files written into the shared workspace), so an
+    agent that cannot attach them stops instead of answering.
+    """
+    with pytest.raises(SystemExit):
+        nanobot(drop=symbol)
 
 
 def test_the_stub_can_actually_express_a_detached_shim(nanobot):
@@ -789,14 +820,15 @@ def test_a_preview_stays_a_preview(nanobot, monkeypatch):
 
 
 def test_one_patch_may_touch_a_page_and_an_ordinary_file(nanobot, monkeypatch):
-    """Mixed edits are normal, and neither half may be dropped.
+    """Mixed edits are normal, and neither half may be dropped silently.
 
-    A patch that silently ignored its non-vault edits (or its vault ones)
-    would report success for work it never did.
+    The page reaches the store; the ordinary file is refused, and the
+    answer says so, because the workspace is read by every chat.
     """
     import asyncio
 
     mods = nanobot()
+    import own_chat
     import vault_write
 
     monkeypatch.setattr(vault_write, "patch_page",
@@ -809,13 +841,8 @@ def test_one_patch_may_touch_a_page_and_an_ordinary_file(nanobot, monkeypatch):
     ]))
 
     assert "stored family/camping/todos.md" in answer, "the page must reach the store"
-
-    # The stub echoes the edits it was handed, so its line says what the
-    # filesystem was asked to do — which must be the ordinary file and
-    # nothing else. Writing a page through both paths would double-apply it.
-    stock = next(line for line in answer.splitlines() if line.startswith("stock patch"))
-    assert "memory/notes.md" in stock
-    assert "camping" not in stock
+    assert own_chat.WRITE_REFUSAL in answer
+    assert "stock patch" not in answer
 
 
 def test_an_edit_file_is_pointed_at_the_two_that_work(nanobot):
@@ -833,20 +860,152 @@ def test_an_edit_file_is_pointed_at_the_two_that_work(nanobot):
     assert "family/camping/todos.md" in answer
 
 
-def test_files_outside_the_vault_keep_stock_behaviour(nanobot):
-    """The agent's own workspace notes are not the family's memory.
+def test_files_outside_the_vault_are_not_written(nanobot):
+    """The agent's workspace is read by every chat, so nothing is written there.
 
-    A shim that swallowed every write would break scratch files and cron
-    scripts, so the routing has to be narrow and this pins that it is.
+    A note or skill written in one chat would be read, or put into the
+    prompt, in every other chat. Only a memory page is written, through
+    the memory store.
     """
     import asyncio
+
+    import own_chat
 
     mods = nanobot()
     write_file, edit_file, apply_patch = _write_tools(mods)
 
     assert asyncio.run(write_file().execute(
-        path="memory/notes.md", content="x")) == "stock write memory/notes.md"
-    assert asyncio.run(edit_file().execute(
-        path="memory/notes.md")) == "stock edit memory/notes.md"
-    assert "stock patch" in asyncio.run(apply_patch().execute(
-        edits=[{"path": "memory/notes.md", "action": "replace"}]))
+        path="memory/notes.md", content="x")) == own_chat.WRITE_REFUSAL
+    assert asyncio.run(edit_file().execute(path="memory/notes.md")) == own_chat.WRITE_REFUSAL
+    assert asyncio.run(apply_patch().execute(edits=[
+        {"path": "memory/notes.md", "action": "add", "new_text": "y"}])) == own_chat.WRITE_REFUSAL
+
+# ── the people in the room go with each read ─────────────────────────────
+#
+# What Stacky may read depends on who is in the room (`room_people.py`). The
+# Matrix channel knows the room's members; nanobot copies a message's
+# metadata into the request context its tools run in. So the shim puts the
+# people there, and every read of that turn carries them as
+# `STACK_AUDIENCE`, which the `stack` shim sends to the host API.
+
+def _room(channel, room_id: str, *members: str) -> None:
+    """A room as nio keeps it: its members by Matrix id."""
+    channel.client.rooms[room_id] = types.SimpleNamespace(
+        room_id=room_id, users={member: object() for member in members})
+
+
+def _in_turn(mods, metadata) -> None:
+    """The next tool calls run in a turn whose message carried `metadata`."""
+    request = types.SimpleNamespace(turn_id="t1", sender_id="@marge:home.local",
+                                    session_key="matrix:!family:home.local",
+                                    chat_id="!family:home.local", metadata=metadata)
+    mods["nanobot.agent.tools.context"].current_request_context = lambda: request
+
+
+def test_a_message_carries_the_people_in_its_room(nanobot):
+    """Given the family room with Stacky and the stack's own accounts in it,
+    when a message arrives, then it carries the people and none of the bots."""
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+    _room(channel, "!family:home.local", "@marge:home.local", "@bart:home.local",
+          channel.config.user_id, "@archivist-bot:home.local", "@stackadmin:home.local")
+
+    asyncio.run(channel._handle_message(sender_id="@marge:home.local",
+                                        chat_id="!family:home.local", content="hi",
+                                        metadata={"event_id": "$1"}))
+
+    assert channel.handled[0]["metadata"] == {"event_id": "$1", "room_people": ["bart", "marge"]}
+
+
+def test_a_message_from_a_room_the_client_does_not_know_carries_no_people(nanobot):
+    channel = nanobot()["nanobot.channels.matrix.runtime"].MatrixChannel()
+
+    asyncio.run(channel._handle_message(sender_id="@marge:home.local",
+                                        chat_id="!unknown:home.local", content="hi",
+                                        metadata={"event_id": "$1"}))
+
+    assert "room_people" not in channel.handled[0]["metadata"]
+
+
+# Members of a room as Synapse names them: people, the stack's bots, the
+# tech admin, the agent itself, and names that only look like a bot's.
+MEMBERS = ["@marge:home.local", "@Bart:home.local", "@archivist-bot:home.local",
+           "@mail-bot:home.local", "@stackadmin:home.local", "@stacky:home.local",
+           "@lisa:home.local", "@bot:home.local", "@robot-fan:home.local"]
+
+
+def test_the_runtime_counts_the_same_people_in_a_room_as_the_framework(nanobot):
+    """Given the members of a room, then the agent's runtime counts as its
+    people exactly the members the framework's bots count as people
+    (`MicroBot.is_bot_user`): the runtime carries its own copy of that rule,
+    and a copy that drops a person makes the audience smaller than the room,
+    which shows that person's own notes to everyone in it."""
+    nanobot()
+    agent = "@stacky:home.local"
+
+    framework = sorted(member.split(":")[0].lstrip("@").lower() for member in MEMBERS
+                       if member != agent and not MicroBot.is_bot_user(member))
+
+    assert sys.modules["room_people"].people_in(MEMBERS, agent) == framework
+
+
+def test_the_test_lane_and_the_agents_image_pin_one_nanobot():
+    """Given the nanobot the unit lane installs (`pyproject.toml`), then it is
+    the release the agent's image installs (`Dockerfile`): the tests drive
+    nanobot's own tools, so a bump of one alone tests another nanobot than
+    the one that runs."""
+    pin = re.compile(r'"nanobot-ai==([^"]+)"')
+    root = STACKLETS.parent
+
+    assert (pin.findall((root / "pyproject.toml").read_text())
+            == pin.findall((STACKLETS / "agent" / "Dockerfile").read_text()))
+    assert pin.findall((root / "pyproject.toml").read_text())
+
+
+RUNTIME_KEY = "runtime-audience-key-91fe"
+
+
+def test_exec_runs_a_command_for_the_people_of_its_turn_signed(nanobot, monkeypatch):
+    """Given a turn in a room of Bart and Marge, then exec's command carries
+    them signed with the runtime's key, and never the key itself."""
+    monkeypatch.setenv("STACK_AUDIENCE_KEY", RUNTIME_KEY)
+    mods = nanobot()
+    _in_turn(mods, {"room_people": ["bart", "marge"]})
+
+    env = mods["nanobot.agent.tools.shell"].ExecTool()._build_env()
+
+    assert signed_audience(env["STACK_AUDIENCE"], RUNTIME_KEY, now=time.time()) == "bart,marge"
+    assert RUNTIME_KEY not in env.values()
+
+
+def test_the_exec_tool_of_the_agents_config_never_passes_the_audience_key(nanobot, monkeypatch):
+    """Given the runtime holds its audience key, when exec builds a command's
+    environment from the agent's own config (`allowed_env_keys`), then the
+    key is not in it: the model's shell cannot sign people of its choice."""
+    monkeypatch.setenv("STACK_AUDIENCE_KEY", RUNTIME_KEY)
+    config = json.loads((STACKLETS / "agent" / "config.json").read_text())
+    mods = nanobot()
+    exec_tool = mods["nanobot.agent.tools.shell"].ExecTool
+    exec_tool.allowed_env_keys = config["tools"]["exec"]["allowed_env_keys"]
+    _in_turn(mods, {"room_people": ["bart"]})
+
+    env = exec_tool()._build_env()
+
+    assert "STACK_AUDIENCE_KEY" not in env and RUNTIME_KEY not in env.values()
+
+
+@pytest.mark.parametrize("metadata", [None, {}, {"room_people": []}],
+                         ids=["outside any turn", "people not known", "nobody"])
+def test_exec_without_known_people_names_no_audience(nanobot, monkeypatch, metadata):
+    """Given a command where nobody can say who is in the room, then it names
+    no audience, also when the container's own environment holds one: the
+    API then refuses the memory read."""
+    monkeypatch.setenv("STACK_AUDIENCE", "marge")
+    monkeypatch.setenv("STACK_AUDIENCE_KEY", RUNTIME_KEY)
+    mods = nanobot()
+    mods["nanobot.agent.tools.shell"].ExecTool.allowed_env_keys = ["PATH", "STACK_AUDIENCE"]
+    if metadata is not None:
+        _in_turn(mods, metadata)
+
+    env = mods["nanobot.agent.tools.shell"].ExecTool()._build_env()
+
+    assert "STACK_AUDIENCE" not in env

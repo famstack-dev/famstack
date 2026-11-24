@@ -55,6 +55,11 @@ test = [
     "fastapi>=0.135",
     # The setup page's QR code (tools-server/qr_code.py), same pin as there.
     "segno>=1.6,<2",
+    # The agent's harness, at the exact version its image pins
+    # (stacklets/agent/Dockerfile). The tests drive nanobot's own file tools
+    # and exec guard with the agent's config, so what one chat may read is
+    # proven against the code that runs, not a stand-in.
+    "nanobot-ai==0.3.5",
 ]
 
 # The dashboard's first run in a real browser (tests/integration/

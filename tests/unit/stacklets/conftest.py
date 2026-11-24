@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
+import os
 import re
 import sys
 import types
@@ -37,6 +38,11 @@ if str(_STACKLETS_DIR) not in sys.path:
 for _runtime_dir in sorted(REPO_ROOT.glob("stacklets/*/runtime")):
     if str(_runtime_dir) not in sys.path:
         sys.path.insert(0, str(_runtime_dir))
+
+# The agent's container mounts single framework files into `/app/shared`
+# under their own names (compose); here they are the same modules of `lib/stack`.
+sys.modules.setdefault("agent_audience", importlib.import_module("stack.agent_audience"))
+sys.modules.setdefault("agent_confirm", importlib.import_module("stack.agent_confirm"))
 
 
 @pytest.fixture
@@ -112,6 +118,14 @@ def nanobot_stub():
                     self._runtime_context_providers.append(provider)
                 return lambda: None
 
+            # The turn stage own_chat records a message's files at.
+            async def _restore_turn(self, ctx):
+                pass
+
+        class TurnKind:
+            USER = "user"
+            SYSTEM = "system"
+
         class ToolLoader:
             def discover(self):
                 return []
@@ -138,6 +152,39 @@ def nanobot_stub():
         class ApplyPatchTool:
             async def execute(self, edits=None, **kwargs):
                 return f"stock patch {edits}"
+
+        class ExecTool:
+            # nanobot 0.3.5 agent/tools/shell.py: `execute` builds the
+            # command's environment with `_build_env`, inside the tool call,
+            # from a few basics and the keys config.json allows.
+            allowed_env_keys = ["PATH", "STACK_API_TOKEN"]
+
+            def _build_env(self):
+                env = {"HOME": os.environ.get("HOME", "/tmp"), "PYTHONUNBUFFERED": "1"}
+                for key in self.allowed_env_keys:
+                    if (val := os.environ.get(key)) is not None:
+                        env[key] = val
+                return env
+
+        # own_chat's symbols (nanobot 0.3.5): the store consolidation writes
+        # the shared history through, the error a tool answers with, and the
+        # path check of the file and message tools.
+        class MemoryStore:
+            def append_history(self, entry, *, max_chars=None, session_key=None):
+                return 1
+
+        class ToolResult(str):
+            @classmethod
+            def error(cls, content):
+                return cls(content)
+
+        class WorkspaceBoundaryError(PermissionError):
+            pass
+
+        def resolve_workspace_path(path, workspace=None, allowed_dir=None,
+                                   extra_allowed_dirs=None, extra_allowed_files=None,
+                                   include_media_dir=True):
+            return path
 
         class MatrixChannel:
             def __init__(self):
@@ -265,7 +312,7 @@ def nanobot_stub():
         mod("nanobot")
         mod("nanobot.agent")
         mod("nanobot.agent.context", ContextBuilder=ContextBuilder)
-        mod("nanobot.agent.loop", AgentLoop=AgentLoop)
+        mod("nanobot.agent.loop", AgentLoop=AgentLoop, TurnKind=TurnKind)
 
         @dataclasses.dataclass(frozen=True)
         class ProgressEvent:
@@ -293,7 +340,13 @@ def nanobot_stub():
         mod("nanobot.runtime_context", RuntimeContextBlock=RuntimeContextBlock,
             wrap_runtime_context_lines=wrap_runtime_context_lines)
         mod("nanobot.agent.tools")
-        mod("nanobot.agent.tools.base", Tool=Tool, tool_parameters=tool_parameters)
+        mod("nanobot.agent.tools.base", Tool=Tool, ToolResult=ToolResult,
+            tool_parameters=tool_parameters)
+        mod("nanobot.agent.memory", MemoryStore=MemoryStore)
+        mod("nanobot.agent.tools.path_utils", resolve_workspace_path=resolve_workspace_path)
+        mod("nanobot.agent.tools.message", resolve_workspace_path=resolve_workspace_path)
+        mod("nanobot.security")
+        mod("nanobot.security.workspace_policy", WorkspaceBoundaryError=WorkspaceBoundaryError)
         mod("nanobot.agent.tools.schema",
             StringSchema=_Schema, IntegerSchema=IntegerSchema, ArraySchema=_Schema,
             BooleanSchema=_Schema,
@@ -303,8 +356,10 @@ def nanobot_stub():
         mod("nanobot.agent.tools.context", current_request_context=lambda: None)
         mod("nanobot.agent.tools.registry", ToolRegistry=ToolRegistry)
         mod("nanobot.agent.tools.filesystem",
-            WriteFileTool=WriteFileTool, EditFileTool=EditFileTool)
+            WriteFileTool=WriteFileTool, EditFileTool=EditFileTool,
+            resolve_workspace_path=resolve_workspace_path)
         mod("nanobot.agent.tools.apply_patch", ApplyPatchTool=ApplyPatchTool)
+        mod("nanobot.agent.tools.shell", ExecTool=ExecTool)
         mod("nanobot.channels")
         mod("nanobot.channels.matrix")
         mod("nanobot.channels.matrix.runtime", MatrixChannel=MatrixChannel)
@@ -320,7 +375,8 @@ SHIMMED_MODULES = ("sitecustomize", "brief", "state_log",
                    "memory_tool", "person_tool", "history_tool",
                    "name_trigger", "thread_trigger", "join_greeting", "vault_write",
                    "list_tool", "tool_trim", "voice_trigger", "open_question",
-                   "status_trace", "turn", "photo_before")
+                   "status_trace", "turn", "photo_before", "room_people", "room_reads",
+                   "own_chat")
 
 
 @pytest.fixture
@@ -334,8 +390,12 @@ def nanobot(monkeypatch, nanobot_stub):
     def _load(drop: str | None = None):
         mods = nanobot_stub()
         if drop:
-            module_name, _, attr = drop.rpartition(".")
-            delattr(mods[module_name], attr)
+            # A module's attribute, or a class's (`module.Class.method`).
+            owner_name, _, attr = drop.rpartition(".")
+            module_name, _, class_name = owner_name.rpartition(".")
+            owner = (mods[owner_name] if owner_name in mods
+                     else getattr(mods[module_name], class_name))
+            delattr(owner, attr)
         for name, module in mods.items():
             monkeypatch.setitem(sys.modules, name, module)
         for name in SHIMMED_MODULES:
@@ -375,3 +435,40 @@ def other_server_on_ipv6(httpserver):
         pytest.skip(f"cannot listen on [::1]:{httpserver.port}: {e}")
     yield other
     other.stop()
+
+
+# ── Stacky in a room ──────────────────────────────────────────────────────
+#
+# Stacky as a person meets it, reading and writing the memory through its
+# real `stack` shim and the host API's own checks (`stacky_in_a_room`). A
+# test module gives the `memory` fixture its own seed.
+
+
+@pytest.fixture(scope="module")
+def api():
+    """The host API module whose allowlist gates every command the agent runs."""
+    from tests.unit.stacklets.stacky_in_a_room import REPO_ROOT, load_from_path
+    return load_from_path("famstack_api_for_the_room",
+                          REPO_ROOT / "stacklets" / "core" / "famstack-api.py")
+
+
+@pytest.fixture(scope="module")
+def shim():
+    """The container-side `stack` shim, the agent's only route to the CLI."""
+    from tests.unit.stacklets.stacky_in_a_room import REPO_ROOT, load_from_path
+    return load_from_path("stack_shim_for_the_room",
+                          REPO_ROOT / "stacklets" / "agent" / "client" / "stack")
+
+
+@pytest.fixture
+def runtime(nanobot):
+    """Stacky's runtime: the stub nanobot with every shim of `sitecustomize` on it."""
+    return nanobot()
+
+
+@pytest.fixture
+def stacky(memory, api, shim, runtime, tmp_path, monkeypatch):
+    """Stacky, with a real `stack` shim on `PATH` that talks to the host API."""
+    from tests.unit.stacklets.stacky_in_a_room import stacky_serving
+    with stacky_serving(memory, api, shim, runtime, tmp_path / "bin", monkeypatch) as stacky:
+        yield stacky

@@ -13,6 +13,8 @@ units = [
     "__init__",
     "__main__",
     "agent_access",
+    "agent_audience",
+    "agent_confirm",
     "ai",
     "app",
     "bot",

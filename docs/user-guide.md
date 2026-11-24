@@ -248,6 +248,9 @@ More you can say:
 - "Stacky, what's on the supermarket list?" shows what is still open.
 - "Stacky, we're back from camping, reset the packing list." Start a list you use again and again (packing, the weekly chores) as a checklist: its ticks stay until you reset it.
 - "Stacky, Bart has the dentist on 5 November" puts it on the family's calendar list. If you have none yet, Stacky starts one called Dates. Say the time in the same sentence ("at 10:30") and it goes at the start of the entry. It keeps its entries in date order, the next one on top, and each one leaves the day after its date, ticked or not. Its page in the wiki still shows the last seven days, greyed out, below what is ahead. An entry needs its date, so Stacky asks for one if you leave it out.
+- "Stacky, put my dentist on 2 December at 9, just for me" puts it on your own calendar, not the family's. Say "just for me", "only mine" or "private". Without those words, a date goes on the family's calendar. A date that is already on the family's calendar stays there.
+
+  Only you see a date on your own calendar. It shows on your page and in Up next, together with the family's dates. Stacky also names it when you ask in your own chat what is on. Nobody else sees it, and Stacky does not show it in a room that you share with other people.
 - "Stacky, we don't need the hardware store list any more" deletes it. If it still has open items, Stacky names them and asks first. What was bought stays in the archive, so a list started again under the same name still knows where things go.
 
 **Letters and notes put their to-dos on lists too.** When a letter in the **Documents Room** asks you to do something ("sign the permission slip by 23 October"), the archivist puts it on the list of the letter's topic, with the day and a link back to the letter. A short note in your own words, pinned with 📌 in a [topic room](#topic-rooms) ("we should take out the trash by Friday"), does the same. Long pasted text and links never turn into to-dos: someone else's tips are not your chores. Tick these off with Stacky like anything else. A letter's dates (the parents' evening, the dentist, the school play) go on the family's calendar list the same way, with the child it names and a link back to the letter. If you have no calendar list yet, the archivist starts one called Dates.
@@ -327,6 +330,15 @@ Plain words work as search ("Duff Insurance", "vaccination Bart"). Questions get
 > The car insurance renews on March 1, 2026 [1]. The premium is EUR 340/year [1][2].
 
 If the first pass isn't enough, it tells you it's looking deeper and reads the actual documents. Search is young (this is version 0.1 of it) but it's already the fastest way to settle "when did we..." questions at the dinner table.
+
+### What does Stacky read in a room?
+
+Stacky answers only from what every person in the room may read. Your own notes, your page and your own lists are for you alone.
+
+- In your own chat with Stacky, it reads your own notes and everything the family shares.
+- In a room with other people, it reads only what the family shares.
+- In a room where Stacky cannot tell who is in it, it answers without the family's memory.
+- A reminder from Stacky does not read the memory. It runs later, when nobody is in the room.
 
 ---
 

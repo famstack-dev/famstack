@@ -43,6 +43,12 @@ NAME="${AGENT_NAME:-Stacky}"
 # seeding below puts the shipped profile back.
 python3 /app/runtime/dream_aside.py "$NB" /app/workspace-seed "$NAME"
 
+# nanobot's shared history held a summary of every chat where every chat's
+# tools read it. Moved out of the workspace at every start, never deleted;
+# a file that cannot be moved stops the start (set -e). It also names the
+# files in the workspace the image did not ship, which every chat reads.
+python3 /app/runtime/chat_aside.py "$NB" /app/workspace-seed
+
 # USER.md is seeded so nanobot does not install its default profile
 # template. The template costs ~1K prompt characters per request and holds
 # no data: the runtime brief carries the per-turn speaker instead.

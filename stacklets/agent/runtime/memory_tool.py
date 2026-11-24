@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 
@@ -13,6 +14,9 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+
+from room_people import audience_env
+from turn import current as current_turn
 
 
 # Hits past the first handful rarely hold the answer and cost prefill.
@@ -146,6 +150,8 @@ class MemorySearchTool(Tool):
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # The room's people: the API reads the memory for them alone.
+            env=audience_env(dict(os.environ), current_turn().people),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=130)
         out = stdout.decode(errors="replace").strip()

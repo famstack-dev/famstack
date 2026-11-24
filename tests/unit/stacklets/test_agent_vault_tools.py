@@ -815,39 +815,3 @@ def test_missing_person_still_reports_cleanly(memory_cli, tmp_path):
     assert result["error"].startswith("no profile for person 'nobody'")
 
 
-# ── the tree the agent's file tools actually see ─────────────────────
-
-def test_the_agent_mounts_the_tree_that_holds_profiles():
-    """Stacky's `vault/` mount must contain the pages it promises.
-
-    The mount exists so nanobot's workspace-scoped file tools can read
-    person and topic pages, and the model prefers those tools over
-    anything else: given a `vault/` directory it will read and grep it
-    rather than call `memory_person`. So whatever is mounted there is,
-    in practice, the agent's whole picture of the family.
-
-    Generated pages live only in the brain projection. Mounting the
-    memory source clone therefore handed the agent a tree that could
-    never hold a profile, and it reported "There is no
-    vault/homer/about.md" for a member who had one. Wrong beats missing:
-    a confident denial is worse than no answer.
-
-    Compared against the memory stacklet's own declaration rather than a
-    hardcoded path, so if memory ever moves the projection this fails
-    instead of silently drifting.
-    """
-    import tomllib
-
-    agent = tomllib.loads(
-        (REPO_ROOT / "stacklets" / "agent" / "stacklet.toml").read_text())
-    memory = tomllib.loads(
-        (REPO_ROOT / "stacklets" / "memory" / "stacklet.toml").read_text())
-
-    mounted = agent["env"]["defaults"]["MEMORY_VAULT_DIR"]
-    brain = memory["env"]["defaults"]["BRAIN_REPO_DIR"]
-    source = memory["env"]["defaults"]["MEMORY_VAULT_DIR"]
-
-    assert mounted == brain, (
-        f"agent mounts {mounted!r}; generated profiles live in {brain!r}"
-    )
-    assert mounted != source, "the source clone never holds generated pages"

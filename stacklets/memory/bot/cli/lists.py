@@ -7,6 +7,15 @@ and the list holds only what is still open. Ticks made by hand without
 a date get today's date first, and leave the night after. On a
 calendar, an entry also leaves the night after its date.
 
+The shared bucket's lists are archived, and in each declared person's own
+bucket only their calendars: the dates a person keeps for themselves
+(`homer/lists/dates-homer.md`), which keep only what is ahead, as the
+family's calendar does. Any other list a person keeps in their own folder,
+and any folder that is no person's, is left as it is: no rule was decided
+for them, and the stack changes nothing of the family's on its own. A
+person's archive stays in their bucket (`homer/lists/archive/...`), so it
+is read only by them, as the list was.
+
 Everything moves in one commit by the memory bot, through the curator, on
 the version each file was read at, so a tick made while this runs fails
 the commit instead of being lost; the next night tries again.
@@ -25,6 +34,7 @@ from pathlib import Path, PurePosixPath
 
 from stack import clock
 from stack.lists import (
+    CALENDAR,
     LISTS_DIR,
     ListError,
     archive_month,
@@ -44,10 +54,17 @@ def _err(msg: str) -> None:
 
 async def run(llm, argv: list[str]) -> int:
     memory = MemoryAPI.from_container(os.environ)
-    bucket = os.environ.get("SHARED_BUCKET") or "family"
+    shared = os.environ.get("SHARED_BUCKET") or "family"
+    today = clock.today().isoformat()
     try:
-        changes, moved = archive_lists(memory.files(f"{bucket}/{LISTS_DIR}"),
-                                       bucket=bucket, today=clock.today().isoformat())
+        sweeps = [(shared, memory.files(f"{shared}/{LISTS_DIR}"))]
+        sweeps += [(person, calendars_only(memory.files(f"{person}/{LISTS_DIR}")))
+                   for person in people_of(memory.paths(f"{shared}/people"))]
+        changes, moved = [], 0
+        for bucket, files in sweeps:
+            found, count = archive_lists(files, bucket=bucket, today=today)
+            changes += found
+            moved += count
         if changes and "--dry-run" not in argv:
             memory.commit(changes, by=MEMORY_BOT, kind="lists",
                           title=f"archive {moved} item(s) that are over")
@@ -56,6 +73,36 @@ async def run(llm, argv: list[str]) -> int:
         return 1
     print(f"archived {moved} item(s)" if moved else "nothing to archive")
     return 0
+
+
+def people_of(paths: list[str]) -> list[str]:
+    """The declared people's ids, from the paths of the shared bucket's `people/`.
+
+        people_of(["family/people/homer.md", "family/people/marge.md"])   # ["homer", "marge"]
+    """
+    return sorted(PurePosixPath(path).stem for path in paths
+                  if path.endswith(".md") and len(PurePosixPath(path).parts) == 3)
+
+
+def calendars_only(files: list[File]) -> list[File]:
+    """The calendars among a person's lists, and the archives below them.
+
+    SAFETY: in a person's own folder the sweep changes only calendars. A
+    list without `kind: calendar` (made by hand in Forgejo), or a file that
+    is not a list, is not handed on, so it stays byte for byte.
+    """
+    kept = []
+    for found in files:
+        parts = PurePosixPath(found.path).parts
+        if len(parts) > 3:  # an archive below the lists: where a month moves to
+            kept.append(found)
+            continue
+        try:
+            if read_list(found.text, path=found.path).kind == CALENDAR:
+                kept.append(found)
+        except ListError:
+            continue
+    return kept
 
 
 def archive_lists(files: list[File], *, bucket: str, today: str) -> tuple[list[dict], int]:

@@ -266,8 +266,9 @@ their commands. Every change is the person's commit (ADR-015).
 ### 10. Sources plug in as cards
 A source (a chat room, the diary room, email, Paperless) delivers cards to
 the vault through the front door. A document is the one source whose content
-lives elsewhere: its card holds the summary, the correspondent and the link,
-and `docs show` reads the document from Paperless. Reading never needs to
+lives elsewhere: its card holds the summary, the correspondent, the link
+and the document's text, and `docs show` reads the document from Paperless
+for the admin. Reading never needs to
 know which source a card came from.
 
 ## Order
@@ -327,3 +328,146 @@ HTML layout per card type is where they start.
   most likely the curator writes the rendered cards into the views.
 - Whether a correction to a document card (its date, its correspondent) also
   goes to Paperless through the archivist, so the two agree.
+
+## Update 2026-11-23: the agent reads for the people in its room
+
+### Which commands read for an audience?
+
+More `memory` commands take `--audience` now: `search`, `person show`,
+`history`, every `list` verb, `topic` and `write`. They use the same rule as
+`find`, `card` and `links`.
+
+- A person's page (`<id>/about.md`) is read for that person alone. The same
+  applies to the lists and the topic pages in a person's folder.
+- `history` shows a change only when the audience may read every file that
+  the change touched. The reason is that the subject of a commit names the
+  card.
+- `history` answers a scope that the audience may not read as a scope that
+  does not exist.
+- A list change and a `write` reply with what they changed. Because of this,
+  they refuse a list or a page that the audience may not read. The refusal
+  names none of its items.
+- Nobody may read a path with a `.`, `..` or empty segment, for example
+  `family/../marge/x.md`. The reason is that the rule takes the first folder
+  of the path as the folder that the path means.
+- The name of a new list is unique over all folders. A taken name gets the
+  same refusal for a shared list and for a private list.
+
+`lookup` (the ontology), `correspondents` (the shared folder) and `capture`
+read no person's own card. For this reason, they take no audience.
+
+### Which commands may the agent run?
+
+One table in `stack.agent_audience` names each `memory` command and each
+`docs` command that the agent may run:
+
+| List | What its commands read |
+|---|---|
+| `AUDIENCE_COMMANDS` | Only what the audience may read |
+| `NO_PRIVATE_READS` | No person's own card |
+
+The host API refuses a `memory` or `docs` command that is in neither list.
+It also refuses such a command when the admin's `[agent] allow` names it,
+because the command would read every card. A test compares the allowlist of
+the API with the table.
+
+Three limits follow from the table:
+
+- The agent does not run `docs show`, because Paperless has one account for
+  the stack. That account gives the document of any person in any room. The
+  card of a document holds its text, and `memory card` reads the card for
+  the audience.
+- The API refuses `memory topic rename` with an audience, because its plan
+  names every file that it moves.
+- A reminder runs no command of `AUDIENCE_COMMANDS`. The reason is that the
+  scheduler runs the reminder later as the admin, without the people in the
+  room.
+
+### How does a read get the people in the room?
+
+The model must not choose the audience of a read. For this reason, the
+runtime signs the audience with a key that the model's shell cannot read:
+
+1. The runtime gets the people in the room of a message from the Matrix
+   client.
+2. For each command of the turn, the runtime signs these people. This
+   applies to the commands of a tool and of the exec tool.
+3. The signature is HMAC-SHA256 over the people and an expiry two minutes
+   ahead. Its key is the agent's audience key, a secret of the agent
+   stacklet.
+4. The host API checks the signature with the same key. Then it adds the
+   signed people as `--audience` to each memory read
+   (`stack.agent_audience`).
+
+The host API refuses a memory read in these cases:
+
+- No people are known.
+- The model's shell set the people itself.
+- The people changed after the signature.
+- The signature expired.
+- The agent's command line names an audience itself.
+
+The exec tool builds the environment of a command from an allowlist. The key
+is not on that allowlist. Because of this, the model's shell cannot sign
+people of its choice.
+
+The commands that the admin runs on the Mac do not go through the API. They
+keep the view that reads every card.
+
+### What may the exec shell run?
+
+The exec shell runs only plain `stack` lines. A **plain `stack` line** is
+`stack`, then words and quoted text. Outside quotes, it has none of these:
+`$`, a backquote, a redirection, a pipe, `;`, `&` or a wildcard. The exec
+guard of nanobot refuses every other line.
+
+Because of this, the shell cannot read the key in the runtime's environment
+(`/proc/1/environ`). It cannot read the signature of a command, and it
+cannot run Python code that signs. The file tools of nanobot stay in the
+agent's workspace, which holds neither the key nor a signature.
+
+### How does the agent delete a list with open items?
+
+The agent deletes a list with open items only after the person said yes:
+
+1. The agent's `list_edit` tool asks first.
+2. After a yes in a later message, the tool signs a confirmation for that
+   one list (`stack.agent_confirm`). It uses the same key. The confirmation
+   is valid for one minute.
+3. The host API runs `memory list delete` with `--yes` only with that
+   confirmation. This applies to each spelling of `--yes` that the list
+   command accepts.
+
+The shell cannot make a confirmation, because the key is not in its
+environment. A reminder never runs such a delete, because the scheduler runs
+it later without a person's yes.
+
+The API reads each line of the agent as the command reads it
+(`stack.plugins.plugin_words`). Because of this, a `--json` between the
+words of the command does not hide anything from these rules.
+
+### How does a chat stay in its room?
+
+What a person says in one chat stays in that chat. nanobot keeps each chat
+in its own session, outside the workspace. The runtime writes nothing into
+the workspace that holds more than one chat:
+
+- no shared history of summaries;
+- no file from `write_file`, `edit_file` or `apply_patch`, except a memory
+  page through the memory store.
+
+The file tools and the message tools of a chat reach only the attachments of
+that chat. Earlier releases left a shared history in the workspace. Each
+start moves that history to `chat-archive/` in the agent's data. The move
+deletes nothing.
+
+### Why is the memory not mounted into the agent?
+
+No part of the memory is mounted into the agent's container. The file tools
+of nanobot (`read_file`, `grep`, `find_files`, `list_dir`) and its exec
+shell read every file in the container. They do not apply the audience rule.
+A mounted memory would give each room the own notes of every person.
+
+For this reason, the agent reads the memory only through the commands above.
+Its brief for each turn reads the same way, for the people in the room. A
+person's own page is in the brief only in that person's own chat.

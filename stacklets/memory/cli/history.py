@@ -53,6 +53,14 @@ WHY A COMMAND AND NOT JUST GIT
     container is a second surface with a different trust boundary and no
     discoverability, for questions this answers in one line each.
 
+FOR WHOM IT READS
+    `--audience bart` (or `bart,homer`) names who will see the answer, as
+    `search` and `find` take it: only a change whose every file they may
+    all read is shown (`stack.cards.audience.readable`), because a commit's
+    subject names the card it changed. So the history of Marge's own folder
+    is empty in Bart's chat. Without it, every change is shown, as the admin
+    sees it on the Mac.
+
 WHAT IT COSTS TO READ
     Answers are one line apiece, because the agent pays for every one in
     context. `git log -p` on a page is enormous and almost never what was
@@ -67,11 +75,12 @@ from pathlib import Path
 
 from stack.cards.activity import LOG_FORMAT, Commit, parse_log
 from ..lib import vault_path_for
+from ._graph import may_read, take_audience
 
 HELP = "Show what changed in the family's memory, and when"
 
 _USAGE = ("usage: stack memory history [<topic-or-person>] [--item <text>] "
-          "[--by <person>] [--since <when>] [--limit N] [--all]\n"
+          "[--by <person>] [--since <when>] [--limit N] [--all] [--audience <people>]\n"
           "  e.g. stack memory history camping --since \"last week\"\n"
           "       stack memory history --item Kuehlbox")
 
@@ -88,7 +97,7 @@ _MAX_SCAN = 2000
 
 
 def run(args, stacklet, config):
-    argv = list(args or [])
+    argv, audience = take_audience(args)
     item, argv = _greedy(argv, "--item")
     actor, argv = _opt(argv, "--by")
     since, argv = _opt(argv, "--since")
@@ -102,33 +111,39 @@ def run(args, stacklet, config):
         return {"error": f"{vault} is not a git repository yet — "
                          f"run `stack up memory` first"}
 
-    paths = _paths_for(vault, scope)
+    paths = _paths_for(vault, scope, lambda path: may_read(path, audience, config))
     if scope and paths is None:
         return {"error": f"nothing in the vault called {scope!r}"}
 
+    def readable(commit: Commit) -> bool:
+        return all(may_read(path, audience, config) for path in commit.files)
+
     if item:
-        return _when_added(vault, item, paths)
+        return _when_added(vault, item, paths, readable)
     # `--by` already names whose changes are wanted, so it is not second-guessed.
     return _recent(vault, paths, actor=actor, since=since,
-                   skip_bots=not (actor or "--all" in argv),
+                   skip_bots=not (actor or "--all" in argv), readable=readable,
                    limit=_int(limit, _DEFAULT_LIMIT), scope=scope)
 
 
 # ── the two questions ────────────────────────────────────────────────────
 
-def _recent(vault, paths, *, actor, since, skip_bots, limit, scope):
-    """What changed lately, most recent first."""
-    # Git can select an author but not reject one, so the machinery is
-    # dropped here. Reading a bounded window rather than `-n limit` keeps a
-    # run of bot commits from eating the whole answer.
-    argv = ["log", _FORMAT, f"-n{_MAX_SCAN if skip_bots else limit}"]
+def _recent(vault, paths, *, actor, since, skip_bots, readable, limit, scope):
+    """What changed lately, most recent first, of the changes `readable` keeps."""
+    # Git can select an author but not reject one, so the machinery and the
+    # changes the audience may not read are dropped here. Reading a bounded
+    # window rather than `-n limit` keeps a run of them from eating the
+    # whole answer.
+    argv = ["log", _FORMAT, "--name-only", f"-n{_MAX_SCAN}"]
     if actor:
         argv += [f"--author={actor}"]
     if since:
         argv += [f"--since={since}"]
     argv += _pathspec(paths)
 
-    rows = _rows(_git(vault, *argv))
+    # SAFETY: a change to a file the audience may not read is not shown at
+    # all, since its subject names the card.
+    rows = [row for row in _rows(_git(vault, *argv)) if readable(row)]
     if skip_bots:
         rows = [row for row in rows if not row.machine]
     rows = rows[:limit]
@@ -143,8 +158,9 @@ def _recent(vault, paths, *, actor, since, skip_bots, limit, scope):
         {"date": _day(c), "by": c.who, "what": c.subject} for c in rows]}
 
 
-def _when_added(vault, item, paths):
-    """When this text first appeared in the vault, and who put it there.
+def _when_added(vault, item, paths, readable):
+    """When this text first appeared in the vault, and who put it there, of
+    the changes `readable` keeps.
 
     Follows the text rather than the line, on purpose. `git blame` answers by
     position, so a page that has since been rewritten reports every line as
@@ -162,10 +178,10 @@ def _when_added(vault, item, paths):
     touched" unanswerable here, and a number that is right only when nobody
     reorganised the page is worse than no number at all.
     """
-    argv = ["log", _FORMAT, "--reverse", f"-G{re.escape(item)}"]
+    argv = ["log", _FORMAT, "--name-only", "--reverse", f"-G{re.escape(item)}"]
     argv += _pathspec(paths)
 
-    rows = _rows(_git(vault, *argv))
+    rows = [row for row in _rows(_git(vault, *argv)) if readable(row)]
     if not rows:
         return {"error": f"nothing in the vault's history mentions {item!r}"}
 
@@ -191,8 +207,9 @@ def _vault(config):
     return vault_path_for(Path(data_dir)) if data_dir else None
 
 
-def _paths_for(vault: Path, scope: str):
-    """Turn "camping" or "homer" into the paths that mean it.
+def _paths_for(vault: Path, scope: str, readable=lambda path: True):
+    """Turn "camping" or "homer" into the paths that mean it, of those
+    `readable` keeps; None when none is there.
 
     A scope is whatever the family would say out loud, so it is resolved
     against the vault rather than demanded as a path: a topic, a person, or
@@ -201,7 +218,10 @@ def _paths_for(vault: Path, scope: str):
     if not scope:
         return []
     for candidate in (Path("family") / scope, Path(scope)):
-        if (vault / candidate).exists():
+        # SAFETY: a path the audience may not read answers as a missing
+        # one, so a refusal does not tell that it exists.
+        page = candidate if candidate.suffix else candidate / "page.md"
+        if (vault / candidate).exists() and readable(page.as_posix()):
             return [str(candidate)]
     return None
 

@@ -9,6 +9,7 @@ one place the runtime reads it.
     now.person          # "homer", the vault slug of whoever sent the message
     now.conversation    # nanobot's session key: a room, or a thread in it
     now.id              # unique per turn
+    now.people          # ("bart", "marge"): who is in the room (`room_people.py`)
 """
 
 from __future__ import annotations
@@ -18,11 +19,16 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Turn:
-    """The message a tool call belongs to; every field is "" outside a turn."""
+    """The message a tool call belongs to; every field is empty outside a turn.
+
+    `people` is empty too when the room's members were not known: a memory
+    read is then refused, never run for everyone.
+    """
 
     person: str = ""
     conversation: str = ""
     id: str = ""
+    people: tuple[str, ...] = ()
 
 
 def person_of(sender_id: str) -> str:
@@ -42,4 +48,13 @@ def current() -> Turn:
         conversation=str(getattr(request, "session_key", "") or getattr(request, "chat_id", "")
                          or ""),
         id=str(getattr(request, "turn_id", "") or ""),
+        people=_people(getattr(request, "metadata", None)),
     )
+
+
+def _people(metadata) -> tuple[str, ...]:
+    """The room's people a message carried (`room_people.METADATA_KEY`)."""
+    from room_people import METADATA_KEY
+
+    people = (metadata or {}).get(METADATA_KEY) if isinstance(metadata, dict) else None
+    return tuple(str(p) for p in people or ())
