@@ -12,7 +12,7 @@ of them, in the card pages' look:
     bookmarks(answer, context)     the bookmarks, with their site
     documents(answer, context)     one chip per kind of document, most first
     links(answer, context)         the people, topics and senders the page's cards name
-    type_chips(answer, context)    how many of the page's cards are of each type
+    type_chips(answer, context)    how many of the page's cards are of each type, each a link to them
 
 Every section is a `<section>` named by its part (`data-section="lists"`),
 with its heading, and says so in one line when it has nothing: a page keeps
@@ -165,14 +165,17 @@ def links(answer: dict, context: Context) -> str:
 
 def type_chips(answer: dict, context: Context) -> str:
     """How many of the page's cards are of each type, as a row of chips,
-    most first; "" for a page with no card."""
+    most first; "" for a page with no card. Each chip opens the cards it
+    counts: on a person's page (`context.me`) that kind among their cards
+    (`/memory/kind/note/marge`), documents too, on the family's page the
+    kind's page, which for the documents is the documents page."""
     counts = answer.get("counts") or {}
     w = words(context.language)
     chips = "".join(
-        f'<span class="chip type-chip" data-type="{escape(t)}">{type_icon(t, size=12)}'
-        f'{escape(w["types"].get(t, t))} <span class="n">{n}</span></span>'
+        f'<a class="chip type-chip" data-type="{escape(t)}" href="{escape(addresses.kind(t, person=context.me))}">'
+        f'{type_icon(t, size=12)}{escape(w["types"].get(t, t))} <span class="n">{n}</span></a>'
         for t, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
-    return (f'<div class="filters" role="group" aria-label="{escape(w["show_only"])}">{chips}</div>'
+    return (f'<nav class="filters" data-chips="types" aria-label="{escape(w["show_only"])}">{chips}</nav>'
             if chips else "")
 
 

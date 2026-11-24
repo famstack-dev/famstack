@@ -571,7 +571,8 @@ no model call (`stacklets/memory/overview/`). These are the views:
 
 - `me`, `family`, `person/<id>`;
 - `topic/<card_id>`, `sender/<card_id>`;
-- `documents`, `documents/<kind>`, `kind/<type>`, `senders`;
+- `documents`, `documents/<kind>`, `kind/<type>`, `kind/<type>/<person>` (the cards of that type that the person's
+  page counts), `senders`;
 - `everything` (the menu's counts).
 
 Each view gives only the sections that its page shows. These are the sections:

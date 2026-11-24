@@ -197,7 +197,7 @@ What you can drop there:
 
 Everything you capture is filed under your own name in the family archive: Homer's pastes land in Homer's notes and bookmarks, Marge's in hers. The bot replies with what it filed and where.
 
-**The title in the reply is a link.** Tap it to open the page of what was filed, on any phone or computer at home. The page shows the facts, the full text and the history: who filed it, who changed it and when. The link stays the same, so it still opens the page months later.
+**The title in the reply is a link.** Tap it to open the page of what was filed, on any phone or computer at home. The page shows the facts, the full text and the history: who filed it, who changed it and when. Under a filing, the history says what was sent and where, for example "a photo, in Marge's chat". Under a correction, it shows the words of the correction. The link stays the same, so it still opens the page months later.
 
 **In your family's language.** The archivist writes titles, summaries and facts in your family's language, whatever language the link, photo or document is in: a Spanish hotel bill from the holiday gets a German summary in a German family. Names, amounts and technical terms stay as they are. The original stays untouched. A room can choose differently with `!config language`:
 
@@ -348,7 +348,7 @@ Stacky answers only from what every person in the room may read. Your own notes,
 
 Everything the archivist files becomes more than a pile of documents: the memory stacklet renders it as a wiki of your family life. A home page, topic pages, a page per correspondent (the insurance company, the school, the doctor's office).
 
-The wiki shows what the family shares. Every paired device sees the same wiki, because it cannot tell who reads it. Your own notes and your private topics are not in the wiki. Find them on the memory pages, which show each person only what is theirs and what the family shares. A link in the chat to a person or to a person's own topic opens the memory pages too.
+The wiki shows what the family shares. Every paired device sees the same wiki, because it cannot tell who reads it. Your own notes and your private topics are not in the wiki. Find them on the memory pages, which show each person only what is theirs and what the family shares. A link in the chat to a person or to a person's own topic opens the memory pages too. Under the heading of a memory page, a chip for each type of card shows how many cards of that type the page has, for example "Notes 12". Tap a chip to open these cards.
 
 Open it at `http://<mac-ip>:42070` (or `memory.<your-domain>` if the admin set up a domain). It opens on a phone or computer that is paired with famstack, the same as the dashboard. A filed item shows on its pages within seconds. The written summaries of the home page and the family members' pages are updated once a night.
 

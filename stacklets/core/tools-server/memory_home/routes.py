@@ -12,6 +12,7 @@ The web server adds them once, with what every page needs from it:
     GET /memory/sender/<card id>      a sender's page
     GET /memory/documents[/<kind>]    the documents by kind
     GET /memory/kind/<type>           every card of one kind (`note`, `diary`)
+    GET /memory/kind/<type>/<id>      the cards of one kind a person's page counts (its type chip)
         ?part=2                       a part of the long list of cards of each page above
     GET /memory/senders               every sender, with its documents
     GET /memory/search?q=<words>      the search (`pages.open_search`)
@@ -89,6 +90,11 @@ def routes(app: FastAPI, *, reads: Callable[[Request], Reads], language: Callabl
         route = _graph_route(open_page, reads=reads, language=language, never_set_up=never_set_up,
                              answer=answer, extra=extra)
         app.add_api_route(f"{MEMORY_PREFIX}/{address}", route, methods=["GET"], include_in_schema=False)
+
+    @app.get(f"{MEMORY_PREFIX}/kind/{{ref}}/{{person}}", include_in_schema=False)
+    async def persons_kind(ref: str, person: str, request: Request, part: str = "1"):
+        return answer(await open_kind(ref, reads(request), await _looking(request), language=language(request),
+                                      never_set_up=never_set_up, part=_part(part), person=person))
 
     @app.get(f"{MEMORY_PREFIX}/search", include_in_schema=False)
     async def search_memory(request: Request, q: str = ""):

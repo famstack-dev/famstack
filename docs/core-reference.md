@@ -34,7 +34,10 @@ Every card has a page at `/card/<card_id>`. Core renders each page from the
 - the messages a diary entry or a note was filed from, in the order sent, below the text: a text, a photo, photos in a row, a file, a later reply;
 - for a note that the AI wrote: ✦ beside the date, a line that says so, and how to correct it in the room it came from. The mark and the line name the AI as the topic page does. The page reads `[ai] provider` through the host API and waits at most 2 seconds. Without an answer in that time, the page names "AI";
 - its people and tags;
-- its history, read from the card's versions at `/card/<card_id>/history` only when the history is opened.
+- its history, read from the card's versions at `/card/<card_id>/history` only when the history is opened. Under a
+  filing, a second line says what was sent and where ("a photo, in Homer's chat", "a PDF, by email"). Under a
+  correction, a second line quotes the correction, cut to about 120 characters. Both come from the source that the
+  change added to the card's sidecar, and only from a source that the card still shows.
 
 The page shows no links between cards. It has no control to change a card.
 
@@ -78,7 +81,8 @@ The memory's pages are read only. Each address shows one page:
 | `/memory/sender/<card_id>` | One sender |
 | `/memory/documents`, `/memory/documents/<kind>` | The documents, by kind |
 | `/memory/kind/<type>` | The cards of one card type, newest first |
-| `/memory/kind/document` | A redirect to `/memory/documents` |
+| `/memory/kind/<type>/<id>` | The cards of one card type that the page of the person `<id>` counts. The type chips on `/memory` and `/memory/person/<id>` open it. |
+| `/memory/kind/document` | A redirect to `/memory/documents`. `/memory/kind/document/<id>` is not redirected. |
 | `/memory/senders` | Every sender, with the number of its documents |
 | `/memory/search?q=<words>` | The search results |
 | `/memory/preview/<card id>` | A card link's preview, as JSON |
@@ -86,6 +90,11 @@ The memory's pages are read only. Each address shows one page:
 **Long lists.** The sender, documents and kind pages show 40 cards at a time. "Older" and "Newer" link to the other
 parts of the list. Each part has its own address, for example `/memory/kind/note?part=2`. Because of this, Back works.
 A part outside the list is "not found". On a topic that the device can read, a part after the last part says that the topic has no more entries.
+
+**The type chips.** `/memory`, `/memory/person/<id>` and `/memory/family` show one chip for each card type, with the
+number of the page's cards of that type. A chip opens these cards. On the page of a person, it opens
+`/memory/kind/<type>/<id>`, also for the documents. On the family's page, it opens `/memory/kind/<type>`, and the
+documents chip opens `/memory/documents`.
 
 **The menu.** The menu of every memory page has the group "Everything". It lists the senders and each card type that
 the device has cards of, with its count. A card type that the device has no card of is not in the menu.

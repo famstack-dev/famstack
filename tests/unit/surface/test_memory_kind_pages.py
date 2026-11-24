@@ -218,6 +218,67 @@ def test_the_diary_shows_only_what_the_device_may_read(tools):
     assert cards_in(opens(phone(tools, person="homer"), "/memory/kind/diary"), "cards") == [MOES, BIKE]
 
 
+# ── The type chips ────────────────────────────────────────────────────────
+# My memory, a person's page and the family's page show a row of chips,
+# one per type of card the page counts ("Notes 1"). A tap opens exactly
+# the cards the chip counts.
+
+def type_chips(page: Page) -> dict[str, tuple[int, str]]:
+    """Each type chip as `{type: (its count, the address it opens)}`."""
+    chips = page.within("data-chips", "types")
+    counts = [int(n) for n in chips.texts("n")]
+    return {kind: (n, href) for kind, n, (_, href) in
+            zip(chips.attributes("type-chip", "data-type"), counts, chips.links(), strict=True)}
+
+
+@pytest.mark.parametrize(("person", "path"), [("marge", "/memory"), ("homer", "/memory"),
+                                              ("homer", "/memory/person/marge"), ("marge", "/memory/family"),
+                                              ("homer", "/memory/family")])
+def test_a_type_chip_opens_exactly_the_cards_it_counts(tools, person, path):
+    """Given My memory, a person's page or the family's page, when a
+    person taps a type chip, then the page it opens lists exactly as many
+    cards as the chip says. Marge's notes are 1 of the family's 2, and
+    Homer's own surprise party is his one list: a chip on a person's page
+    opens that person's cards only, the family's chip the family's.
+
+    The documents chip of a person's page opens that person's documents
+    too; the family page's opens the documents page, as the menu does."""
+    browser = phone(tools, person=person)
+    chips = type_chips(opens(browser, path))
+
+    assert chips, "the page shows type chips"
+    for kind, (count, href) in chips.items():
+        if kind == "document" and path == "/memory/family":
+            assert href == "/memory/documents"
+            continue
+        opened = opens(browser, href)
+        assert opened.texts("count-line") == [f"{count} card" + ("s" if count > 1 else "")], (kind, href)
+        assert len(cards_in(opened, "cards")) == count, (kind, href)
+
+
+def test_marges_notes_chip_opens_her_notes_and_not_the_familys(tools):
+    """Given two family notes, one naming Marge, when Marge taps "Notes 1"
+    on My memory, then her note opens and Lisa's saxophone lesson does not;
+    the family page's "Notes 2" opens both."""
+    marge = phone(tools, person="marge")
+    _, mine = type_chips(opens(marge, "/memory"))["note"]
+    _, family = type_chips(opens(marge, "/memory/family"))["note"]
+
+    assert cards_in(opens(marge, mine), "cards") == [TENT]
+    assert cards_in(opens(marge, family), "cards") == [SAXOPHONE, TENT]
+
+
+@pytest.mark.parametrize("path", ["/memory/kind/note/nobody", "/memory/kind/list/marge"])
+def test_a_persons_kind_with_no_card_is_not_found(tools, path):
+    """Given no person "nobody", and no list of Marge's, then each of
+    these pages is the "not found" page of a kind with no card."""
+    marge = phone(tools, person="marge")
+    page, nothing = marge.opens(path), marge.opens("/memory/kind/nothing-of-that-kind")
+
+    assert page.status == 404
+    assert page.body == nothing.body
+
+
 @pytest.mark.parametrize("path", ["/memory/kind/list", "/memory/kind/nonsense", "/memory/kind/person"])
 def test_a_kind_the_device_has_no_card_of_is_not_found(tools, path):
     """Given lists only in Homer's own folder, when Marge's phone opens the
@@ -252,12 +313,16 @@ def test_the_senders_page_lists_each_sender_with_its_documents(tools):
 # ── Who may see what ──────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("path", ["/memory", "/memory/family", "/memory/kind/diary", "/memory/kind/note",
-                                  "/memory/senders", "/memory/documents"])
+                                  "/memory/senders", "/memory/documents", "/memory/kind/diary/marge",
+                                  "/memory/kind/note/homer", "/memory/kind/diary/homer",
+                                  "/memory/kind/document/homer"])
 def test_nothing_of_homers_own_folder_reaches_marges_phone(tools, path):
     """Given Homer's own diary entry, bet, sender and list, then no entry,
-    count or row of Marge's pages comes from them."""
-    page = opens(phone(tools, person="marge"), path)
+    count or row of Marge's pages comes from them, also on the pages of
+    Homer's cards by type, which may as well be "not found" for her."""
+    page = phone(tools, person="marge").opens(path)
 
+    assert page.status in (200, 404), page
     assert [leak for leak in HOMERS_OWN if leak in page.body] == []
 
 
@@ -289,7 +354,7 @@ def test_the_phones_menu_button_opens_the_menu_with_everything(tools):
 # a day, all naming Marge: more than a page lists at once (40), so each of
 # these pages has two parts, and Marge's page three.
 MANY = 45
-LONG_PAGES = ["/memory/kind/note", "/memory/topic/topic-garden", "/memory/documents",
+LONG_PAGES = ["/memory/kind/note", "/memory/kind/note/marge", "/memory/topic/topic-garden", "/memory/documents",
               "/memory/documents/Receipt", f"/memory/sender/{KWIK}"]
 
 
