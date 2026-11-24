@@ -57,6 +57,7 @@ class Synapse:
         self.writes: list[tuple[str, str]] = []
         self.posted: list[tuple[str, str, str]] = []
         self.account_reads_fail = False
+        self.no_account: set[str] = set()
         httpserver.expect_request(re.compile(".*")).respond_with_handler(self._handle)
 
     def has_account(self, name, password):
@@ -82,6 +83,11 @@ class Synapse:
         """The names of the accounts in the room `#<alias>`, without the server."""
         room = self.rooms.get(f"#{alias}:{self.server}")
         return {m.split(":")[0].lstrip("@") for m in self.members.get(room, set())}
+
+    def has_no_account_for(self, name):
+        """`name` is in users.toml but has no chat account yet, so Synapse
+        refuses a join of them with 404, as it does for an unknown user."""
+        self.no_account.add(f"@{name}:{self.server}")
 
     def fails_account_reads(self):
         """Every admin read of an account answers 500, as a busy or failing server does.
@@ -119,6 +125,8 @@ class Synapse:
             self.members[self.rooms[alias]] = {f"@{token}:{self.server}"}
             return _json({"room_id": self.rooms[alias]})
         if m := re.fullmatch(r"/_synapse/admin/v1/join/([^/]+)", path):
+            if body["user_id"] in self.no_account:
+                return _json({"errcode": "M_NOT_FOUND", "error": "User not found"}, 404)
             self.members.setdefault(m.group(1), set()).add(body["user_id"])
             self.departed.get(m.group(1), {}).pop(body["user_id"], None)
             self.writes.append((m.group(1), f"join {body['user_id']}"))

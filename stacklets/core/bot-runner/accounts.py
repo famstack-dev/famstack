@@ -22,6 +22,16 @@ import urllib.request
 
 from loguru import logger
 
+# The `room_members` values a bot may declare. Omitted means the admins only.
+PARENTS = "parents"
+ROOM_MEMBERS = (None, PARENTS)
+
+# The power level of the admins in a bot's room. In a room for the parents
+# inviting takes it too, so only an admin can invite: the `private_chat`
+# preset lets any member invite, and anyone in the Documents Room can see
+# every document of the family.
+ADMIN_LEVEL = 100
+
 _SSL = ssl.create_default_context()
 _SSL.check_hostname = False
 _SSL.verify_mode = ssl.CERT_NONE
@@ -161,13 +171,18 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         if not room_id:
             continue
 
-        people = parents if bot.get("room_members") == "parents" else []
+        members = bot.get("room_members")
+        if members not in ROOM_MEMBERS:
+            logger.warning("{} declares room_members = {!r}, which is not \"{}\": "
+                           "#{} is for the admins only", bot["id"], members, PARENTS, room_alias)
+        for_parents = members == PARENTS
+        people = parents if for_parents else []
         _join_missing(base, token, room_id, [bot_user, *admins],
                       [p for p in people if p not in admins])
         # The tech admin created the room and is otherwise the only
         # account with power there.
-        for admin in admins:
-            _ensure_admin_power(base, token, room_id, admin)
+        _ensure_power(base, token, room_id, admins,
+                      invite=ADMIN_LEVEL if for_parents else None)
 
 
 def _join_missing(base, token, room_id, required, optional=()):
@@ -204,18 +219,28 @@ def _memberships(base, token, room_id):
             for e in resp.get("state") or [] if e.get("type") == "m.room.member"}
 
 
-def _ensure_admin_power(base, token, room_id, full_user):
-    """Give a user power level 100 in a room, writing only when it differs.
-    The same rule `stack messages setup --room-admins` applies to every room the stack creates."""
+def _ensure_power(base, token, room_id, admins, invite=None):
+    """Give each admin power level 100 in a room and, when `invite` is
+    set, make inviting take that level. One read, and one write only when
+    a level differs, so a room that is right gets no new event.
+
+    The admins' level is the same rule `stack messages setup --room-admins`
+    applies to every room the stack creates.
+    """
     path = f"{base}/_matrix/client/v3/rooms/{room_id}/state/m.room.power_levels/"
     status, body = _api("GET", path, token=token)
-    levels: dict = dict(body) if status == 200 else {}
-    users: dict = dict(levels.get("users") or {})
-    if status != 200 or users.get(full_user) == 100:
-        return
-    status, resp = _api("PUT", path, {**levels, "users": {**users, full_user: 100}}, token=token)
     if status != 200:
-        logger.warning("Could not make {} an admin of {}: {}", full_user, room_id, resp.get("error", "?"))
+        return
+    levels: dict = dict(body)
+    wanted = {**levels, "users": {**(levels.get("users") or {}),
+                                  **dict.fromkeys(admins, ADMIN_LEVEL)}}
+    if invite is not None:
+        wanted["invite"] = invite
+    if wanted == levels:
+        return
+    status, resp = _api("PUT", path, wanted, token=token)
+    if status != 200:
+        logger.warning("Could not set the power levels of {}: {}", room_id, resp.get("error", "?"))
 
 
 def _resolve_room(base, token, server_name, alias):
@@ -263,6 +288,11 @@ def _ensure_room(base, token, server_name, alias, topic, space_id):
 
 
 def _join_user(base, token, room_id, full_user):
-    """Force-join a user to a room via the Synapse admin API."""
-    _api("POST", f"{base}/_synapse/admin/v1/join/{room_id}",
-         {"user_id": full_user}, token=token)
+    """Force-join a user to a room via the Synapse admin API. A refused
+    join is logged, for example of a person whose chat account does not
+    exist yet: the next start tries again."""
+    status, resp = _api("POST", f"{base}/_synapse/admin/v1/join/{room_id}",
+                        {"user_id": full_user}, token=token)
+    if status != 200:
+        logger.warning("Could not join {} to {} ({}): {}",
+                       full_user, room_id, status, resp.get("error", "?"))

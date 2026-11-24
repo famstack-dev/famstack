@@ -25,6 +25,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from stack.stacklet_code import load
 from tests.springfield import make_stack, write_instance
@@ -55,10 +56,19 @@ def synapse(httpserver):
     return Synapse(httpserver, server=SERVER)
 
 
-def _start_bot_runner(httpserver, parents=PARENTS):
+@pytest.fixture
+def warnings():
+    """The warnings the bot runner logs while the test runs."""
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(str(m)), level="WARNING")
+    yield records
+    logger.remove(sink)
+
+
+def _start_bot_runner(httpserver, parents=PARENTS, bots=BOTS):
     """Set up the rooms as the bot runner does on every start."""
     accounts = load(CORE, CORE / "bot-runner" / "accounts.py")
-    accounts.ensure_rooms(BOTS, httpserver.url_for("/"), SERVER, "stackadmin", ADMIN_PASSWORD,
+    accounts.ensure_rooms(bots, httpserver.url_for("/"), SERVER, "stackadmin", ADMIN_PASSWORD,
                           admin_user_ids=ADMINS, parent_user_ids=parents)
 
 
@@ -130,6 +140,47 @@ def test_an_admin_who_left_is_joined_again(httpserver, synapse):
     _start_bot_runner(httpserver)
 
     assert "homer" in synapse.members_of("documents")
+
+
+def test_only_an_admin_can_invite_into_a_new_documents_room(httpserver, synapse):
+    """Given a fresh install, inviting into the Documents Room takes the
+    admins' power level, so a parent or an invited child cannot invite."""
+    _start_bot_runner(httpserver)
+
+    levels = synapse.power_levels["!documents:simpson"]
+    assert levels["invite"] == 100
+    assert levels["users"]["@homer:simpson"] == 100
+
+
+def test_an_existing_documents_room_gets_the_admins_invite_level(httpserver, synapse):
+    """Given a Documents Room from 0.4.x where any member can invite, the
+    next start sets the invite level to the admins' level."""
+    synapse.has_room("documents", "homer", "archivist-bot")
+    synapse.power_levels["!documents:simpson"] = {"users": {"@homer:simpson": 100}, "invite": 0}
+
+    _start_bot_runner(httpserver)
+
+    assert synapse.power_levels["!documents:simpson"]["invite"] == 100
+
+
+def test_a_parent_who_cannot_be_joined_is_logged(httpserver, synapse, warnings):
+    """Given Marge has no chat account yet, her failed join is logged with her and the room."""
+    synapse.has_no_account_for("marge")
+
+    _start_bot_runner(httpserver)
+
+    assert any("@marge:simpson" in w and "!documents:simpson" in w for w in warnings), warnings
+
+
+def test_an_unknown_room_members_value_is_logged(httpserver, synapse, warnings):
+    """Given a bot declares `room_members = "parent"` (a typo), the runner
+    joins the admins only and logs a warning that names the value."""
+    typo = {**BOTS[0], "room_members": "parent"}
+
+    _start_bot_runner(httpserver, bots=[typo])
+
+    assert "marge" not in synapse.members_of("documents")
+    assert any("'parent'" in w and "archivist-bot" in w for w in warnings), warnings
 
 
 def test_core_renders_the_parents_with_a_chat_account_for_the_runner(tmp_path):
