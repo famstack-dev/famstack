@@ -79,8 +79,13 @@ def compose(compose_file: str | Path, *args) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
-def compose_up(compose_file: str | Path, env: dict | None = None) -> tuple[int, str]:
+def compose_up(compose_file: str | Path, env: dict | None = None,
+               services: list[str] | None = None) -> tuple[int, str]:
     """Start containers, always force-recreating. Returns (exit_code, error_output).
+
+    `services` names the services to recreate; none recreates every
+    service of the file. Core's refresh names only the containers whose
+    values changed (`stack.core_refresh`), so the others keep running.
 
     `--force-recreate` is unconditional because compose's service-config
     hash does not cover env_file *contents*: tokens or settings written
@@ -98,7 +103,7 @@ def compose_up(compose_file: str | Path, env: dict | None = None) -> tuple[int, 
     """
     full_env = {**__import__("os").environ, **(env or {})}
     result = _docker(
-        "compose", "-f", str(compose_file), "up", "-d", "--force-recreate",
+        "compose", "-f", str(compose_file), "up", "-d", "--force-recreate", *(services or ()),
         capture_output=True, text=True, timeout=300, env=full_env,
     )
     if result.returncode != 0 and (result.stderr or "").strip() == "no service selected":

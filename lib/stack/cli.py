@@ -50,24 +50,16 @@ from .stack import Stack, configured_data_dir
 
 
 def _refresh_core(stck, stacklet_id, first_run=False):
-    """Re-render core's env, and recreate core's containers when it changed
-    or when the start was a stacklet's first run.
+    """Re-render core's env, and recreate the containers of core whose
+    values changed, and the bot runner after a stacklet's first run.
 
     Called at the end of `stack up <id>` for any stacklet but core. Core's
-    env reads secrets other stacklets write in their first run (an API
-    token, a bot's password), and compose's config hash does not cover an
-    env file's contents, so a changed `.env` needs an explicit recreate for
-    the bot runner to see the new value. A recreate also restarts the
-    dashboard's server and every bot, so it happens only when the
-    rendered `.env` differs from the one core was started with: a second
-    `stack up photos` leaves core running.
-
-    A first run (`first_run`) recreates core even with its `.env`
-    unchanged. The bot runner finds bots only when it starts, in the
-    stacklets with a setup-done marker, and a first run writes that
-    marker. The agent's first run changes nothing core's env reads (its
-    bot password goes to the secret store), so without this its bot
-    would not start until core was recreated for another reason.
+    env reads secrets other stacklets write in their first run, and compose
+    does not see a changed env file on its own. Which containers are
+    recreated, and why the tools server is kept running, is in
+    `stack.core_refresh`. Nothing is asked of Docker when the rendered
+    `.env` equals the one core was started with and the start was no
+    first run: a second `stack up photos` leaves core running.
 
     While core's containers run code the checkout has moved past (after
     an update, before `stack restart`), a recreate is not done: core and
@@ -117,8 +109,12 @@ def _refresh_core(stck, stacklet_id, first_run=False):
     core_compose = docker.find_compose_file(core_dir)
     if not core_compose:
         return
+    from . import core_refresh
+    services = core_refresh.stale_services(core_compose, first_run)
+    if services == []:
+        return
     answering = _answering_checks(stck)
-    code, err = docker.compose_up(core_compose)
+    code, err = docker.compose_up(core_compose, services=services)
     if code != 0:
         _restore_env_file(core_dir, started_with)
         reason = err.strip().splitlines()[-1] if err and err.strip() else "unknown error"

@@ -1074,10 +1074,21 @@ going on, the start stops at once, names that run and says to start again
 once it ended. `stack doctor` names the run that holds the stack's
 lock when it comes from a terminal, where it may wait for an answer, or
 has gone on for more than five minutes. The reason is core: a run
-that ends a first start recreates core, which closes core's card door and
-stops the bot runner for seconds. A run that used core in those seconds
-failed. The run that recreates core ends only after everything that
-answered before the recreate answers again, core's card door included.
+that ends a first start recreates core's bot runner, and every container
+of core that runs with values that are no longer current, which closes
+core's card door and stops the bot runner for seconds. A run that used
+core in those seconds failed. The run that recreates core ends only after
+everything that answered before the recreate answers again, core's card
+door included.
+
+Core's tools server serves the setup page and the dashboard. It gets only
+the values of core's `.env` that its code reads, listed under
+`environment:` in core's compose file, so a value only the bot runner
+reads (the AI's address and key, which the setup page's AI step writes)
+does not recreate it. The tokens that documents and photos write in their
+first run are not on the list: the tools server reads them from the host
+API (`stack env core`) when a search needs them. A key the tools server's
+code reads must be on that list: a unit test fails when it is not.
 
 A stacklet's preparation does not wait in this queue. `stack <id>
 prepare` runs the stacklet's `on_prepare` hook holding only that

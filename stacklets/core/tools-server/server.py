@@ -60,15 +60,12 @@ from stack.stack import AI_MANAGED
 
 
 # ── Config from environment ──────────────────────────────────────────────
-# All injected via docker-compose env_file from core's .env
-
-# Paperless — container-to-container on stack network
-PAPERLESS_URL = os.environ.get("PAPERLESS_URL", "")
-PAPERLESS_TOKEN = os.environ.get("PAPERLESS_TOKEN", "")
-
-# Immich — container-to-container on stack network
-IMMICH_URL = os.environ.get("IMMICH_URL", "")
-IMMICH_API_KEY = os.environ.get("IMMICH_API_KEY", "")
+# The values of core's .env that core's compose file lists for this server.
+# The service tokens are not among them: documents' and photos' first runs
+# write them while this server runs the setup page, and a value read at
+# start would need a recreate of the server, which leaves the page without
+# an answer. A search reads its token from the host API (`_core_value`),
+# and its service's address when it runs.
 
 # ── Link resolver — public bases for the /<prefix>/ persistent links ──────
 # These are the URLs a *browser* uses, not the container-internal ones above.
@@ -448,6 +445,28 @@ async def stack_list():
     return client.call({"cmd": "list"}, timeout=STACK_API_TIMEOUT_SECS)
 
 
+async def _core_value(key: str) -> str | None:
+    """The value `key` has in core's env now, from the host API (`stack
+    env core`): "" when core's env has none, None when the host API does
+    not answer.
+
+    Used for the service tokens a first run writes after this server
+    started (see "Config from environment"). The two cases differ for
+    the family: no token means the service is not installed, no answer
+    means the search may work again in a moment.
+    """
+    answer = await asyncio.to_thread(client.call, {"cmd": "env", "stacklet": "core"},
+                                     timeout=STACK_API_TIMEOUT_SECS)
+    if "env" not in answer:
+        return None
+    return str(answer["env"].get(key, ""))
+
+
+# A search whose token could not be read: the service is installed, so the
+# family is told to try again, not to install it.
+NO_TOKEN_NOW = "Cannot reach the stack to read the {service} token right now. Try again in a moment."
+
+
 # ── Document search (Paperless-ngx) ──────────────────────────────────────
 # Paperless provides full-text search across OCR'd documents. The family
 # can ask "find the car insurance" and the LLM searches the archive.
@@ -456,15 +475,19 @@ async def stack_list():
          description="Search through all scanned and uploaded documents (receipts, letters, contracts, etc.) using full-text search powered by OCR.")
 async def search_documents(query: str, limit: int = 5):
     """Search the family document archive for matching documents."""
-    if not PAPERLESS_URL or not PAPERLESS_TOKEN:
+    paperless_url = os.environ.get("PAPERLESS_URL", "")
+    token = await _core_value("PAPERLESS_TOKEN")
+    if paperless_url and token is None:
+        return _error(NO_TOKEN_NOW.format(service="Paperless"))
+    if not paperless_url or not token:
         return _error("Documents service is not configured — install docs first")
 
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{PAPERLESS_URL}/api/documents/",
+                f"{paperless_url}/api/documents/",
                 params={"query": query, "page_size": limit},
-                headers={"Authorization": f"Token {PAPERLESS_TOKEN}"},
+                headers={"Authorization": f"Token {token}"},
                 timeout=15,
             )
     except httpx.ConnectError:
@@ -502,16 +525,20 @@ async def search_documents(query: str, limit: int = 5):
          description="Search the family photo library using natural language. Understands people, places, objects, and scenes.")
 async def search_photos(query: str, limit: int = 10):
     """Search family photos using natural language descriptions."""
-    if not IMMICH_URL or not IMMICH_API_KEY:
+    immich_url = os.environ.get("IMMICH_URL", "")
+    key = await _core_value("IMMICH_API_KEY")
+    if immich_url and key is None:
+        return _error(NO_TOKEN_NOW.format(service="Immich"))
+    if not immich_url or not key:
         return _error("Photos service is not configured — install photos first")
 
     try:
         async with httpx.AsyncClient() as client:
             # Immich smart search uses CLIP embeddings for natural language
             resp = await client.post(
-                f"{IMMICH_URL}/api/search/smart",
+                f"{immich_url}/api/search/smart",
                 json={"query": query, "page": 1, "size": limit},
-                headers={"x-api-key": IMMICH_API_KEY},
+                headers={"x-api-key": key},
                 timeout=15,
             )
     except httpx.ConnectError:
