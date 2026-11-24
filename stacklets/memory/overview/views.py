@@ -44,6 +44,7 @@ from .scope import (KINDS, Person, document_kind, entries, in_topic, is_about, o
 from .sections import (changed, documents, lists_of, open_lists, people, senders, topics,
                        up_next)
 from .tally import counts, links
+from .topic_view import topic_view
 
 __all__ = ["NoSuchPage", "overview"]
 
@@ -164,7 +165,8 @@ def _topic(graph: Graph, about: str, audience: frozenset[str] | None, today: dat
             "up_next": up_next(graph, cards, lists_of(cards), today),
             "cards": _part(cards, part),
             "links": links(graph, cards),
-            "counts": counts(cards)}
+            "counts": counts(cards),
+            **topic_view(topic, cards, today, part=part)}
 
 
 def _sender(graph: Graph, about: str, audience: frozenset[str] | None, today: date, part: int) -> dict:

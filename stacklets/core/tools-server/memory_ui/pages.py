@@ -60,8 +60,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from html import escape
 
-from memory_ui import card_page, history, notices
+from memory_ui import ai_route, card_page, history, notices
 from memory_ui.addresses import card_address
+from memory_ui.ai_route import AiPlan
 from memory_ui.entry import media_paths
 from memory_ui.file_notes import file_of
 from memory_ui.frame import Framing
@@ -91,9 +92,11 @@ class Answer:
 
 
 async def open_card(ref: str, reads: Reads, *, now: datetime, language: str, paperless: str,
-                    never_set_up: NeverSetUp, framing: Framing) -> Answer:
+                    never_set_up: NeverSetUp, framing: Framing, ai_plan: AiPlan | None = None) -> Answer:
     """The page of the card `ref` names (`/card/<ref>`), in the frame
     `framing` gives, which is asked only for a page, never for a redirect.
+    `ai_plan` reads the AI's route for ✦'s words (`ai_route.read`); none
+    names just an AI.
 
     This page is the one place that decides which card a card id names,
     for `/card/<ref>` and for `/go/card/<card id>`, which comes straight
@@ -104,7 +107,8 @@ async def open_card(ref: str, reads: Reads, *, now: datetime, language: str, pap
     link checker knows it is gone for good. Else a notice with 404. No
     answer is a notice that the memory does not answer (or the "not set
     up" page with 404). A card's page reads the people's names and the
-    media store's records of the files it shows, all at once.
+    media store's records of the files it shows and the AI's route, all
+    at once.
 
         await open_card("bookmark-1a2b3c4d5e", reads, ...)
         Answer(status=302, html='', location='/card/note-0b6e2d91aa')
@@ -123,11 +127,12 @@ async def open_card(ref: str, reads: Reads, *, now: datetime, language: str, pap
         said = words(language)["missing" if where.status == 404 else "unreachable"]
         return Answer(where.status, card_page.notice(said, frame=await framing()))
     found, paths = file_of(card), media_paths(card)
-    names, frame, kept, *records = await asyncio.gather(
-        reads.names(), framing(), reads.kept(found.path) if found else _nothing(),
+    names, frame, route, kept, *records = await asyncio.gather(
+        reads.names(), framing(), ai_route.read(ai_plan), reads.kept(found.path) if found else _nothing(),
         *(reads.kept(p) for p in paths))
     return Answer(200, card_page.page(card, names=names, now=now, language=language, frame=frame,
-                                      kept=kept, paperless=paperless, media=dict(zip(paths, records))))
+                                      kept=kept, paperless=paperless, media=dict(zip(paths, records)),
+                                      route=route))
 
 
 async def open_history(card_id: str, reads: Reads, *, now: datetime, language: str) -> Answer:

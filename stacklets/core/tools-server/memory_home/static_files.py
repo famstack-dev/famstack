@@ -16,7 +16,7 @@ __all__ = ["asset", "STATIC_DIR"]
 STATIC_DIR = Path(__file__).parent / "static"
 # The pages' own files and what they are. Anything else under
 # `/memory/static` is not one.
-_ASSETS = {"home.css": "text/css", "home.js": "text/javascript", "preview.js": "text/javascript",
+_ASSETS = {"home.css": "text/css", "topic.css": "text/css", "home.js": "text/javascript", "topic.js": "text/javascript", "preview.js": "text/javascript",
            "search_layer.js": "text/javascript", "search_toggle.js": "text/javascript"}
 
 

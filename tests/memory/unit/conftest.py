@@ -11,6 +11,8 @@ rest of the unit lane. The fixtures:
   runner's services) defines its own `memory` from `running_memory`.
 - `stack_cli`: `./stack` as a person runs it, as a process of its own.
 - `forgejo_accounts`: `GET /api/v1/user` on the test's Forgejo stand-in.
+- `simpsons`: the Simpsons' memory the overview's tests read, seeded a
+  month ago, one per module (`overview_world.py`).
 
 The compile's prompt measurement (`compile_prompts.py`) starts in the
 background once the lane has collected its tests, and the tests that read
@@ -33,6 +35,7 @@ from tests.lanes.unit import (  # noqa: F401
 from tests.springfield import REPO, write_instance
 
 from .instance import RunningMemory, running_memory
+from .overview_world import simpsons  # noqa: F401
 from .simpsons_cards import ONTOLOGY, VAULT
 
 

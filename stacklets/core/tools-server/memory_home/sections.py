@@ -35,7 +35,6 @@ from memory_home import addresses
 from memory_home.items import Context, by_line, card_link, person_name, row, type_icon
 from memory_home.words import counted, words
 from memory_ui.addresses import card_address
-from memory_ui.words import day_of, plain_day
 
 __all__ = ["up_next", "lists", "topics", "cards", "changed", "bookmarks", "documents", "links",
            "type_chips", "section", "rows", "listed"]
@@ -113,7 +112,7 @@ def changed(answer: dict, context: Context) -> str:
     part = answer.get("changed") or {}
     items = part.get("items", [])[:CHANGED_SHOWN]
     count = part.get("count", 0)
-    lines = [row(i, context, when=_day(i.get("on"), context), line=by_line(i, context)) for i in items]
+    lines = [row(i, context, when=context.day_words(i.get("on")), line=by_line(i, context)) for i in items]
     return section("changed", context, rows(lines) if items else "", count or None)
 
 
@@ -230,11 +229,6 @@ def _link_title(found: dict, kind: str, context: Context) -> str:
     if kind == "person":
         return context.names.get(found["id"]) or (found.get("title") or found["id"]).split()[0]
     return found.get("title") or found["id"]
-
-
-def _day(value: object, context: Context) -> str:
-    day = day_of(value)
-    return plain_day(day, today=context.today, language=context.language) if day else ""
 
 
 def _site(url: str) -> str:
