@@ -25,6 +25,7 @@ from pathlib import Path
 from . import caddy
 from .ai.voice import speech_server, voice_table
 from .ai.server import openai_key
+from .config_file import read_stack_toml
 from .configure import FORMS, NOTHING, NOTHING_TO_ASK, asking, run_on_configure
 from .docker import find_compose_file
 from .extensions import catalog_url, read_source, same_repo
@@ -186,12 +187,6 @@ class StackletNotHealthyError(RuntimeError):
         )
 
 
-def configured_data_dir(config: dict) -> Path:
-    """The data dir a stack.toml names: `[core] data_dir`, else `~/<name>-data`."""
-    core = config.get("core", {})
-    return Path(core.get("data_dir", f"~/{core.get('name', 'stack')}-data")).expanduser()
-
-
 class Stack:
     """The stack framework.
 
@@ -243,14 +238,7 @@ class Stack:
     @property
     def config(self) -> dict:
         """Always read stack.toml fresh from disk. No stale cache."""
-        path = self.instance_dir / "stack.toml"
-        if not path.exists():
-            return {}
-        try:
-            with open(path, "rb") as f:
-                return tomllib.load(f)
-        except (tomllib.TOMLDecodeError, OSError):
-            return {}
+        return read_stack_toml(self.instance_dir / "stack.toml")
 
     def _cfg(self, section: str, key: str, default: str = "") -> str:
         """Read a config value from stack.toml."""

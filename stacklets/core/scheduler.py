@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 from stack.plugins import stacklet_commands
 from stack.schedule import OUTPUT_LINES, Entry, Schedule, decide, refusal
+from stack.config_file import read_stack_toml
 from stack.stack import Stack
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -153,11 +154,10 @@ class Scheduler:
     @classmethod
     def for_instance(cls, instance_dir: Path) -> "Scheduler":
         """The scheduler of the instance at `instance_dir`, its data dir read
-        from `stack.toml` the way the CLI reads it."""
-        try:
-            core = tomllib.loads((instance_dir / "stack.toml").read_text()).get("core", {})
-        except (OSError, tomllib.TOMLDecodeError):
-            core = {}
+        from `stack.toml` the way the CLI reads it. A stack.toml that does not
+        parse raises `StackTomlUnreadable`: the default data dir would run the
+        schedule against the wrong folder."""
+        core = read_stack_toml(instance_dir / "stack.toml").get("core", {})
         name = core.get("name", "stack")
         return cls(instance_dir, Path(core.get("data_dir", f"~/{name}-data")).expanduser())
 

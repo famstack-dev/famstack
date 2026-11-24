@@ -641,6 +641,8 @@ The same file a second time writes nothing. `changed` lists the files that a run
 
 `stack.toml` is one file, committed to the repo. The user edits it directly.
 
+A `stack.toml` that does not parse stops every command. The command names the file, the line and the parser's message. It starts and changes nothing, because a file read as empty would point the stack at the default data folder. A missing `stack.toml` is not an error.
+
 ```toml
 [core]
 name          = "famstack"            # product name: CLI branding and
