@@ -32,6 +32,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+from stack.filing.vocabulary import Vocabulary  # noqa: E402
 from stack.cards.sources import NOTE, REPLY, Source, sidecar_path  # noqa: E402
 from stacklets.memory.bot.diary.card import (Card, card_path, correct as corrected, edited_by_hand,
                                              files as card_files, parse as parse_card, render,
@@ -385,13 +386,11 @@ DECLARED = [Person("bart", "Bart Simpson", ("Bartholomew",)), Person("marge", "M
 
 
 def _read(**raw) -> Extraction:
-    return extraction_from(raw, ontology=SEED_ONTOLOGY, language="en",
-                                      people=PEOPLE, declared=DECLARED, model="test-model")
+    return extraction_from(raw, topics=Vocabulary(SEED_ONTOLOGY), people=PEOPLE, declared=DECLARED, model="test-model")
 
 
 def _read_with_lisa(**raw) -> Extraction:
-    return extraction_from(raw, ontology=SEED_ONTOLOGY, language="en",
-                                      people={**PEOPLE, "lisa": "Lisa"},
+    return extraction_from(raw, topics=Vocabulary(SEED_ONTOLOGY), people={**PEOPLE, "lisa": "Lisa"},
                                       declared=[*DECLARED, Person("lisa", "Lisa Simpson")],
                                       model="test-model")
 
@@ -411,8 +410,7 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
         assert _read(topics=["Schule"]).tags == ["education"]
         assert _read(topics=["Medical"]).tags == ["medical"]
         german = extraction_from(
-            {"topics": ["Gesundheit"]}, ontology=SEED_ONTOLOGY, language="de",
-            people=PEOPLE, declared=DECLARED, model="")
+            {"topics": ["Gesundheit"]}, topics=Vocabulary(SEED_ONTOLOGY), people=PEOPLE, declared=DECLARED, model="")
         assert german.tags == ["medical"]
 
     def test_a_topic_named_twice_is_tagged_once(self):
@@ -482,14 +480,13 @@ class TestWhatAModelReadIsHeldToTheHouseholdsVocabulary:
 
     def test_a_name_written_as_an_ordinary_word_names_no_one(self):
         ex = extraction_from(
-            {"summary": "Marge will bake a cake."}, ontology=SEED_ONTOLOGY,
-            language="en", people={**PEOPLE, "will": "Will"},
+            {"summary": "Marge will bake a cake."}, topics=Vocabulary(SEED_ONTOLOGY),
+            people={**PEOPLE, "will": "Will"},
             declared=[*DECLARED, Person("will", "Will")], model="test-model")
         assert ex.persons == ["marge"]
 
     def test_an_answer_that_is_not_an_object_reads_as_nothing(self):
-        empty = extraction_from(None, ontology=SEED_ONTOLOGY, language="en",
-                                           people=PEOPLE, declared=DECLARED, model="m")
+        empty = extraction_from(None, topics=Vocabulary(SEED_ONTOLOGY), people=PEOPLE, declared=DECLARED, model="m")
         assert empty == Extraction(model="m")
 
 
@@ -508,8 +505,8 @@ class TestTheSeedOntologyCoversFamilyLife:
 
     def test_the_households_own_words_find_them(self):
         read = extraction_from(
-            {"topics": ["Konzert", "Geburtstag"]}, ontology=SEED_ONTOLOGY,
-            language="de", people=PEOPLE, declared=DECLARED, model="")
+            {"topics": ["Konzert", "Geburtstag"]}, topics=Vocabulary(SEED_ONTOLOGY),
+            people=PEOPLE, declared=DECLARED, model="")
         assert read.tags == ["music", "celebration"]
 
     def test_the_family_life_topics_share_no_word_with_anything_else(self):

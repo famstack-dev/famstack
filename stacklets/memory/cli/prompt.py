@@ -21,7 +21,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..lib import (
-    DEFAULT_SHARED_BUCKET,
     brain_path_for,
     correspondents_prompt_section,
     get_ontology,
@@ -31,6 +30,7 @@ from ..lib import (
     persons_prompt_section,
     vault_path_for,
 )
+from ._shared_bucket import shared_bucket
 from stack.people import load_people
 
 HELP = "Show the vocabulary the models are fed: topics, family, correspondents"
@@ -59,7 +59,7 @@ def _block(heading: str, used_by: str, body: str, empty: str) -> str:
 def run(args, stacklet, config):
     lang = _language(args or [], config)
     vault = _vault_path(config)
-    bucket = _core(config).get("shared_bucket") or DEFAULT_SHARED_BUCKET
+    bucket = shared_bucket(config)
 
     ontology = get_ontology(vault).classifier_prompt_section(lang)
     # Person pages are generated projections and live in the brain.

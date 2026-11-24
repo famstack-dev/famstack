@@ -66,6 +66,7 @@ from stack.cards.sources import Source, card_fields, sidecar_path, sidecar_text
 from stack.cards import card_id_from
 from stack.frontmatter import FrontmatterError
 from stack.frontmatter import parse as frontmatter_parse
+from stack.filing.vocabulary import Vocabulary
 from stack.tags import card_tags
 
 from .diary_room import household_now
@@ -213,8 +214,8 @@ class Filed(NamedTuple):
     # What a correction changed on the card, read off it before and after;
     # None when the writer does not say (every write but an email's correction).
     changes: "tuple[Change, ...] | None" = None
-    # The card's title, people and tags as the memory has them after a
-    # correction (`email_correction.card_view`); None as for `changes`.
+    # A capture's people (ids, then names its About line shows without one) and
+    # tags; also its title after an email's correction (`card_view`); else None.
     card: dict | None = None
 
 
@@ -639,15 +640,21 @@ class GitMirror:
         """The declared people names resolve through; none without a local copy."""
         return (self.vault.people() if self.vault else None) or []
 
-    def _tags(self, tags: list[str] | None) -> list[str]:
-        """The tags a record is written with: topics by the ontology's id, the
-        rest as keywords, no `Person:` tags (ADR-017 §4, `stack.tags`)."""
-        if self.vault:
-            ontology = self.vault.ontology()
-        else:
+    def _tags(self, tags: list[str] | None, path: str) -> list[str]:
+        """The tags a document or an email at `path` is written with: topics
+        by the ontology's id, the rest as keywords, no `Person:` tags
+        (ADR-017 §4, `stack.tags`). A capture reads the topics of its place
+        instead (`capture_entry`, `stack.filing.vocabulary`).
+
+        The id of a topic the card's readers may not read is left out
+        (`Vocabulary.withheld`): the curator refuses it, and the card
+        would not be filed at all."""
+        if not self.vault:
             from stacklets.memory.lib import get_ontology
-            ontology = get_ontology()
-        return card_tags(without_person_tags(tags or []), ontology)
+            return card_tags(without_person_tags(tags or []), get_ontology())
+        withheld = self.vault.vocabulary(path).withheld
+        return [tag for tag in card_tags(without_person_tags(tags or []), self.vault.ontology())
+                if tag not in withheld]
 
     async def declare(self, path: str, text: str) -> None:
         """Write the card at `path` when the memory has none there yet.
@@ -739,7 +746,7 @@ class GitMirror:
         fm = self._frontmatter(
             title=title, date=date,
             correspondent=correspondent, document_type=document_type,
-            category=category, persons=about.ids, tags=self._tags(tags),
+            category=category, persons=about.ids, tags=self._tags(tags, existing_path or target_path),
             paperless_id=paperless_id, paperless_url=paperless_url,
             processing=processing, model=model,
             identity=identity_for(existing.text if existing else None, "document", target_path),
@@ -917,16 +924,13 @@ class GitMirror:
             return None
         return history_of([Version.from_json(v) for v in found.versions], read_sources=card_sources)
 
-    def _field_values(self, people: list[Person]) -> FieldValues:
-        """What a field edit may name here: the card schemas, the declared
-        people, the ontology."""
+    def _vocabulary(self, target_path: str) -> Vocabulary:
+        """The topics a card at `target_path` may carry
+        (`stack.filing.vocabulary`); the shipped seed's without a vault."""
         if self.vault:
-            ontology = self.vault.ontology()
-        else:
-            from stacklets.memory.lib import get_ontology
-            ontology = get_ontology(None)
-        return FieldValues(schemas=SCHEMA_DIR, person_ids=frozenset(p.id for p in people),
-                           ontology=ontology)
+            return self.vault.vocabulary(target_path)
+        from stacklets.memory.lib import SEED_ONTOLOGY_PATH
+        return Vocabulary.of(target_path, None, seed=SEED_ONTOLOGY_PATH)
 
     async def read_capture(self, path: str) -> str | None:
         """Return the raw markdown of a capture entry, or None if missing.
@@ -979,13 +983,18 @@ class GitMirror:
         persons = _classified_persons(classification)
         people = self._people()
         about = About.of(persons, people)
+        # SAFETY: the topics of the place the card is written to, the same
+        # for a first filing, a correction and `stack memory reprocess`:
+        # never the sender's or the corrector's, so a person's private topic
+        # reaches no card that other people read.
+        vocabulary = self._vocabulary(target_path)
         fm = self._capture_frontmatter(
             title=title,
             captured_at=captured_at,
             kind=kind,
             source_uri=source_uri,
             persons=about.ids,
-            tags=self._tags(tags),
+            tags=vocabulary.topics(tags or []),
             model=model,
             capture_id=capture_id,
             filed_by=_filer_localpart(submitter),
@@ -1001,8 +1010,9 @@ class GitMirror:
             )
             left_out: list[str] = []
             if ops:
-                card, left_out = apply_ops(card, ops, values=self._field_values(people),
-                                           path=target_path, bucket=self.shared_bucket)
+                # What a field edit may name here: the topics of the card's place.
+                card, left_out = apply_ops(card, ops, path=target_path, bucket=self.shared_bucket, values=FieldValues(
+                    schemas=SCHEMA_DIR, person_ids=frozenset(p.id for p in people), ontology=vocabulary.ontology))
                 fm = frontmatter_parse(card)
             return CaptureEntry(fm, card, about, sidecar_text(
                 card_id=str(fm.get("card_id") or ""), filed_by=_filer_localpart(submitter) or "",
@@ -1138,7 +1148,7 @@ class GitMirror:
             capture_id=capture_id, submitter=submitter, kept_media=kept_media,
             caption=caption, replies=replies, clean=clean, sources=sources, made=made, ops=ops,
         )
-        fm, content, about = entry.frontmatter, entry.content, entry.about
+        fm, content = entry.frontmatter, entry.content
         for line in entry.left_out:
             logger.warning("[git-mirror] {}: a field edit no longer fits, left out: {}",
                            target_path, line)
@@ -1169,7 +1179,6 @@ class GitMirror:
             return _not_written(e)
 
         logger.info("[git-mirror] {} → {}", verb, target_path)
-        _report_unknown(target_path, about)
         await self._declare_topic(target_path)
         await self._fold_capture_todos(
             target_path=target_path,
@@ -1177,7 +1186,8 @@ class GitMirror:
             by=by,
             previous_path=existing_path or "",
         )
-        return Filed(target_path, str(fm.get("card_id") or ""))
+        return Filed(target_path, str(fm.get("card_id") or ""), card={
+            "persons": [*(fm.get("persons") or []), *entry.about.unknown], "tags": list(fm.get("tags") or [])})
 
     # ── Email threads ─────────────────────────────────────────────────────
     #
@@ -1272,7 +1282,7 @@ class GitMirror:
             action_items=classification.get("action_items") or [],
         )
 
-        tags = self._tags(tags)
+        tags = self._tags(tags, target_path)
         new_fm = self._capture_frontmatter(
             title=title,
             captured_at=captured_at,
@@ -1394,7 +1404,7 @@ class GitMirror:
         try:
             fields = corrected_fields(
                 frontmatter_parse(existing.text), model_title=classification.get("title") or "",
-                model_persons=_classified_persons(classification), model_tags=self._tags(tags),
+                model_persons=_classified_persons(classification), model_tags=self._tags(tags, path),
                 words=words, people=people)
             content = correct_email_thread(existing.text, fields=fields, from_path=path,
                                            shared_bucket=self.shared_bucket, people=people)

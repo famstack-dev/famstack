@@ -44,6 +44,9 @@ CLEAN = ("Camping trip next weekend:\n\n- Flanders lends us his tent.\n- We leav
          "- Bring 3 sleeping bags.\n- Bart packs the flashlights.")
 AT_5 = CLEAN.replace("at 4.", "at 5.")
 TITLE = "Camping trip"
+# Marge's own topic, "Homers 40th": hers alone, never a topic of a family card.
+SURPRISE = {"marge/surprise-party/topic.md": (
+    "---\ntype: topic\ncard_id: topic-surprise-party\ntitle: Homers 40th\n---\n\n# Homers 40th\n")}
 
 
 # ── The instance ─────────────────────────────────────────────────────────
@@ -58,7 +61,7 @@ def memory(tmp_path, httpserver, model):
     """The Simpsons' memory, with Paperless and the model where the bot
     runner reaches them."""
     httpserver.expect_request("/paperless/api/tags/").respond_with_json({"results": []})
-    with running_memory(tmp_path, {**VAULT, "ontology.toml": ONTOLOGY}, seeded_by="memory-bot",
+    with running_memory(tmp_path, {**VAULT, **SURPRISE, "ontology.toml": ONTOLOGY}, seeded_by="memory-bot",
                         seeded_as="cards: the Simpsons", model=model.url,
                         paperless=httpserver.url_for("/paperless")) as running:
         yield running
@@ -104,9 +107,8 @@ def _replies_in_the_chat(mirror, model, note, *, by: str, words: str):
     llm = LLM(AsyncOpenAI(base_url=model.url, api_key="k"), namespace="archivist-bot")
     pipeline = CapturePipeline(
         url_extractor=None, text_extractor=None, classifier=Classifier(llm, language="en"),
-        mirror=mirror, capture_tags=None, paperless=_Paperless(),
-        bot_name="archivist-bot", classify_max_chars=100_000, capture_keep_body=False,
-        capture_tag_prompt_size=50)
+        mirror=mirror, paperless=_Paperless(),
+        bot_name="archivist-bot", classify_max_chars=100_000, capture_keep_body=False)
     return asyncio.run(pipeline.reprocess(
         vault_path=note.path, user_hint=words, sender_mxid=f"@{by}:simpson",
         reply_text=words, reply_id="$reply:simpson", reply_at=_now()))
@@ -118,15 +120,15 @@ def _now() -> str:
 
 # ── The note, and what people do to it ───────────────────────────────────
 
-def _filed(mirror, *, tags: list[str]):
+def _filed(mirror, *, tags: list[str], entity: str = "homer"):
     """Homer's camping note, filed by the archivist as he sent it, with a
-    clean version of his words and these tags."""
+    clean version of his words and these tags, into `entity`'s bucket."""
     from stack.cards.sources import Source
 
     source = Source("original", "homer", "2026-10-20T08:00:00+00:00", "chat", "text",
                     "$camping:simpson", quote=WORDS)
     return asyncio.run(mirror.publish_capture(
-        entity="homer", kind="note", source_uri=None, title_hint=None, body_text=WORDS,
+        entity=entity, kind="note", source_uri=None, title_hint=None, body_text=WORDS,
         classification={"title": TITLE, "summary": ""}, captured_at="2026-10-20",
         model="stand-in", tags=tags, capture_id=source.id, submitter="@homer:simpson",
         clean=CLEAN, sources=[source], made={"at": "2026-10-20T08:00:05+00:00"}))
@@ -151,6 +153,35 @@ def _shown(page: str) -> str:
 
 def _classified(**fields) -> dict:
     return {"title": TITLE, "tags": ["camping"], "persons": [], **fields}
+
+
+# ── The topics of the note's place ───────────────────────────────────────
+
+def test_marges_refile_of_a_family_note_gives_her_topics_title_as_a_keyword(memory, archivist, marge, model):
+    """Given Homer's camping note in the family's bucket, when Marge refiles
+    it with `stack memory reprocess --msg` and the model answers "Homers
+    40th", then the note has the keyword `homers-40th`, never her topic's id:
+    a refile reads the topics of the note's place, not the corrector's."""
+    note = _filed(archivist, tags=["camping"], entity="family")
+    model.answers(_classified(tags=["camping", "Homers 40th"], clean=CLEAN))
+
+    refiled = marge.refiles(note.card_id, correction="it is for the party")
+
+    assert refiled.get("ok"), refiled
+    assert _tags(memory, note.path) == ["camping", "homers-40th"]
+
+
+def test_a_keyword_homer_added_to_a_family_note_stays_through_a_refile(memory, archivist, homer, model):
+    """Given the family's camping note, when Homer adds `homers-40th` with
+    `stack memory card edit` and the note is refiled, then his tag is
+    applied again: it is a keyword on a family card, not Marge's topic."""
+    note = _filed(archivist, tags=["camping"], entity="family")
+    homer.edits(note.card_id, "--add", "tags=homers-40th")
+    model.answers(_classified(tags=["camping"], clean=CLEAN))
+
+    homer.refiles(note.card_id)
+
+    assert _tags(memory, note.path) == ["camping", "homers-40th"]
 
 
 # ── A person's field edits ───────────────────────────────────────────────

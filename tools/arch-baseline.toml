@@ -38,7 +38,7 @@
     "lib/stack/cards",
     "lib/stack/links.py",
     "lib/stack/lists.py",
-    "lib/stack/people.py",
+    "lib/stack/people",
     "lib/stack/vault.py",
     "stacklets/memory/lib.py",
 ]
@@ -49,18 +49,18 @@
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/person.py" = [
-    "lib/stack/people.py",
+    "lib/stack/people",
     "lib/stack/vault.py",
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/prompt.py" = [
-    "lib/stack/people.py",
+    "lib/stack/people",
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/cli/reprocess.py" = [
     "lib/stack/card_render.py",
     "lib/stack/cards",
-    "lib/stack/people.py",
+    "lib/stack/people",
     "stacklets/memory/lib.py",
     "stacklets/memory/note_card.py",
 ]
@@ -77,7 +77,7 @@
     "lib/stack/list_doc.py",
     "lib/stack/lists.py",
     "lib/stack/page_patch.py",
-    "lib/stack/people.py",
+    "lib/stack/people",
     "stacklets/memory/lib.py",
 ]
 "stacklets/memory/hooks/on_install_success.py" = [
@@ -123,7 +123,7 @@
 ]
 "stacklets/memory/migrations/0011_bring_older_cards_into_the_format.py" = [
     "lib/stack/cards",
-    "lib/stack/people.py",
+    "lib/stack/people",
     "lib/stack/tags.py",
     "lib/stack/vault.py",
     "stacklets/memory/lib.py",

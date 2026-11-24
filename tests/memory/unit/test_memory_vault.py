@@ -13,13 +13,13 @@ import subprocess
 import pytest
 
 
+from stack.topics import load_ontology_from_vault  # noqa: E402
 from stacklets.memory.lib import (  # noqa: E402
     authenticated_remote,
     ensure_projection_cloned,
     ensure_vault_cloned,
     get_ontology,
     host_code_url,
-    load_ontology_from_vault,
     load_seed_ontology,
     point_remote_at,
     vault_path_for,

@@ -44,6 +44,7 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 from stack.bot import context_for  # noqa: E402
 from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
 from stacklets.docs.bot.archivist_corrections import ArchivistCorrections  # noqa: E402
+from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 
 
 BOT_ID = "@archivist-bot:server"
@@ -768,7 +769,10 @@ class TestTheAnswerToAnEmailsCorrection:
         async def _react(*a, **kw):
             return None
 
-        bot._services = SimpleNamespace(capture=_Capture())
+        # The real services carry the vault: the answer shows only the tags
+        # the room may read (`RoomView`).
+        bot._services = SimpleNamespace(capture=_Capture(),
+                                        vault=VaultContext(language="en", shared_bucket="family"))
         bot._send = _send
         bot._react = _react
         bot.link_base_url = "https://home.example/go"
