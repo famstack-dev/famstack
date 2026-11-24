@@ -709,7 +709,12 @@ def _html(body: str, status: int = 200) -> Response:
 
 
 def _now() -> datetime:
-    """Now, in the instance's time zone, which decides what "today" is."""
+    """Now, in the instance's time zone, which decides what "today" is.
+    `app.state.clock`, when set, is the source of the time: a test fixes
+    the page's "today" there, so a run that crosses midnight cannot change it."""
+    clock = getattr(app.state, "clock", None)
+    if clock:
+        return clock()
     zone = _zone()
     return datetime.now(zone) if zone else datetime.now().astimezone()
 
@@ -761,10 +766,8 @@ async def _activity(request: Request, listing: dict | None = None) -> dict:
     limit = dashboard_page.limit_of(query.get("limit"), activity_widget.LIMIT, activity_widget.MOST)
     history = await _reads(request).history(limit)
     no_memory = history is None and _never_set_up(listing or await _listing(), "memory")
-    zone = _zone()
     return activity_widget.view(
-        history, now=datetime.now(zone) if zone else datetime.now().astimezone(),
-        language=_language(request),
+        history, now=_now(), language=_language(request),
         href=dashboard_page.card_link(LINK_PREFIX),
         base=DASHBOARD_PREFIX, limit=limit, size=query.get("size", ""),
         no_memory=no_memory)

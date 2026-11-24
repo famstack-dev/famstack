@@ -39,7 +39,10 @@ for _path in (LIB, TOOLS):
 from access import CARDS_PORT, PUBLIC_PORT  # noqa: E402
 from stacklets.memory.cards_api import CardsAPI, serve  # noqa: E402
 
-NOW = datetime.now().astimezone().replace(microsecond=0)
+# A fixed afternoon, and the page told so through `app.state.clock`: the
+# data and the page read one clock, so a run that crosses midnight changes
+# nothing.
+NOW = datetime(2026, 11, 20, 18, 30).astimezone()
 MIDNIGHT = NOW.replace(hour=0, minute=0, second=0)
 FOUR_DAYS_AGO = NOW - timedelta(days=4)
 
@@ -103,7 +106,9 @@ def reading(monkeypatch, tools_server):
     def at(url: str):
         monkeypatch.setenv("MEMORY_CARDS_URL", url)
         return tools_server
-    return at
+    tools_server.state.clock = lambda: NOW
+    yield at
+    del tools_server.state.clock
 
 
 @pytest.fixture(scope="module")
@@ -162,6 +167,21 @@ def test_the_changes_are_grouped_by_day(phone):
 
     day = FOUR_DAYS_AGO
     assert page.texts("day-label") == ["Today", "Yesterday", f"{day:%A}, {day.day} {day:%B}"]
+
+
+def test_the_page_follows_the_clock_across_midnight(reading, springfield_api, tools_server):
+    """Given the page rendered at 23:59:59 and again at 00:00:01, then the
+    first shows today's changes under "Today" and the second the same
+    changes under "Yesterday"."""
+    def labels_at(moment: datetime) -> list[str]:
+        tools_server.state.clock = lambda: moment
+        phone = Browser(reading(springfield_api), listener=PUBLIC_PORT, host="192.168.1.20:42000",
+                        person="marge")
+        return phone.opens("/dashboard").texts("day-label")
+
+    before = MIDNIGHT.replace(hour=23, minute=59, second=59)
+    assert labels_at(before)[:2] == ["Today", "Yesterday"]
+    assert labels_at(before + timedelta(seconds=2))[0] == "Yesterday"
 
 
 def test_a_card_opens_through_its_persistent_link(phone):
