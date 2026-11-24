@@ -9,6 +9,9 @@ comes, so each hello waits for the app's own timeout (about 90 seconds)
 before the app falls back to plain HTTP. A front that ends a TLS hello at
 once lets the sign-in screen answer within seconds.
 
+The same nginx serves Element Web. In port mode a browser sends it every
+cookie of localhost, so both ports must take a large Cookie header.
+
 Only the containers can say how the port answers, so this module starts
 them: the services of the shipped `docker-compose.yml`, as `docker compose
 config` resolves them, with the images, mounts and port it names. Each runs
@@ -48,6 +51,8 @@ MESSAGES = REPO_ROOT / "stacklets" / "messages"
 
 # The port the phone apps sign in at (`[ports] synapse` in stacklet.toml).
 CHAT_PORT = 42031
+# The port people open Element Web at (`[ports] element` in stacklet.toml).
+ELEMENT_PORT = 42030
 SYNAPSE = "stack-messages-synapse"
 DATABASE = "stack-messages-db"
 
@@ -60,6 +65,11 @@ TLS_ANSWER_SECONDS = 2.0
 # Synapse's own upload limit (100 MB, hooks/on_install.sh): a photo of
 # this size must reach Synapse, which then answers for itself.
 PHOTO_BYTES = 5 * 1024 * 1024
+
+# In port mode, every app on localhost shares one cookie jar. The browser
+# sends all of it to every port. 10 KB is more than the default limit of
+# nginx for one header line (8 KB). A few signed-in apps reach that size.
+COOKIES = "; ".join(f"c{i}=" + "x" * 400 for i in range(25))
 
 
 # ── The tests ────────────────────────────────────────────────────────────
@@ -108,12 +118,42 @@ def test_a_photo_upload_on_the_chat_port_reaches_synapse(chat_port):
     assert json.load(refused.value)["errcode"] == "M_MISSING_TOKEN"
 
 
+def test_element_web_opens_with_many_localhost_cookies(published_ports):
+    """Given a browser that holds 10 KB of localhost cookies, when it opens
+    Element Web, then the page loads instead of nginx's 400 "Request
+    Header Or Cookie Too Large". A browser without cookies loads it too."""
+    element = f"http://127.0.0.1:{published_ports[ELEMENT_PORT]}/"
+
+    with urllib.request.urlopen(element, timeout=5) as resp:
+        assert resp.status == 200
+    request = urllib.request.Request(element, headers={"Cookie": COOKIES})
+    with urllib.request.urlopen(request, timeout=5) as resp:
+        assert resp.status == 200
+
+
+def test_the_chat_port_answers_with_many_localhost_cookies(chat_port):
+    """Given a browser that holds 10 KB of localhost cookies, when Element
+    Web asks the chat port for the Matrix versions, then Synapse answers."""
+    request = urllib.request.Request(f"http://127.0.0.1:{chat_port}/_matrix/client/versions",
+                                     headers={"Cookie": COOKIES})
+
+    with urllib.request.urlopen(request, timeout=5) as resp:
+        assert "v1.1" in json.load(resp)["versions"]
+
+
 # ── The containers ───────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
-def chat_port(tmp_path_factory) -> Iterator[int]:
-    """The host port the chat port's container publishes, once Synapse
-    answers behind it. Every container and the network go on the way out."""
+def chat_port(published_ports) -> int:
+    """The host port that stands for the chat port, once Synapse answers behind it."""
+    return published_ports[CHAT_PORT]
+
+
+@pytest.fixture(scope="module")
+def published_ports(tmp_path_factory) -> Iterator[dict[int, int]]:
+    """Each port the messages containers publish, mapped to the host port
+    that stands for it in this run, once Synapse answers behind the chat
+    port. Every container and the network go on the way out."""
     run = f"stack-test-chat-port-{uuid.uuid4().hex[:8]}"
     synapse_data = tmp_path_factory.mktemp("synapse")
     services = _compose_services(synapse_data)
@@ -126,9 +166,9 @@ def chat_port(tmp_path_factory) -> Iterator[int]:
         for name, service in services.items():
             if name != DATABASE:
                 started.append(_start(run, name, service))
-        port = _published(run, services)
-        _wait_for_synapse(port, started)
-        yield port
+        ports = _published(run, services)
+        _wait_for_synapse(ports[CHAT_PORT], started)
+        yield ports
     finally:
         for container in started:
             subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=60)
@@ -172,14 +212,17 @@ def _start(run: str, name: str, service: dict) -> str:
     return container
 
 
-def _published(run: str, services: dict) -> int:
-    """The host port of the container that publishes the chat port."""
+def _published(run: str, services: dict) -> dict[int, int]:
+    """Each port the compose file publishes, mapped to the host port Docker
+    picked for it in this run. Fails when the chat port is not among them."""
+    ports: dict[int, int] = {}
     for name, service in services.items():
         for port in service.get("ports", []):
-            if int(port["published"]) == CHAT_PORT:
-                address = _docker("port", f"{run}-{name}", f"{port['target']}/tcp")
-                return int(address.splitlines()[0].rsplit(":", 1)[1])
-    raise AssertionError(f"no messages service publishes port {CHAT_PORT}")
+            address = _docker("port", f"{run}-{name}", f"{port['target']}/tcp")
+            ports[int(port["published"])] = int(address.splitlines()[0].rsplit(":", 1)[1])
+    if CHAT_PORT not in ports:
+        raise AssertionError(f"no messages service publishes port {CHAT_PORT}")
+    return ports
 
 
 def _wait_for_synapse(port: int, containers: list[str]) -> None:
