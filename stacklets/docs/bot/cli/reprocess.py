@@ -1,28 +1,31 @@
-"""`stack docs reprocess <id|range>...` — full pipeline on filed documents.
+"""`stack docs reprocess <id|range>...`: the full pipeline again, on filed documents.
 
-Accepts single ids and inclusive ranges:
+The command takes single ids and inclusive ranges:
 
     reprocess 42
     reprocess 1-13                 (ids 1 through 13 inclusive)
     reprocess 1-5 7 10-12 --dry    (mixed, with dry-run)
 
-Ids missing from Paperless inside a range are silently skipped — the
-end-of-run summary reports the skipped count.
+The command skips an id of a range that Paperless does not hold. The
+summary at the end gives the number of skipped ids.
 
-A `--msg "your hint"` flag attaches a user clarification to the
-classify prompt, same lever as the Matrix reply-to-reprocess flow:
+`--msg "your hint"` adds a clarification to the classify prompt, and the
+model files the document again as new. A reply in the chat works
+differently. The archivist asks it as the card conversation. The model
+sees the card as filed, then each correction. It keeps each tag and person that the reply
+does not name.
 
-    reprocess 7 --msg "Der Urlaub ist im Februar 2026"
+    reprocess 7 --msg "The holiday is in February 2026"
     reprocess 1-5 --msg "filed for tax year 2025"
 
-Honours the archivist's bot.toml `[settings].reformat` so the CLI
-behaves like the bot on a new upload. Memory-vault mirroring is
-attempted by default and skipped if the `code` stacklet env is
-unavailable. `--no-reformat`, `--no-mirror`, `--dry-run` opt out for
-a single invocation.
+The command reads `[settings].reformat` from the archivist's bot.toml,
+because it must work as the bot works on a new upload. It writes the
+cards in the memory when the `code` stacklet's environment is there.
+`--no-reformat`, `--no-mirror` and `--dry-run` switch a step off for one
+run.
 
-Also exposes `run_one()` so the `classify` subcommand can run a
-classification-only pass by calling in with `reformat=False, mirror=None`.
+`run_one()` is public, because the `classify` subcommand calls it with
+`reformat=False, mirror=None` for a pass that only classifies.
 """
 
 from __future__ import annotations
@@ -38,15 +41,14 @@ from pathlib import Path
 
 
 def _extract_msg(argv: list[str]) -> tuple[list[str], str | None]:
-    """Strip a `--msg <text>` pair out of argv and return (rest, msg).
+    """Remove a `--msg <text>` pair from argv, and return (rest, msg).
 
-    The user hint piggy-backs on the same plumbing as the Matrix
-    reply-to-reprocess flow — it lands in the classifier prompt as a
-    `User clarification` block. Quoting comes from the shell; argv
-    arrives with the message as a single token.
+    The hint goes into the classifier prompt as a `User clarification`
+    block of a new filing. The message is one token of argv, because the
+    shell does the quoting.
 
-    Returns `(argv_without_msg, msg)`. When `--msg` isn't supplied, msg
-    is None and argv is returned unchanged.
+    Returns `(argv_without_msg, msg)`. Without `--msg`, msg is None and
+    argv is unchanged.
     """
     for i, arg in enumerate(argv):
         if arg == "--msg":

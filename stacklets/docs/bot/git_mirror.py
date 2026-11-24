@@ -583,21 +583,27 @@ class GitMirror:
         fallback_title: str | None = None,
         summary: str | None = None,
         by: str | None = None,
+        read_at: str | None = None,
     ) -> Filed | None:
-        """Create or update a document file in the git mirror.
+        """Create or update a document's card in the memory.
 
-        `by` is the Matrix id of whoever sent or corrected the document:
-        the commit is theirs, through the archivist's account (`_by`).
+        ``by`` is the Matrix id of the person who sent or corrected the
+        document. The commit is that person's, through the archivist's account
+        (`_by`). ``read_at`` is the card's version that a correction read before
+        the model call (`document_version`). The write goes on that version. The
+        curator therefore refuses the write when another change landed in the
+        meantime, and that change stays. None writes on the version that this
+        method reads.
 
-        Returns where the card landed and its card id, which the filing
-        reply links (`Filed('family/documents/…-p247.md',
-        'document-3f9a0c1b2d')`); None if skipped or failed. Failures are
-        logged but never raised — the mirror is best-effort.
+        The method returns where the card is and its card id, and the filing
+        reply links them: `Filed('family/documents/…-p247.md',
+        'document-3f9a0c1b2d')`. It returns None when it skips the card or
+        fails. It logs a failure and never raises it, because the card must
+        not block the filing.
 
-        When classification produced no title (LLM flake, disabled, etc.)
-        the caller can supply `fallback_title` — typically the original
-        filename. Results in a far friendlier Obsidian entry than
-        `Paperless #42`.
+        A classification can have no title, for example when the model fails.
+        The caller then gives `fallback_title`, usually the original file name.
+        A card titled with the file name is easier to find than `Paperless #42`.
         """
         # Title comes from AI classification first, then caller's fallback
         # (usually the original filename), and only then the generic
@@ -670,10 +676,11 @@ class GitMirror:
         # A classifier summary rides in the commit body: `git log` on the
         # memory reads as an archive log, and `git log --grep` searches it.
         verb = "update" if existing else "learn"
+        base = read_at if read_at is not None else (existing.version if existing else "")
         if existing and existing.path != target_path:
-            changes = [remove(existing.path, base=existing.version), put(target_path, content, base="")]
+            changes = [remove(existing.path, base=base), put(target_path, content, base="")]
         else:
-            changes = [put(target_path, content, base=existing.version if existing else "")]
+            changes = [put(target_path, content, base=base)]
         try:
             await asyncio.to_thread(
                 self.memory.commit, changes, by=_by(by), via=BOT_USERNAME, kind=verb, title=title,
@@ -697,6 +704,23 @@ class GitMirror:
                                         previous_path=existing_path or "")
         logger.info("[git-mirror] {} #{} → {}", verb, paperless_id, target_path)
         return Filed(target_path, str(fm.get("card_id") or ""))
+
+    async def document_version(self, paperless_id: int) -> str | None:
+        """The version of the card of the Paperless document `paperless_id`.
+
+        The version is "" when there is no card. It is None when the memory
+        does not answer. A correction reads it before the model call and writes
+        on it (`publish`, ``read_at``).
+
+            await mirror.document_version(247)   # '9c1e…'
+        """
+        try:
+            path = await self._lookup_path(paperless_id)
+            found = await asyncio.to_thread(self.memory.file, path) if path else None
+        except (Refused, CuratorDown) as e:
+            logger.warning("[git-mirror] No card for paperless #{}: {}", paperless_id, e)
+            return None
+        return found.version if found else ""
 
     async def document_card_id(self, paperless_id: int) -> str:
         """The card id of the card filed for Paperless document `paperless_id`,

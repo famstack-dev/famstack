@@ -8,7 +8,8 @@ prompt of each incoming request and routes it:
     classify    "Classify this document..." (documents room)
                 "Summarize and tag this content..." (captures)
     reformat    "Reformat this OCR-scanned document..."
-    correct     "Correct a note..." (a reply that corrects a filed note)
+    correct     "You keep a family card up to date..." (the card conversation:
+                a reply that corrects a filed card)
     rewrite     "You extract search keywords from a question..."
     synthesize  "You are answering a family member's question..."
 
@@ -51,9 +52,9 @@ _ROUTES: tuple[tuple[str, str], ...] = (
     ("classify", "Tag this note for a personal knowledge vault"),
     ("classify", "Classify this document."),
     ("reformat", "Reformat this OCR-scanned document"),
-    # A note's corrections worked into its clean version
-    # (stacklets/docs/bot/note_correction.py).
-    ("correct", "Correct a note."),
+    # A correction of a card, asked as the card conversation
+    # (lib/stack/filing/correction/conversation.py).
+    ("correct", "You keep a family card up to date."),
     ("rewrite", "You extract search keywords from a question"),
     ("synthesize", "You are answering a family member's question"),
 )
@@ -168,9 +169,10 @@ class OpenAIStub:
         self._queues["reformat"].append(markdown)
 
     def correct(self, clean: str) -> None:
-        """Queue one corrected note: `{"clean": clean}`. The bot checks it
-        (`clean_words.kept_rebuilt`), so it keeps every name and number of
-        the note that the correction does not replace."""
+        """Queue one corrected note: `{"clean": clean}`, the card
+        conversation's answer that changes its text and no field. The bot
+        checks it (`clean_words.kept_rebuilt`), so it keeps every name and
+        number of the note that the correction does not replace."""
         self._queues["correct"].append(json.dumps({"clean": clean}))
 
     def rewrite(self, keywords: list[str]) -> None:

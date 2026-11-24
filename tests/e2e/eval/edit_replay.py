@@ -3,7 +3,7 @@
 A note card (ADR-018) shows a clean version of the note's words, and
 keeps the words and the chat corrections under `## Sources`. A refile
 (`stack memory reprocess`) rebuilds a note somebody corrected or edited
-as a card conversation (ADR-018 §7, `card_conversation`): the clean
+as a card conversation (ADR-018 §7, `stack.filing.correction.conversation`): the clean
 version before the first event, then each correction and each person's
 edit of the clean version in time order, read from the card's history.
 
@@ -16,7 +16,8 @@ card was refiled then, the clean version that refile wrote), an edit a
 commit of the person's own. What the model is given is read back by the
 shipped code: the curator's `CardStore.history` and `history_of` for the
 starting point and the edits, the sidecar for the corrections, and
-`Classifier.rebuild_note` for the call.
+`build_conversation` with `Classifier.correct_card` for the call. An
+answer without a text leaves the clean version as it was.
 
 Deterministic checks on each answer, the ones `correction_fold.py` makes
 (`correction_fold.failures`: values in the right item or sentence and only
@@ -62,6 +63,7 @@ from stack.stacklet_code import import_stacklets  # noqa: E402
 import_stacklets([_ROOT / "stacklets"])
 
 import correction_fold  # noqa: E402
+from stack.filing.correction.conversation import build_conversation  # noqa: E402
 from correction_fold import Endpoint, Fold, mentions  # noqa: E402
 from stacklets.memory.cards import CardStore  # noqa: E402
 from stacklets.memory.note_card import card_sources  # noqa: E402
@@ -338,9 +340,11 @@ async def measure(endpoint: Endpoint, cases, histories, runs: int) -> list[Resul
         result = Result(case)
         for _ in range(runs):
             try:
-                answer = await endpoint.classifier(case.language).rebuild_note(
-                    writer=a.writer, words=case.words, prior=a.prior, events=a.messages)
-                clean = str(answer.get("clean") or "")
+                answer = await endpoint.classifier(case.language).correct_card(build_conversation(
+                    writer=a.writer, kind="note", original=case.words,
+                    filed={"title": "", "tags": [], "persons": [], "date": None, "clean": a.prior},
+                    events=a.messages), text=True)
+                clean = str(answer.get("clean") or a.prior)
             except Exception as e:  # noqa: BLE001 -- a failed call is a failed run, not a crash
                 clean, reasons = "", [f"call failed: {e}"]
             else:

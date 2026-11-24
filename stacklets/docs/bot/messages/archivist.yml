@@ -98,6 +98,7 @@ en:
   email_not_filed: "\u274C Could not file this email. `stack errors` shows why."
   capture_not_filed: "\u274C Not filed: {reason}."
   capture_not_changed: "\u274C The card was not changed: {reason}."
+  correction_unknown_persons: "\u2753 I do not know {names}, so they are not on the card."
   correction_no_filing: "\u2753 I could not find the filing this thread is about, so nothing was changed. Reply to my card to correct it."
   # Why a filing or a correction was not written, one line per reason
   # code (`failure_reason`): the memory's (`stack.memory.why_not_written`),
@@ -117,6 +118,7 @@ en:
   why_no_original: "the card has no original to refile from"
   why_no_model: "no model is set up to read it"
   why_model_silent: "the model did not answer"
+  why_model_unreadable: "the model's answer could not be read, try again"
   updated_capture: "\U0001F501 Updated {title}: {changes}"
   unchanged_capture: "\U0001F501 {title}: nothing changed on the card."
   card_now: "The card now"
@@ -363,6 +365,7 @@ de:
   email_not_filed: "\u274C Konnte diese E-Mail nicht ablegen. `stack errors` zeigt den Grund."
   capture_not_filed: "\u274C Nicht abgelegt: {reason}."
   capture_not_changed: "\u274C Die Karte wurde nicht geändert: {reason}."
+  correction_unknown_persons: "\u2753 Ich kenne {names} nicht, darum stehen sie nicht auf der Karte."
   correction_no_filing: "\u2753 Ich finde die Ablage nicht, um die es in diesem Thread geht, daher wurde nichts geändert. Antworte auf meine Karte, um sie zu korrigieren."
   why_changed: "die Karte hat sich geändert, während ich sie geschrieben habe, versuch es noch einmal"
   why_invalid: "ein Feld der Karte passt nicht zu ihrer Art, korrigier es zuerst in der Karte"
@@ -378,6 +381,7 @@ de:
   why_no_original: "die Karte hat kein Original, aus dem ich sie neu ablegen kann"
   why_no_model: "es ist kein Modell eingerichtet, das sie lesen kann"
   why_model_silent: "das Modell hat nicht geantwortet"
+  why_model_unreadable: "die Antwort des Modells war nicht lesbar, versuch es noch einmal"
   updated_capture: "\U0001F501 Aktualisiert {title}: {changes}"
   unchanged_capture: "\U0001F501 {title}: an der Karte hat sich nichts geändert."
   card_now: "Die Karte jetzt"

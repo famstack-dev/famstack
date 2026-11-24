@@ -79,7 +79,7 @@ def test_homers_card_never_carries_the_id_of_marges_personal_topic(archivist, me
 
 def test_marges_correction_of_a_family_note_uses_the_notes_topics(archivist, memory, household):
     """Given Homer's note in the family's bucket, when Marge replies in its
-    thread and the model answers "Homers 40th", then the corrected card
+    thread that it is for "Homers 40th", then the corrected card
     has the keyword `homers-40th`: a correction reads the topics of the
     card's place, never the corrector's."""
     household.says(persons=["Homer"], tags=["Camper Van"])
@@ -87,8 +87,8 @@ def test_marges_correction_of_a_family_note_uses_the_notes_topics(archivist, mem
     household.says(persons=["Homer"], tags=["Camper Van", "Homers 40th"])
 
     asyncio.run(archivist.reprocess(
-        vault_path=note["path"], user_hint="it is for the party", sender_mxid="@marge:simpson",
-        reply_text="it is for the party", reply_id="$reply:simpson",
+        vault_path=note["path"], user_hint="it is for Homers 40th", sender_mxid="@marge:simpson",
+        reply_text="it is for Homers 40th", reply_id="$reply:simpson",
         reply_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
 
     assert parse(memory.page(note["path"]))["tags"] == ["van", "homers-40th"]
@@ -263,8 +263,8 @@ def test_a_corrections_change_line_names_a_topic_by_its_title(archivist, memory,
                                                  bucket="family"))
     household.says(persons=["Homer"], tags=["lake"], topics=["camper van"])
     corrected = asyncio.run(archivist.reprocess(
-        vault_path=outcome.vault_path, user_hint="we went in the van", sender_mxid="@homer:simpson",
-        reply_text="we went in the van", reply_id="$reply:simpson",
+        vault_path=outcome.vault_path, user_hint="we went in the camper van", sender_mxid="@homer:simpson",
+        reply_text="we went in the camper van", reply_id="$reply:simpson",
         reply_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
     bot, chat = archivist_in(tmp_path, {FAMILY_ROOM: ["@marge:simpson", "@homer:simpson"]})
 
@@ -337,18 +337,17 @@ def corrects(bot, room_id: str, outcome, words: str, by: str = "@lisa:simpson") 
 
 def test_a_correction_in_marges_own_room_is_shown_her_topic(archivist, memory, household, tmp_path):
     """Given the same note, when Marge corrects it in her own room with the
-    archivist, then the model is shown her topic, by its title and among
-    the card's tags: she may read it, so the room's view holds it back
-    only where other people read the answer."""
+    archivist, then the model is shown her topic among the card's tags,
+    by its title: she may read it, so the room's view holds it back only
+    where other people read the answer."""
     outcome = marges_note_in_family(archivist, household)
     bot, _chat = archivist_in(tmp_path, {MARGES_ROOM: ["@marge:simpson", "@archivist-bot:simpson"]},
                               capture=archivist)
 
     corrects(bot, MARGES_ROOM, outcome, "the cake is chocolate", by="@marge:simpson")
 
-    prompt = household.prompts[-1]
-    assert "Homers 40th" in prompt
-    assert "surprise-party" in prompt
+    card = json.loads(household.prompts[-1].split("\n\n")[1])
+    assert "Homers 40th" in card["tags"]
 
 
 def test_a_correction_from_a_room_of_several_people_keeps_the_cards_private_topic(
@@ -528,16 +527,16 @@ def test_a_family_document_is_filed_without_a_private_topics_id(mirror, memory):
 # ── A correction of an old note ──────────────────────────────────────────
 
 def test_a_reply_that_corrects_a_note_leaves_the_card_in_the_vocabulary(archivist, memory, household):
-    """Given an old note, when someone replies in its thread and the model
-    names "Mr. Burns", then the corrected card's people are the declared
+    """Given an old note, when someone replies in its thread that Mr. Burns
+    drove too and names two tags, and the model names "Mr. Burns", then the corrected card's people are the declared
     ones and its tags are the topic card's id and the keywords as spelled."""
     household.says(persons=["Homer"], tags=["Camper Van"])
     note = files(archivist, memory)
     household.says(persons=["Homer", "Mr. Burns"], tags=["Camper Van", "LLMs", "llm"])
 
     asyncio.run(archivist.reprocess(
-        vault_path=note["path"], user_hint="Mr. Burns drove too", sender_mxid="@lisa:simpson",
-        reply_text="Mr. Burns drove too", reply_id="$reply:simpson",
+        vault_path=note["path"], user_hint="Mr. Burns drove too, tag it LLMs and llm",
+        sender_mxid="@lisa:simpson", reply_text="Mr. Burns drove too, tag it LLMs and llm", reply_id="$reply:simpson",
         reply_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
 
     card = parse(memory.page(note["path"]))

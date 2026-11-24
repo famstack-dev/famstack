@@ -181,15 +181,15 @@ from normal pytest collection and is run with `tests/e2e/stacktests eval`.
 `tests/e2e/eval/correction_fold.py` measures whether a refiled note's
 clean version works a correction in where it belongs, instead of
 appending it as a point of its own. Eight fabricated notes (one in German)
-with one or two corrections each, built into the correction prompt by the
-real `correct_note` call the refile makes for a note with corrections
-alone (the capture prompt that reads its answer is not asked), and
-checked in code: the corrected value stands where the old one was, the
-old one is gone, nothing restates the correction, and the filing check
-(`clean_words.rebuild_problems`) finds nothing lost. `--conversation`
-asks the same corrections as the card conversation instead, which a note
-a person edited is rebuilt with. It needs only a model server, no rig and
-no `./stack`, and it is a script, so pytest never collects it.
+with one or two corrections each, asked as the card conversation by the
+real `correct_card` call a refile makes, and checked in code: the
+corrected value stands where the old one was, the old one is gone,
+nothing restates the correction, and the filing check
+(`clean_words.rebuild_problems`) finds nothing lost. Four field cases
+check that a correction changes only the title, tags and people it names.
+`--list ''` asks each note as one in a topic with a list. It needs only a
+model server, without the rig or `./stack`. Pytest never collects it,
+because it is a script.
 
 ```bash
 AI_DEFAULT_MODEL=<model id> EVAL_AI_URL=<base url, /v1> EVAL_AI_KEY=<key> \

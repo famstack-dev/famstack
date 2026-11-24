@@ -43,7 +43,8 @@ sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
 from stack.bot import context_for  # noqa: E402
 from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
-from stacklets.docs.bot.archivist_corrections import ArchivistCorrections  # noqa: E402
+from stack.cards.events import Correction  # noqa: E402
+from stacklets.docs.bot.archivist_corrections import ArchivistCorrections, CorrectionChain  # noqa: E402
 from stacklets.docs.bot.vault_context import VaultContext  # noqa: E402
 
 
@@ -117,6 +118,11 @@ def _filed_bare(paperless_id=DOC_ID):
     }
 
 
+def _chain(words: str) -> CorrectionChain:
+    """A thread with one correction, by Marge, of a filing the thread does not reach."""
+    return CorrectionChain(words, None, None, (Correction("marge", "", words),))
+
+
 def _reclassified(paperless_id=DOC_ID, **data):
     return {
         "source": "docs", "type": "document.reclassified",
@@ -183,9 +189,8 @@ def bot(tmp_path):
     async def _search(room_id, query, reply_to=None, *, sender=None):
         bot.routed.append(("search", query))
 
-    async def _reprocess(room_id, doc_id, user_hint, sender_mxid, reply_to, *, ctx=None,
-                         date_filed=None, initial_classification=None):
-        bot.routed.append(("reprocess", doc_id, user_hint, initial_classification))
+    async def _reprocess(room_id, doc_id, chain, sender_mxid, reply_to, *, ctx=None):
+        bot.routed.append(("reprocess", doc_id, chain.hint, chain.latest))
         bot.correctors.append(sender_mxid)
 
     async def _capture_reprocess(room_id, vault_path, user_hint, sender_mxid,
@@ -758,7 +763,7 @@ class TestTheAnswerToAnEmailsCorrection:
                         "data": {**before, "tags": after["tags"]}},
                     transcript=None, failure_reason=None, blocked_reason=None,
                     scope="family", clean_rejected="", changes=None,
-                    captured_at="2026-11-05",
+                    captured_at="2026-11-05", unknown_persons=(),
                 )
 
         sent: list[tuple[str, dict | None, str | None]] = []
@@ -1042,7 +1047,7 @@ class TestTheAnswerStaysInTheThread:
             resolved_correspondent="Duff Insurance",
             classification={"summary": "Renewal."}, date="2025-03-15",
             link="https://home.example/go/card/document-1",
-            envelope=_reclassified(persons=["Marge"]),
+            envelope=_reclassified(persons=["Marge"]), unknown_persons=(),
         )
 
     @pytest.mark.asyncio
@@ -1061,9 +1066,7 @@ class TestTheAnswerStaysInTheThread:
 
         pipeline.reprocess = _reprocess
         await bot._corrections.reprocess_document(
-            "!docs:server", DOC_ID, "this is Marge's", "@marge:server", "$correction",
-            ctx=context_for(SimpleNamespace(room_id="!docs:server"),
-                            bot_user_id=bot.user_id, config={}),
+            "!docs:server", DOC_ID, _chain("this is Marge's"), "@marge:server", "$correction",
         )
 
         assert bot.sent, "the reprocess produced no message at all"
@@ -1091,9 +1094,7 @@ class TestTheAnswerStaysInTheThread:
 
         pipeline.reprocess = _reprocess
         await bot._corrections.reprocess_document(
-            "!docs:server", DOC_ID, "this is Marge's", "@marge:server", "$correction",
-            ctx=context_for(SimpleNamespace(room_id="!docs:server"),
-                            bot_user_id=bot.user_id, config={}),
+            "!docs:server", DOC_ID, _chain("this is Marge's"), "@marge:server", "$correction",
         )
 
         relation = bot.sent[-1].get("m.relates_to", {})
@@ -1161,6 +1162,7 @@ class TestACorrectionShowsItWasPickedUp:
                 title="Policy", resolved_persons=["Marge"], resolved_type=None,
                 resolved_correspondent=None, envelope=_reclassified(),
                 classification={}, date=None, link="", resolved_topics=[],
+                unknown_persons=(), failure_reason="",
             )
 
         pipeline.reprocess = _reprocess

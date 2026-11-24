@@ -48,7 +48,7 @@ from .matching import build_capture_event
 from .capture_reading import CaptureReader
 from .notifier import Notifier
 from .note_topics import CorrectionView, OwnTags
-from .clean_words import is_cleanable
+from stack.filing.clean_words import is_cleanable
 from .own_words import in_own_words
 from .pdf_analysis import (
     DEFAULT_VISION_MAX_PDF_PAGES,
@@ -179,6 +179,8 @@ class CaptureOutcome:
     # Why a note filed without the clean version the model wrote
     # (`clean_words.kept`), "" when it has one or needed none.
     clean_rejected: str = ""
+    # People that a correction asked to add and that the person files do not hold.
+    unknown_persons: tuple[str, ...] = ()
     # The card's day (`YYYY-MM-DD`): when it was captured, or the day the
     # email was sent. The chat's answer shows it beside the people.
     captured_at: str | None = None
@@ -664,36 +666,45 @@ class CapturePipeline:
         chat: "Sequence[Source]" = (),
         added: "Sequence[Source]" = (),
         requested_by: str = "",
+        todos: bool = True,
     ) -> CaptureOutcome:
-        """Re-classify an already-filed capture using a human note.
+        """Classify a filed capture again, with a person's correction.
 
-        A note is refiled from its sources (ADR-018): the words it was
-        sent as, the replies and notes added since, never its summary or
-        its clean version (`_reprocess_note`). ``reply_text`` is the reply
-        that asked for this refile, by the sender, sent as ``reply_id`` at
-        ``reply_at``: it is added as a source. ``note`` is the note as a
-        caller already read it (`stack memory reprocess`: the card, its
-        sidecar and its history, with their versions); without one it is
-        read here, once, through the mirror. ``chat`` are the note's
-        messages as the chat has them, ``added`` the replies and notes the
-        caller adds (`stack.filing.refile.refile_sources`).
-        ``requested_by`` is who asked for the refile, the sender when not
-        given.
-        ``read_in`` is the bucket of the room the correction came from, as
-        for ``capture_text``; None, for the CLI, shows the card's topics.
+        A note is refiled from its sources (ADR-018): the words that were
+        sent, and the replies and notes added since. Its summary and its clean
+        version are never a source (`_reprocess_note`).
 
-        A bookmark mirrors ``DocumentPipeline.reprocess``: the prior
-        summary IS the source the LLM re-reads, with the reply chain as
-        ``user_hint``; this stays cheap (no re-fetch of the page) at the
-        cost of corrections working against the model's own paraphrase.
-        The archived file cannot be recovered that way, so its reference
-        is read back off the entry being replaced. ``caption`` is the
-        caption on the upload it was filed from, when the caller could
-        read it there; it wins over the entry's.
+        ``reply_text`` is the reply that asked for this refile. The sender
+        sent it as ``reply_id`` at ``reply_at``, and it becomes a source.
+        ``note`` is the note as the caller already read it: the card, its
+        sidecar and its history, with their versions. `stack memory reprocess`
+        passes it. Without ``note`` the method reads the note once through the
+        mirror.
 
-        ``capture_id`` names the capture for good; ``vault_path`` is where
-        the filing message saw it, which a move makes stale. The capture
-        is looked up by its id first (`_find_capture`).
+        ``chat`` are the note's messages as the chat holds them. ``added`` are
+        the replies and notes that the caller adds
+        (`stack.filing.refile.refile_sources`). ``requested_by`` is the person
+        who asked for the refile. It is the sender when not given.
+
+        ``read_in`` is the bucket of the room of the correction, as for
+        ``capture_text``. None shows the card's topics, which the command line
+        uses. ``todos`` asks the model for the new to-dos of a corrected note's
+        list. The preview of the command line passes False, because nothing
+        merges them there.
+
+        A bookmark works as ``DocumentPipeline.reprocess`` does. The model reads
+        the earlier summary again, with the replies as ``user_hint``. The page is
+        not fetched again, because that is slow. The corrections then work
+        against the model's own summary. The reference to the archived file is
+        read from the entry that is replaced, because the summary does not hold
+        it.
+
+        ``caption`` is the caption of the upload, when the caller could read
+        it there. It wins over the entry's caption.
+
+        ``capture_id`` names the capture for good. ``vault_path`` is where the
+        filing message saw the capture, and a move makes it stale. The method
+        looks up the capture by its id first (`_find_capture`).
         """
         if self._mirror is None:
             return CaptureOutcome(status="no_mirror")
@@ -728,7 +739,7 @@ class CapturePipeline:
             return await self._reprocess_note(
                 note, meta=meta, sender_mxid=sender_mxid, chat=chat, added=[*added, reply],
                 initial_classification=initial_classification, write_in=write_in, read_in=read_in,
-                own_tags=own_tags, requested_by=requested_by or _localpart(sender_mxid))
+                own_tags=own_tags, requested_by=requested_by or _localpart(sender_mxid), todos=todos)
         caption = caption or _caption_from(raw)
         replies = _with_reply(_replies_from(raw), sender_mxid, reply_text)
         # The summary callout doesn't carry the frontmatter tag list,
@@ -788,20 +799,24 @@ class CapturePipeline:
     async def _reprocess_note(
         self, note: NoteRead, *, meta: dict, sender_mxid: str, chat: "Sequence[Source]",
         added: "Sequence[Source]", initial_classification: dict | None, write_in: str | None,
-        read_in: str | None, own_tags: OwnTags, requested_by: str,
+        read_in: str | None, own_tags: OwnTags, requested_by: str, todos: bool = True,
     ) -> CaptureOutcome:
-        """Refile a note from all of its sources, as it would be filed today
-        (`stack.filing.refile`).
+        """Refile a note from all of its sources, as a filing today does (`stack.filing.refile`).
 
-        The sources are the card's and its sidecar's (`memory.note_card`), an
-        old-format note read as the migration converts it, with ``chat``
-        and ``added`` (`refile_sources`). The model reads every original's
-        words and photos, never the summary, and the replies and notes as
-        corrections. A note whose card shows a clean version is filed as one
-        again, rebuilt from its corrections and a person's edits; one that
-        shows a summary reads its corrections as user context. Its tags and
-        its topic are carried over, a person's field edits are applied
-        again, and it is written on the versions ``note`` was read at.
+        The sources are the card and its sidecar (`memory.note_card`), with
+        ``chat`` and ``added`` (`refile_sources`). An old-format note is read as
+        the migration converts it. The model reads the words and photos of every
+        original, and the replies and notes as corrections. It never reads the
+        summary.
+
+        A note whose card shows a clean version gets a clean version again. It
+        is rebuilt from the corrections and the edits of people. In a topic with
+        a list, the model also gives the new to-dos. A note whose card shows a
+        summary reads its corrections as context.
+
+        The note keeps its tags and its topic. The field edits of people are
+        applied again. The card is written on the versions at which ``note``
+        was read.
         """
         try:
             held = card_sources(note.text, read_sidecar(note.sidecar))
@@ -814,13 +829,17 @@ class CapturePipeline:
         title = meta.get("title") or None
         content = SourceContent(text=refiling.words or str(title or ""), title_hint=title)
         user_hint = None if refiling.clean else refiling.corrections or None
+        found_topic = topic_of(note.path)
         reader = CaptureReader(
             content, classifier=self._classifier, vault=self._vault, paperless=self._paperless,
             mirror=self._mirror, bot_name=self._name, max_chars=self.classify_max_chars,
             kind="note", images=self._images_of(refiling.images), user_hint=user_hint,
+            place="/".join(found_topic) if found_topic else "",
             initial_classification=initial_classification, write_in=write_in,
-            clean_words=refiling.clean, rebuild=refiling.rebuild, prefer_tags=list(own_tags.shown))
-        found_topic = topic_of(note.path)
+            clean_words=refiling.clean, rebuild=refiling.rebuild, prefer_tags=list(own_tags.shown),
+            # A correction can add to-dos only to a note in its writer's own
+            # words, because only that note adds to-dos at the first filing.
+            extract_action_items=refiling.clean and todos)
         policy = Policy(room_topics=(found_topic[1],) if found_topic else (), read_in=read_in,
                         keep_body=self.capture_keep_body)
         filing = await refile(note, refiling, policy, reader=reader, writer=self._mirror,
@@ -991,6 +1010,7 @@ class CapturePipeline:
             transcript=source.text if transcribed else None,
             scope=filing.entity,
             clean_rejected=filing.clean_rejected,
+            unknown_persons=filing.unknown,
             changes=filed.changes,
             captured_at=filing.captured_at,
         )

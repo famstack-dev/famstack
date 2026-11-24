@@ -9,7 +9,7 @@ projection. Two kinds of event change what a note's clean version says:
   git (`stack.cards.history`), never stored a second time.
 
 A rebuild gives them to the model in time order, one message each, after
-the clean version they apply to (`docs/bot/card_conversation.py`):
+the clean version they apply to (`stack.filing.correction.conversation`):
 
     Correction("homer", "2026-10-20T09:00:00+00:00", "we leave at 5, not 4").message()
     # 'Homer: we leave at 5, not 4'

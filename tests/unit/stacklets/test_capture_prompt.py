@@ -507,16 +507,6 @@ class TestANoteInItsOwnWordsIsCleanedNotSummarised:
         assert "Marge: for the sax teacher" in prompt
         assert "nothing from it goes into the note's text" in prompt
 
-    def test_a_corrected_note_is_asked_for_its_title_and_tags_only(self):
-        """A note whose clean version was rebuilt by the card conversation
-        (`card_conversation`) is read as it is: the capture
-        prompt writes no text of its own that could contradict it."""
-        prompt = _build_capture_prompt(text="Lisa's lesson is on Friday at 4pm.",
-                                       person_names=["Lisa"], classify_only=True)
-        assert {"title", "tags", "persons"} <= self._keys(prompt)
-        assert not self._keys(prompt) & {"clean", "summary", "facts"}
-        assert "\n\n  \"tags\"" not in prompt, "no empty line where the content field was"
-
     def test_the_clean_version_is_not_asked_to_resolve_dates(self):
         prompt = _build_capture_prompt(**self.NOTE, today="2026-10-21")
         assert "into concrete dates" not in prompt

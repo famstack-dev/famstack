@@ -354,7 +354,7 @@ async def test_a_reply_in_the_notices_thread_corrects_the_note_and_keeps_what_wa
     thread asking for another title, then the note has the new title, its
     sources are the original and her reply with its time, the correction
     is Marge's commit, and the room has a notice in the same thread."""
-    chat.model.answers.append({**FILED, "title": "Charcoal and propane"})
+    chat.model.corrections.append({"title": "Charcoal and propane"})
     await chat.says(MARGE, GRILL, event_id="$grill")
     [notice] = chat.notices()
     commits = len(memory.authors())
@@ -379,7 +379,7 @@ async def test_a_reply_to_a_note_a_person_edited_by_hand_keeps_the_edit(chat, me
     """Given Marge's note, which Lisa then edited in Forgejo by adding a
     line of her own, when Marge replies in the notice's thread, then the
     card still has Lisa's line, and Marge's reply is a source."""
-    chat.model.answers.append({**FILED, "title": "Charcoal and propane"})
+    chat.model.corrections.append({"title": "Charcoal and propane"})
     await chat.says(MARGE, GRILL, event_id="$grill")
     [notice] = chat.notices()
     path, _, text = the_card_of(chat, memory, notice)
@@ -404,16 +404,17 @@ THREE = ("The grill needs new charcoal before Saturday and the propane tank is n
 
 async def test_a_correction_of_a_note_made_of_three_messages_keeps_all_three(chat, memory):
     """Given a note made of three messages, when Marge replies in its
-    thread, then the rebuilt note's text has all three messages, and its
-    sources are the three and the reply."""
+    thread, then the model is shown all three, the rebuilt note's text has
+    all three messages, and its sources are the three and the reply."""
     notice = await chat.has_a_note_of(*THREE)
-    chat.model.answers.append({**FILED, "title": "Barbecue on Saturday"})
+    chat.model.corrections.append({"title": "Barbecue on Saturday", "clean": "Barbecue on Saturday:\n\n" + "\n".join(f"- {words}" for words in THREE)})
 
     await chat.says(MARGE, "Call it Barbecue on Saturday", event_id="$fix", thread="$first")
 
     path, head, text = the_card_of(chat, memory, chat.notices()[-1])
     assert head["title"] == "Barbecue on Saturday"
     note = text.split("## Sources", 1)[0]
+    assert all(words in chat.model.conversations[-1][1]["content"] for words in THREE)
     assert all(words in note for words in THREE)
     assert len(sidecar(memory, path)["sources"]) == 4 and notice
 

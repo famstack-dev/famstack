@@ -55,19 +55,19 @@ class _Model:
     """The classifier, answering what a model would and recording what it read."""
 
     def __init__(self, answer: dict):
-        self.answer, self.saw, self.corrected_from, self.rebuilt_from = answer, {}, {}, {}
+        self.answer, self.saw, self.conversation = answer, {}, []
 
     async def classify_capture(self, **kwargs):
         self.saw = kwargs
         return dict(self.answer)
 
-    async def correct_note(self, **kwargs):
-        self.corrected_from = kwargs
+    async def correct_card(self, messages, *, text, todos=False):
+        self.conversation = messages
         return {"clean": self.answer.get("clean", ""), "prompt_template": "c0e1c2d3"}
 
-    async def rebuild_note(self, **kwargs):
-        self.rebuilt_from = kwargs
-        return {"clean": self.answer.get("clean", ""), "prompt_template": "c0e1c2d3"}
+    def events(self) -> list[str]:
+        """The events of the card conversation the model was shown, in order."""
+        return [m["content"] for m in self.conversation[3:-1]]
 
 
 @pytest.fixture(autouse=True)
@@ -136,10 +136,15 @@ class TestANoteIsProposedAsItWouldBeFiledToday:
 
     @pytest.mark.asyncio
     async def test_the_sidecar_says_what_made_it(self, monkeypatch, capsys):
-        _, answer, _ = await _propose(monkeypatch, capsys, _note(), ANSWER, msg="x", by="homer")
+        _, answer, _ = await _propose(monkeypatch, capsys, _note(), ANSWER, by="homer")
         made = json.loads(answer["proposed_sidecar"])["made"]
         assert (made["code_commit"], made["prompt_template"], made["requested_by"]) == (
             "9a5bdc9", "3f9a1c2b7d4e", "homer")
+
+    @pytest.mark.asyncio
+    async def test_a_corrected_note_says_the_conversation_made_it(self, monkeypatch, capsys):
+        _, answer, _ = await _propose(monkeypatch, capsys, _note(), ANSWER, msg="x", by="homer")
+        assert json.loads(answer["proposed_sidecar"])["made"]["conversation_template"] == "c0e1c2d3"
 
     @pytest.mark.asyncio
     async def test_a_note_in_the_older_format_is_proposed_in_todays(self, monkeypatch, capsys):
@@ -160,8 +165,7 @@ class TestACorrectionIsReadAndKept:
     async def test_the_model_reads_the_stored_replies_and_the_message(self, monkeypatch, capsys):
         _, _, model = await _propose(monkeypatch, capsys, _note(replies=[("bart", "and my swimsuit")]),
                                      ANSWER, msg="it is Friday, not Thursday", by="marge")
-        assert model.corrected_from["corrections"] == \
-            "Bart: and my swimsuit\nMarge: it is Friday, not Thursday"
+        assert model.events() == ["Bart: and my swimsuit", "Marge: it is Friday, not Thursday"]
 
     @pytest.mark.asyncio
     async def test_the_history_the_host_read_is_where_the_rebuild_starts(self, monkeypatch, capsys):
@@ -174,8 +178,8 @@ class TestACorrectionIsReadAndKept:
         _, _, model = await _propose(monkeypatch, capsys, _note(replies=[("bart", "and my swimsuit")]),
                                      ANSWER, msg="it is Friday, not Thursday", by="marge",
                                      history={"prior": CLEAN, "edits": [edit]})
-        assert model.rebuilt_from["prior"] == CLEAN
-        assert model.rebuilt_from["events"] == [
+        assert json.loads(model.conversation[2]["content"])["clean"] == CLEAN
+        assert model.events() == [
             "Bart: and my swimsuit",
             "Lisa edited the card: changed 'Budget: at most 200.' to 'Budget: at most 220.'",
             "Marge: it is Friday, not Thursday"]
@@ -207,8 +211,8 @@ class TestTheModelReadsTheNotesSources:
             [_event("$f", "@archivist-bot:simpson", "Filed: Trip"),
              _event("$r", "@bart:simpson", "and my swimsuit")]))
         _, answer, model = await _propose(monkeypatch, capsys, _note(), ANSWER)
-        assert model.corrected_from == {"words": WORDS, "corrections": "Bart: and my swimsuit"}, \
-            "sources are only appended; the chat replaces none"
+        assert WORDS in model.conversation[1]["content"], "sources are only appended; the chat replaces none"
+        assert model.events() == ["Bart: and my swimsuit"]
         assert [s["id"] for s in json.loads(answer["proposed_sidecar"])["sources"]] == [
             "$n:simpson", "$r"]
 
