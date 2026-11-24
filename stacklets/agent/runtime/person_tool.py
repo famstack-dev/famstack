@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.schema import StringSchema, tool_parameters_schema
+
+from room_people import audience_env
+from turn import current as current_turn
 
 
 @tool_parameters(
@@ -45,6 +49,8 @@ class MemoryPersonTool(Tool):
             name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # The room's people: the API reads the memory for them alone.
+            env=audience_env(dict(os.environ), current_turn().people),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
         out = stdout.decode(errors="replace").strip()

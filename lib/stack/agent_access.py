@@ -31,6 +31,7 @@ import json
 import shutil
 from pathlib import Path
 
+from .agent_audience import outside_the_table
 from .plugins import plugin_help, stacklet_commands
 
 # An always-loaded nanobot skill, so the agent sees the commands without
@@ -69,12 +70,19 @@ def allowed_commands(stack) -> list[list[str]]:
 # ── The skill the agent reads ────────────────────────────────────────────
 
 def _command_lines(granted: list[list[str]], commands: dict) -> list[tuple[str, str]]:
-    """`(stack <id> <cmd>, HELP)` per allowed command, each listed once."""
+    """`(stack <id> <cmd>, HELP)` per allowed command the API runs, each listed once.
+
+    A memory or docs command the audience table does not name is left out
+    (`stack.agent_audience.outside_the_table`): the API refuses it in every
+    room, so the agent would be told of a command that never runs.
+    """
     lines: dict[str, str] = {}
     for words in granted:
         sid = words[0]
         names = [words[1]] if len(words) > 1 else list(commands[sid])
         for name in names:
+            if outside_the_table([sid, name, *words[2:]]):
+                continue
             call = " ".join(["stack", sid, name, *words[2:]])
             lines.setdefault(call, plugin_help(commands[sid][name])[0] or "")
     return list(lines.items())
@@ -98,17 +106,19 @@ def _render_skill(lines: list[tuple[str, str]]) -> str:
 def write_command_skill(stack, workspace_dir: Path) -> list[str]:
     """Write the agent's command list into its workspace; return refused entries.
 
-    With nothing allowed there is no skill directory at all, a stale one
+    With nothing allowed that the API runs there is no skill directory at
+    all, a stale one
     included, so the agent's prompt is the same as on an instance that
     never used `[agent] allow`.
     """
     granted, refused, commands = _judge(stack)
+    lines = _command_lines(granted, commands)
     skill_dir = Path(workspace_dir) / "skills" / SKILL_NAME
-    if not granted:
+    if not lines:
         shutil.rmtree(skill_dir, ignore_errors=True)
         return refused
     skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(_render_skill(_command_lines(granted, commands)))
+    (skill_dir / "SKILL.md").write_text(_render_skill(lines))
     return refused
 
 
@@ -124,10 +134,10 @@ def write_command_list(stack, path: Path) -> None:
     is no file, as there is no skill.
     """
     granted, _, commands = _judge(stack)
+    lines = _command_lines(granted, commands)
     path = Path(path)
-    if not granted:
+    if not lines:
         path.unlink(missing_ok=True)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([list(line) for line in _command_lines(granted, commands)],
-                               ensure_ascii=False))
+    path.write_text(json.dumps([list(line) for line in lines], ensure_ascii=False))

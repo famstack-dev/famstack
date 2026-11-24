@@ -11,6 +11,12 @@ everyone else, a baby, a grandparent, the family doctor, is added here:
 
 `show` reads the person's wiki page (`<slug>/about.md`), the exact read
 surface for identity questions, parallel to `stack memory topic <name>`.
+With `--audience <people>` (who will see the answer, as for `find`) it
+reads the page only when they may all read it: the page is in the
+person's own folder and is compiled from their own notes too, so it is
+read for that person alone (`_graph.may_read`, the memory's audience rule).
+
+    stack memory person show homer --audience homer
 
 `add` names the file after the first name unless `--id` gives another,
 and commits it to Forgejo as the person named by `--as`. A name that
@@ -32,6 +38,7 @@ from ..lib import (
 )
 from ._shared_bucket import shared_bucket
 from ._curator import pull_now
+from ._graph import may_read, take_audience
 from ._update import update_memory
 
 from stack.people import (
@@ -83,7 +90,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def run(args, stacklet, config):
-    argv = list(args or [])
+    argv, audience = take_audience(args)
     if not argv:
         print(USAGE)
         return {"verbs": list(VERBS)}
@@ -96,7 +103,7 @@ def run(args, stacklet, config):
     try:
         if ns.verb == "add":
             return add(config, ns)
-        return show(config, ns)
+        return show(config, ns, audience)
     except Refusal as e:
         return {"error": str(e)}
 
@@ -191,8 +198,12 @@ def _known_people(vault: Path) -> list[str]:
     return [p.slug for p in load_persons_from_vault(vault)]
 
 
-def show(config, ns) -> dict:
-    """Print a person's page, found by any name they go by."""
+def show(config, ns, audience: frozenset[str] | None = None) -> dict:
+    """Print a person's page, found by any name they go by.
+
+    With an `audience`, refuses a page they may not all read and prints
+    nothing of it; None is the admin's view.
+    """
     name = " ".join(ns.name).strip()
 
     roots = [r for r in _roots(config, ns.vault) if r.exists()]
@@ -216,8 +227,11 @@ def show(config, ns) -> dict:
         hint = ("  people: " + ", ".join(known)) if known else ""
         return {"error": f"no profile for person {name!r}\n{hint}".rstrip()}
 
-    text = _clean_profile(path.read_text(encoding="utf-8"))
     rel = f"{path.parent.name}/about.md"
+    # SAFETY: refused before the page is read, so none of it reaches the answer.
+    if not may_read(rel, audience, config):
+        return {"error": f"{path.parent.name}'s page is read only in {path.parent.name}'s own chat"}
+    text = _clean_profile(path.read_text(encoding="utf-8"))
     print(f"Source: vault/{rel}\n")
     print(text)
     return {"ok": True, "person": path.parent.name, "path": rel}

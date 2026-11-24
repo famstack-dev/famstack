@@ -12,15 +12,31 @@ how far away it is, so the model only reads it out.
 The calendar is the list `stack memory list` knows as `calendar`, so
 the archivist's dates from letters and the agent's appointments stay in
 one place.
+
+A date the speaker asks for just for themselves ("just for me", "only
+mine", "private") goes on their own calendar instead (`just_for_me`, the
+command's `--private`), in their own folder of the memory, which only they
+read. The speaker is the turn's person, never a name the model gives, so a
+date goes only into the folder of the person who asked. Without those
+words a date goes on the family's calendar, as it always did: a private
+date the model was unsure about would be missing for everyone else, and
+the answer names the list, so the person can correct it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 
 from nanobot.agent.tools.base import Tool, tool_parameters
-from nanobot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
+from nanobot.agent.tools.schema import (
+    BooleanSchema,
+    IntegerSchema,
+    StringSchema,
+    tool_parameters_schema,
+)
+from room_people import audience_env
 from turn import current as current_turn
 
 # What `show` covers when the model names no span: the week ahead.
@@ -53,6 +69,12 @@ _TIME = re.compile(r"^([01]?\d|2[0-3])[:.]([0-5]\d)$")
                         "today and tomorrow, 7 for the week.",
             nullable=True,
         ),
+        just_for_me=BooleanSchema(
+            description="For add or remove: true only when the person said the "
+                        "date is just for them (only mine, private). It then goes on "
+                        "their own calendar, which nobody else sees.",
+            nullable=True,
+        ),
     )
 )
 class CalendarTool(Tool):
@@ -83,15 +105,18 @@ class CalendarTool(Tool):
         day: str | None = None,
         time: str | None = None,
         days: int | None = None,
+        just_for_me: bool | None = None,
     ) -> str:
         try:
-            args = calendar_args(op, what, day, time, days, actor=current_turn().person or "someone")
+            args = calendar_args(op, what, day, time, days, actor=current_turn().person or "someone",
+                                 private=bool(just_for_me))
         except ValueError as e:
             return str(e)
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=audience_env(dict(os.environ), current_turn().people),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
         out = stdout.decode(errors="replace").strip()
@@ -104,9 +129,10 @@ class CalendarTool(Tool):
 
 
 def calendar_args(op: str, what: str | None, day: str | None, time: str | None,
-                  days: int | None, *, actor: str) -> "list[str]":
+                  days: int | None, *, actor: str, private: bool = False) -> "list[str]":
     """The `stack memory list` command for a calendar operation.
 
+    `private` puts an add or a remove on `actor`'s own calendar (`--private`).
     Raises ValueError with what the model has to fix, before anything runs.
     """
     base = ["stack", "memory", "list"]
@@ -115,8 +141,9 @@ def calendar_args(op: str, what: str | None, day: str | None, time: str | None,
     entry = (what or "").strip()
     if not entry:
         raise ValueError(f"Nothing changed: {op} needs what, the appointment.")
+    own = ["--private"] if private else []
     if op == "remove":
-        return [*base, "remove", "calendar", entry, "--as", actor]
+        return [*base, "remove", "calendar", entry, "--as", actor, *own]
     if op != "add":
         raise ValueError(f"Nothing changed: unknown op {op!r}; use add, show or remove.")
     if not (day or "").strip():
@@ -126,7 +153,7 @@ def calendar_args(op: str, what: str | None, day: str | None, time: str | None,
         if not m:
             raise ValueError(f"Nothing added: time {time!r} is not HH:MM, such as 10:30.")
         entry = f"{int(m[1]):02}:{m[2]} {entry}"
-    return [*base, "add", "calendar", entry, "--due", (day or "").strip(), "--as", actor]
+    return [*base, "add", "calendar", entry, "--due", (day or "").strip(), "--as", actor, *own]
 
 
 def install() -> None:

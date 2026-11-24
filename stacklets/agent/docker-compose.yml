@@ -39,6 +39,10 @@ services:
       AGENT_BOT_ID: ${AGENT_BOT_ID}
       # The agent's token for the host API, sent by the `stack` shim.
       STACK_API_TOKEN: ${STACK_API_TOKEN}
+      # The key the runtime signs a room's people with for each memory read.
+      # Not in the exec tool's allowed_env_keys (config.json), so the
+      # model's shell never gets it in its environment.
+      STACK_AUDIENCE_KEY: ${STACK_AUDIENCE_KEY}
       # The agent's chat password, which nanobot signs in with. It comes
       # through the environment, because the agent's shell and file tools
       # can read any file in the container: the stack's secret store is
@@ -47,12 +51,13 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       # nanobot home: config.json (rendered), workspace, matrix-store, sessions.
+      # SAFETY: no part of the family memory is mounted. nanobot's file
+      # tools and exec read every file in the container, around every
+      # audience rule, so a mounted memory gave one person's chat another
+      # person's private notes. The agent reads the memory only through
+      # `stack memory` commands, for the people in the room
+      # (`runtime/room_people.py`, `stack.agent_audience`).
       - ${AGENT_DATA_DIR}:/home/nanobot/.nanobot
-      # The family memory vault (read-only) — Stacky's knowledge: person and
-      # topic pages, notes, todos. Mounted INSIDE the workspace so nanobot's
-      # workspace-scoped file tools (grep, read_file) can reach it, which is
-      # the retrieval path its own tool contract tells the model to prefer.
-      - ${MEMORY_VAULT_DIR}:/home/nanobot/.nanobot/workspace/vault:ro
       # Runtime-context shim (on PYTHONPATH). The Dockerfile COPYs it so the
       # image runs standalone, but a bind mount means an edit + restart takes
       # effect without a rebuild. Keep in sync with the Dockerfile COPY.
@@ -63,6 +68,12 @@ services:
       # /app/runtime: that is a read-only mount itself, and Docker cannot
       # create a mountpoint inside it. /app/shared is on PYTHONPATH.
       - ../../lib/stack/name_trigger.py:/app/shared/name_trigger.py:ro
+      # The runtime signs a room's people with the module the host API checks
+      # them with, so both ends read one definition.
+      - ../../lib/stack/agent_audience.py:/app/shared/agent_audience.py:ro
+      # And signs a person's yes to deleting a list the same way
+      # (`stack.agent_confirm`), which the host API checks before `--yes`.
+      - ../../lib/stack/agent_confirm.py:/app/shared/agent_confirm.py:ro
       # The `stack` shim, live for the same reason. It is the agent's only
       # route to the CLI, so a bug in it takes out every vault tool at once —
       # and it stayed baked-only long enough for one to go unnoticed.

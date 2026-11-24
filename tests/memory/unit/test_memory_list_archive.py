@@ -141,3 +141,77 @@ def test_without_the_curator_nothing_is_archived_and_the_log_says_what_to_start(
     assert asyncio.run(nightly.run(None, [])) == 1
     err = capsys.readouterr().err
     assert "lists not archived" in err and "stack up memory" in err
+
+
+# ── A person's own lists ─────────────────────────────────────────────────
+
+HOMERS_CALENDAR = "homer/lists/dates-homer.md"
+HOMERS_CALENDAR_TEXT = ("---\ntype: list\ncard_id: list-dates-homer\ntitle: Homer's Dates\nkind: calendar\n"
+                        "---\n\n- [ ] Old checkup 📅 2026-10-01\n- [ ] Dentist 📅 2099-12-02\n")
+HOMER = "---\ntype: person\ncard_id: person-homer\ntitle: Homer Simpson\naccount: homer\n---\n\n# Homer\n"
+# A list Homer made by hand in his own folder, and a folder that is nobody's:
+# both with an item ticked on a day that is over.
+SURPRISE = "homer/lists/surprise.md"
+TEMPLATES = "templates/lists/x.md"
+# A calendar in a folder that is no declared person's, with a date that is over.
+NOBODYS_CALENDAR = "templates/lists/dates-template.md"
+NOBODYS_CALENDAR_TEXT = ("---\ntype: list\ncard_id: list-dates-template\ntitle: Template dates\n"
+                         "kind: calendar\n---\n\n"
+                         "- [ ] Old checkup 📅 2026-10-01\n")
+TICKED = "---\ntype: list\ntitle: {title}\n---\n\n- [x] Buy cake ✅ 2026-10-01\n- [ ] Hide cake\n"
+
+
+@pytest.fixture
+def homers_calendar(tmp_path, monkeypatch):
+    """The memory holding the shopping list and Homer's own calendar."""
+    with running_memory(tmp_path / "data", {SHOPPING: LIST, HOMERS_CALENDAR: HOMERS_CALENDAR_TEXT,
+                                           "family/people/homer.md": HOMER,
+                                           SURPRISE: TICKED.format(title="Surprise"),
+                                           TEMPLATES: TICKED.format(title="Template"),
+                                           NOBODYS_CALENDAR: NOBODYS_CALENDAR_TEXT},
+                        seeded_by="homer", seeded_as="chore(lists): homer changed Homer's Dates") as memory:
+        for key, value in {**memory.environ, "SHARED_BUCKET": "family", "TIMEZONE": "UTC"}.items():
+            monkeypatch.setenv(key, value)
+        yield memory
+
+
+def test_the_night_takes_a_past_date_off_a_persons_own_calendar(homers_calendar):
+    """Given a checkup that is over on Homer's own calendar, when the nightly
+    archive runs, then it is in his own archive and off his calendar, his
+    date ahead stays, and nothing of his reaches the family's folder: a
+    calendar keeps only what is ahead, in whichever bucket it is."""
+    assert asyncio.run(nightly.run(None, [])) == 0
+
+    memory = homers_calendar
+    assert "Old checkup" not in memory.text(HOMERS_CALENDAR)
+    assert "Dentist" in memory.text(HOMERS_CALENDAR)
+    assert "Old checkup" in memory.text("homer/lists/archive/dates-homer/2026-10.md")
+    assert "Old checkup" not in memory.text("family/lists/archive/dates-homer/2026-10.md")
+    assert "Äpfel" in memory.text(SHOPPING_ARCHIVE)
+
+
+def test_the_night_leaves_a_persons_other_lists_and_nobodys_folder_as_they_are(homers_calendar):
+    """Given a list Homer made by hand in his own folder and a folder that is
+    no person's, each with an item ticked on a day that is over, when the
+    nightly archive runs, then both files stay byte for byte, while his past
+    private date still moves: only calendars keep only what is ahead, and no
+    rule was decided for the rest."""
+    assert asyncio.run(nightly.run(None, [])) == 0
+
+    memory = homers_calendar
+    assert memory.text(SURPRISE) == TICKED.format(title="Surprise")
+    assert memory.text(TEMPLATES) == TICKED.format(title="Template")
+    assert memory.text("homer/lists/archive/surprise/2026-10.md") == ""
+    assert "Old checkup" in memory.text("homer/lists/archive/dates-homer/2026-10.md")
+
+
+def test_the_night_leaves_a_calendar_in_nobodys_folder_as_it_is(homers_calendar):
+    """Given a calendar with a date that is over in a folder that is no
+    declared person's, when the nightly archive runs, then the file stays
+    byte for byte and no archive is made: only the shared folder and the
+    family's people have their calendars kept to what is ahead."""
+    assert asyncio.run(nightly.run(None, [])) == 0
+
+    memory = homers_calendar
+    assert memory.text(NOBODYS_CALENDAR) == NOBODYS_CALENDAR_TEXT
+    assert memory.text("templates/lists/archive/dates-template/2026-10.md") == ""

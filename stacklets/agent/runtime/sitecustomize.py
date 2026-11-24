@@ -66,6 +66,10 @@ Third, one shim that widens when the agent is allowed to answer at all:
    the model with the words. Another person's photo, an older one and one
    that reached the agent on its own are never attached.
 
+13. room_people (room_people.py): each message carries the people in its
+   room, and every command of its turn (a tool's or exec's) names them to
+   the host API, which reads the memory for them alone.
+
 WHY SHIMS AND NOT A FORK
     nanobot 0.3 has a seam for per-turn context (runtime-context providers) and
     keeps a session per Matrix thread, which retired the two shims that needed
@@ -80,7 +84,7 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
     brief:       `nanobot.agent.loop.AgentLoop.__init__` (wrapped to register a provider),
                  `AgentLoop.register_runtime_context_provider(provider)`, where a provider is
                  `async (RequestContext) -> RuntimeContextBlock | None` and RequestContext
-                 carries `sender_id`, `metadata`, `workspace`;
+                 carries `sender_id` and `metadata` (with the room's people, `room_people`);
                  `nanobot.runtime_context.{RuntimeContextBlock, wrap_runtime_context_lines}`
     state_log:   `nanobot.agent.context.ContextBuilder.build_messages(...) -> list[dict]`
     memory_tool: `nanobot.agent.tools.loader.ToolLoader.discover(self) -> list[type[Tool]]`
@@ -89,6 +93,18 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  (IntegerSchema takes keyword arguments only)
     person_tool: same symbols as memory_tool
     history_tool: same symbols as memory_tool
+    own_chat:    `nanobot.agent.memory.MemoryStore.append_history(self, entry, *, max_chars,
+                 session_key) -> int`; `resolve_workspace_path(..., include_media_dir=)` as
+                 imported by name into `nanobot.agent.tools.filesystem` and `.message`
+                 (from `nanobot.agent.tools.path_utils`), raising
+                 `nanobot.security.workspace_policy.WorkspaceBoundaryError`;
+                 `AgentLoop.__init__`; `AgentLoop._restore_turn(self, ctx)` before it
+                 turns `ctx.msg.media` into `[Attachment: ...]` text, with `ctx.kind`
+                 (`nanobot.agent.loop.TurnKind.USER`) and `ctx.session` set after it;
+                 `AgentLoop.sessions.get_or_create(key).metadata`, saved with the session;
+                 `nanobot.agent.tools.base.ToolResult.error`;
+                 the three write tools below. Also that `tools.restrict_to_workspace`
+                 still turns on exec's `_guard_command` (allow_patterns are matched only then).
     vault_write: `nanobot.agent.tools.filesystem.WriteFileTool.execute(self, path, content) -> str`
                  `nanobot.agent.tools.filesystem.EditFileTool.execute(self, path, ...) -> str`
                  `nanobot.agent.tools.apply_patch.ApplyPatchTool.execute(self, edits, ...) -> str`
@@ -117,6 +133,12 @@ PIN / RECHECK ON UPGRADE (re-verify after any `nanobot-ai` version bump)
                  reaching `MatrixChannel.send` when `sendToolHints` is on,
                  `MatrixChannel._send_room_content(room_id, content)` returning a response
                  with `event_id`, `MatrixChannel._build_thread_relates_to(metadata)` (static)
+    room_people: `MatrixChannel._handle_message(sender_id, chat_id, content, ..., metadata=)`
+                 called with `metadata` as a keyword, `MatrixChannel.client.rooms[room_id].users`
+                 (nio), `MatrixChannel.config.user_id`; nanobot copying a message's metadata
+                 into `RequestContext.metadata` (`agent/loop.py` `_request_context_for_turn`);
+                 `nanobot.agent.tools.shell.ExecTool._build_env(self) -> dict`, called by
+                 `execute` inside the tool call
     photo_before: `MatrixChannel._on_message(self, room, event)` (async), the event's
                  `server_timestamp` (milliseconds, int),
                  `MatrixChannel._on_media_message(self, room, event)` (async; gates, then
@@ -157,10 +179,14 @@ try:
     from nanobot.runtime_context import RuntimeContextBlock as _Block
     from nanobot.runtime_context import wrap_runtime_context_lines as _wrap
 
+    import asyncio as _asyncio_brief
+
     async def _family_brief(request):
         lines = [_when_sent(_datetime.datetime.now().astimezone()), _ANSWER_LANGUAGE]
         try:
-            lines += _brief_lines(request, request.workspace)
+            # In a thread: the brief runs `stack memory` commands, which
+            # would otherwise hold up every other room while they answer.
+            lines += await _asyncio_brief.to_thread(_brief_lines, request)
         except Exception:
             # A briefing is an optimisation, never a dependency — never break a turn.
             _log.exception("brief failed; continuing without a briefing")
@@ -244,6 +270,20 @@ except Exception:
     _log.exception("state-log shim could not attach (nanobot internals changed?)")
 
 
+# ── own_chat: what one chat leaves behind reaches no other chat ─────────────
+# No shared history, a chat's own attachments only, no plain file written into
+# the workspace every chat reads. Installed before vault_write, which then
+# routes a memory page past the refused write. SAFETY: unlike every other
+# shim this one does not fail soft. An agent without it hands one chat's
+# words to another, so the process stops and the log names the cause.
+try:
+    importlib.import_module("own_chat").install()
+    _log.info("own-chat gates active")
+except Exception as _own_chat_error:
+    _log.exception("own-chat gates could not attach (nanobot internals changed?)")
+    raise SystemExit(f"the agent does not start without its own-chat gates: {_own_chat_error!r}")
+
+
 # ── vault tools: memory_search, memory_person, memory_history, writes ────────
 # These add capability rather than reshaping context, but attach the same way.
 # Each is installed in its own try so one tool failing costs only itself; a
@@ -262,6 +302,38 @@ for _module_name, _what in (
         _log.info("%s active", _what)
     except Exception:
         _log.exception("%s could not attach (nanobot internals changed?)", _what)
+
+
+# ── room_people: every memory read is for the people in the room ────────────
+# A message carries the people in its room (nanobot copies its metadata into
+# the request context its tools run in), and each command a tool or exec runs
+# in that turn names them as `STACK_AUDIENCE`. The host API reads the memory
+# for them alone and refuses a read without them. SAFETY: if this shim does
+# not attach, reads name nobody and the API refuses them; nothing falls back
+# to the admin's view. See room_people.py.
+try:
+    import nanobot.agent.tools.shell as _shell_people
+    import nanobot.channels.matrix.runtime as _matrix_people
+    from room_people import audience_env as _audience_env
+    from room_people import with_people as _with_people
+    from turn import current as _current_turn_people
+
+    _orig_handle_people = _matrix_people.MatrixChannel._handle_message
+    _orig_build_env = _shell_people.ExecTool._build_env
+
+    async def _handle_with_people(self, sender_id, chat_id, content, *args, **kwargs):
+        kwargs["metadata"] = _with_people(kwargs.get("metadata"), self.client, chat_id,
+                                          self.config.user_id)
+        return await _orig_handle_people(self, sender_id, chat_id, content, *args, **kwargs)
+
+    def _build_env_for_the_room(self):
+        return _audience_env(_orig_build_env(self), _current_turn_people().people)
+
+    _matrix_people.MatrixChannel._handle_message = _handle_with_people
+    _shell_people.ExecTool._build_env = _build_env_for_the_room
+    _log.info("room-people shim active")
+except Exception:
+    _log.exception("room-people shim could not attach (nanobot internals changed?)")
 
 
 # ── name_trigger: being spoken to by name counts as a mention ────────────────
@@ -647,16 +719,11 @@ except Exception:
 # (see join_greeting.py for why generated rather than canned).
 try:
     import asyncio as _asyncio
-    import os.path as _ospath
-    from pathlib import Path as _Path
-
     import nanobot.channels.matrix.runtime as _matrix_join
-    from brief import topic_for_room_label as _topic_for_room_label
+    from brief import room_topic as _room_topic
     from join_greeting import greeting_prompt as _greeting_prompt
-
-    # Same workspace nanobot mounts the projection into; `state_log`
-    # above resolves its log the same way.
-    _WORKSPACE = _Path(_ospath.expanduser("~/.nanobot/workspace"))
+    from room_people import people_in as _people_in
+    from room_reads import RoomReads as _RoomReads
 
     _orig_on_room_invite = _matrix_join.MatrixChannel._on_room_invite
 
@@ -675,7 +742,10 @@ try:
                     break
                 await _asyncio.sleep(1)
 
-            topic = _topic_for_room_label(label, _WORKSPACE / "vault")
+            # The topic as the room's people may read the memory: a topic in
+            # one person's own folder is no topic of a room with others in it.
+            people = _people_in(getattr(joined, "users", None) or {}, self.config.user_id)
+            topic = await _asyncio.to_thread(_room_topic, label, _RoomReads(people))
             await self._handle_message(
                 sender_id=event.sender,
                 chat_id=room.room_id,

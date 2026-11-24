@@ -1,9 +1,8 @@
 """stack memory write: replace a vault page, or file a new note, and say what that did.
 
-Reading the vault has always been fs-shaped: the agent runs `read_file` on
-`vault/family/camping/todos.md` and it works, because every model is trained
-on it and nobody had to invent a retrieval verb. Writing had no counterpart,
-so it grew domain verbs instead -- `topic <slug> todo strike "<item>" --by
+The agent reads a page with `stack memory card <path>`, for the people in
+its room; no part of the memory is mounted into its container. Writing once had only
+domain verbs -- `topic <slug> todo strike "<item>" --by
 <person>` -- and a model that can describe the right list perfectly still
 could not perform twenty string-matched calls in a row to produce it.
 
@@ -73,6 +72,13 @@ A NEW NOTE IS FILED, NOT WRITTEN
     with its message and writes nothing. A plain page in its place would be
     a note without sources, reported as filed. A page that exists already,
     a `--patch`, and any page that is not a note are written as above.
+
+FOR WHOM IT WRITES
+    `--audience bart` (or `bart,homer`) names who will see the reply, as
+    `search` and `find` take it. A write's reply says what the write
+    changed, so a page they may not all read (`stack.cards.audience.readable`)
+    is refused before it is read, and the refusal names nothing it holds.
+    Without it, any page is written, as the admin does on the Mac.
 """
 
 HELP = "Replace a page in the family memory vault, or file a new note"
@@ -83,6 +89,7 @@ import re
 from pathlib import Path
 
 from ..lib import body_only
+from ._graph import may_read, take_audience
 from ._update import still_to_follow, update_memory
 
 from stack.bot_runner import call
@@ -117,7 +124,7 @@ _CAPTURED = re.compile(r"^Captured: (.*)$", re.MULTILINE)
 _FILED_AT = re.compile(r"^\s+(vault|card):\s*(\S+)\s*$", re.MULTILINE)
 
 _USAGE = ("usage: stack memory write <vault-path> --by <person> "
-          "[--from <file>] [--patch] [--dry-run]\n"
+          "[--from <file>] [--patch] [--dry-run] [--audience <people>]\n"
           "  e.g. stack memory write family/camping/todos.md --by marge")
 
 
@@ -177,7 +184,7 @@ def _check_person(after: str, page: str) -> None:
 
 
 def run(args, stacklet, config):
-    argv = list(args or [])
+    argv, audience = take_audience(args)
     actor, argv = _opt(argv, "--by")
     source, argv = _opt(argv, "--from")
     as_patch = "--patch" in argv
@@ -197,6 +204,10 @@ def run(args, stacklet, config):
     repo_path = paths[0].strip().removeprefix("vault/").lstrip("/")
     if not repo_path.endswith(".md"):
         return {"error": f"{repo_path!r} is not a page (expected a .md path)"}
+    # SAFETY: checked before the page is read, because the reply of a write
+    # says what it changed: the items it took away or kept.
+    if not may_read(repo_path, audience, config):
+        return {"error": f"{repo_path} is read only in its owner's own chat, so it is not written here"}
     if _DIARY_PAGE.match(repo_path):
         return {"error": (
             f"{repo_path} is a page the diary builds from its entries, and a write "
@@ -380,9 +391,9 @@ def _file_note(repo_path: str, words: str, bucket: str, actor: str, config) -> d
     told = f"filed a new note: {title}"
     # The pipeline named the file, so the caller hears where it went rather
     # than reading the path it asked for. The curator carries the
-    # archivist's commit on to the wiki and the vault mount on its own.
+    # archivist's commit on to the wiki and the brain `stack memory` reads, on its own.
     print(f"Filed a new note: {title} (by {actor})\n  {path} ({card_id or 'no card id'})"
-          f"{link}\n  The wiki and the vault mount catch up shortly.")
+          f"{link}\n  The wiki and `stack memory` reads catch up shortly.")
     return {
         "ok": True, "committed": True, "path": path, "card_id": card_id, "by": actor,
         "summary": told, "mirrored": False, "destructive": False, "removed": [],

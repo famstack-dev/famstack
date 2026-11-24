@@ -23,16 +23,20 @@ On every incoming message, it prepends a short **briefing** to the prompt:
 ```
 You are speaking with marge (@marge). Homemaker and mother; leads a campaign to
 reform violent children's TV; runs the Springfield Elementary PTA.
-(Their full profile: vault/marge/about.md)
-Topic 'itchy-scratchy-land': the family's outing to the amusement park...
-Open todos (8): pick up entrance bands; charge the camera; pack Maggie's clothes; ...
-Recently: capture Vorbereitung fuer Itchy Park Besuch; tick popcorn off the list
-(Full topic: vault/family/itchy-scratchy-land/)
+(Their full profile: memory_person marge)
+This room's topic is 'itchy-scratchy-land'; run `stack memory topic itchy-scratchy-land` for its overview.
+This topic's lists with open items: itchy-park; run `stack memory list show <list>` to see one.
 ```
 
 So a shared family room works correctly: **each turn is primed with whoever
 actually spoke**, not with a single fixed `USER.md`. The agent gets the essence
-plus pointers; it reads full pages with its file tools only if it needs depth.
+and pointers. It reads full pages with its memory tools only when it needs more
+detail.
+
+The briefing is read for the people in the room, like every other read of the
+agent (`room_reads.py`). In her own chat, the briefing of Marge holds her
+profile. In a room with other people, the briefing names her but shows nothing
+of her page.
 
 ## Why this design (and why not the obvious alternatives)
 
@@ -46,15 +50,19 @@ plus pointers; it reads full pages with its file tools only if it needs depth.
   person pages as a competing memory store.
 - **Not MCP.** Too many tokens, and the agent surface is meant to be the `stack`
   CLI, not a protocol.
-- **The vault is the source of truth.** The briefing is assembled *from* the
-  git-backed vault (person pages, topic pages, todos, git log) on each turn — we
-  do not maintain a second profile store.
+- **The memory is the source of truth.** On each turn, the briefing is made
+  from the family memory: person pages, topic pages and lists. It reads them
+  through `stack memory` commands. No memory file is in the container, because
+  the file tools and the exec tool of nanobot read every file there. We do not
+  keep a second profile store.
 
 ## How it works
 
-- `brief.py` — assembles the briefing from the vault (speaker page,
-  topic page, open todos, recent *human* git activity). Compact, read-only,
-  never raises.
+- `brief.py`: makes the briefing from the speaker's page, the topic page and
+  the topic's lists with open items. It is compact and read-only, and it never
+  raises.
+- `room_reads.py`: the `stack memory` reads of the briefing, signed for the
+  people in the room.
 - `sitecustomize.py` — auto-loaded by Python at startup (this dir is on
   `PYTHONPATH`; see the stacklet `Dockerfile`). It registers the briefing as a
   runtime-context provider on every `AgentLoop`. nanobot appends the block to
@@ -66,6 +74,17 @@ plus pointers; it reads full pages with its file tools only if it needs depth.
 - `dream_aside.py` — run once by the entrypoint, not a shim. nanobot's Dream
   is off in `config.json`; this moves what it wrote before (profile files,
   `MEMORY.md`, its own skills) into `~/.nanobot/dream-archive/`.
+- `own_chat.py`: keeps what one chat leaves behind away from every other
+  chat. The config keeps the file tools in the workspace, and it limits exec
+  to plain `stack` lines. This shim adds three rules:
+  - It writes no shared history.
+  - It gives a chat only the attachments of that chat.
+  - It refuses plain file writes into the workspace.
+
+  It is the one shim that stops the agent when it cannot attach.
+- `chat_aside.py`: run by the entrypoint at every start, not a shim. Earlier
+  releases left a shared history in the workspace. This script moves it into
+  `~/.nanobot/chat-archive/`. A file that it cannot move stops the start.
 
 ```
 Dockerfile:  COPY runtime/ /app/runtime  +  ENV PYTHONPATH=/app/runtime

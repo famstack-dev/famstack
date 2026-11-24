@@ -12,6 +12,13 @@ projection on disk, so it works even when the model is down.
 
 A topic's lists are read and changed with `stack memory list`.
 
+`--audience bart` (or `bart,homer`) names who will see the answer, as
+`search` and `find` take it: only a page in a folder they may all read is
+shown or named (`stack.cards.audience.readable`), so a topic in Marge's own
+folder is not there in Bart's chat. Without it, every page is, as the admin
+sees it on the Mac. A rename with `--audience` is refused: renaming is the
+admin's, and its plan names files in folders the audience may not read.
+
 A rename runs on memory's side of the bot runner, which plans it and
 commits it through the curator (`bot/cli/topic.py` has the whole plan);
 this command sends it there and shows the report.
@@ -26,15 +33,25 @@ from pathlib import Path
 from ..lib import brain_path_for
 from ._common import dispatch_report
 from ._curator import pull_now
+from ._graph import may_read, take_audience
 from ._update import still_to_follow
 
 HELP = "Show a topic's overview, or rename a topic"
 
+RENAME_IS_THE_ADMINS = ("a topic is renamed by the admin on the Mac "
+                        "(`stack memory topic rename`), not for a room")
+
 
 def run(args, stacklet, config):
-    if (args or [])[:1] == ["rename"]:
+    args, audience = take_audience(args)
+    if args[:1] == ["rename"]:
+        # SAFETY: an audience means the agent runs this for a room. A rename
+        # is the admin's decision, and its plan names every file it moves,
+        # also in a folder the room may not read, so it is refused here.
+        if audience is not None:
+            return {"error": RENAME_IS_THE_ADMINS}
         return rename(list(args[1:]), config)
-    words = [a for a in (args or []) if not a.startswith("-")]
+    words = [a for a in args if not a.startswith("-")]
     if len(words) > 1 and words[1] in ("todo", "todos"):
         return {"error": f"a topic's todos are a list now: "
                          f"stack memory list show {words[0]}"}
@@ -43,10 +60,10 @@ def run(args, stacklet, config):
     if brain is None or not brain.exists():
         return {"error": "no brain projection found; is the memory stacklet installed?"}
     if not scope:
-        topics = _known_topics(brain)
+        topics = _known_topics(brain, audience, config)
         print("\n".join(topics) if topics else "No topic pages yet.")
         return {"topics": topics}
-    return show_topic(scope, config=config)
+    return show_topic(scope, config=config, audience=audience)
 
 
 def _brain(config) -> Path | None:
@@ -54,12 +71,25 @@ def _brain(config) -> Path | None:
     return brain_path_for(Path(data_dir)) if data_dir else None
 
 
-def _known_topics(brain: Path) -> list[str]:
-    """Every topic slug that currently has an about.md in brain."""
-    return sorted({
-        p.parent.name for p in brain.glob("*/*/about.md")
-        if p.parent.parent != brain
-    })
+def _known_topics(brain: Path, audience=None, config=None) -> list[str]:
+    """Every topic slug that currently has an about.md in brain, in a folder
+    `audience` may read."""
+    return sorted({p.parent.name for p in _pages(brain, "*", audience, config)})
+
+
+def _pages(brain: Path, scope: str, audience, config) -> list[Path]:
+    """The about pages of topic `scope` (`*`: of every topic) that `audience` may read."""
+    # SAFETY: a page the audience may not read is neither shown nor named.
+    # The scope is the caller's text, so a match is judged by where it is
+    # (`family/../marge/x` is in Marge's folder), not by how it was named.
+    root = brain.resolve()
+    pages = []
+    for page in brain.glob(f"*/{scope}/about.md"):
+        where = page.resolve()
+        if where.is_relative_to(root) and may_read(where.relative_to(root).as_posix(),
+                                                   audience, config):
+            pages.append(page)
+    return sorted(pages)
 
 
 # Strip the machine bits so the about reads as prose: the frontmatter block, the
@@ -69,7 +99,7 @@ _GEN_MARKER = re.compile(r"<!--\s*(?:begin|end):\s*generated\s*-->\n?")
 _CITE = re.compile(r"\[\d+(?:,\s*\d+)*\]")
 
 
-def show_topic(scope: str, *, config) -> dict:
+def show_topic(scope: str, *, config, audience=None) -> dict:
     """Print a topic's brain about page -- its curated overview.
 
     `stack memory topic <slug>` gives the topic's summary, so the agent can
@@ -82,9 +112,9 @@ def show_topic(scope: str, *, config) -> dict:
         return {"error": "no brain projection found; is the memory stacklet installed?"}
     scope = (scope or "").strip()
 
-    matches = sorted(brain.glob(f"*/{scope}/about.md"))
+    matches = _pages(brain, scope, audience, config)
     if not matches:
-        known = _known_topics(brain)
+        known = _known_topics(brain, audience, config)
         hint = ("  topics: " + ", ".join(known)) if known else ""
         return {"error": f"no page for topic {scope!r}\n{hint}".rstrip()}
 

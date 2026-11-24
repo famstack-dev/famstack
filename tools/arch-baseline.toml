@@ -14,6 +14,11 @@
     "stacklets/memory/graph.py",
     "stacklets/memory/lib.py",
 ]
+"stacklets/memory/cli/_own_calendar.py" = [
+    "lib/stack/cards",
+    "lib/stack/lists.py",
+    "lib/stack/people",
+]
 "stacklets/memory/cli/ask.py" = [
     "stacklets/memory/lib.py",
 ]

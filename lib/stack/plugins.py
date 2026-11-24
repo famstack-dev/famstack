@@ -5,12 +5,31 @@ A stacklet with a preparation, a hook `hooks/on_prepare.py`, has the
 command `stack <id> prepare` too: the framework runs it (`stack.cli`), and
 its help is the hook's `HELP` and docstring. The CLI builds its parser from this, and the agent's allowlist checks
 `[agent] allow` against it, so both agree on what a stacklet command is.
+
+`plugin_words` is the one reading of the words a plugin gets: the CLI
+passes them to the command, and the host API checks the agent's line
+against them. A rule that read the line in another way would check one
+command and let the CLI run another.
 """
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
+
+# The framework's own option: `stack <id> <cmd> --json` prints the command's
+# answer as JSON. It is not the command's, wherever it stands in the line.
+JSON_OPTION = "--json"
+
+
+def plugin_words(words: list[str]) -> list[str]:
+    """`words` as a stacklet command reads them: without the framework's
+    `--json`, wherever it stood.
+
+        plugin_words(["list", "--json", "delete", "partyliste"])
+        # ["list", "delete", "partyliste"]
+    """
+    return [word for word in words if word != JSON_OPTION]
 
 
 def stacklet_commands(stck) -> dict[str, dict[str, str]]:

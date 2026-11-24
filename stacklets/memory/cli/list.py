@@ -15,6 +15,18 @@ choices, so the caller can pick one instead of guessing.
 Reads come off the vault on disk; writes commit to Forgejo as the
 person named by `--as`, through `update_memory`, against the current
 file there.
+
+`--audience bart` (or `bart,homer`) names who will see the answer, as
+`search` and `find` take it, on every verb: only a list in a folder they
+may all read is shown, changed, named or found by its name
+(`stack.cards.audience.readable`), so a list in Marge's own folder is not
+there in Bart's chat, also not in a refusal that names the lists or items
+to choose from. Without it, every list is, as the admin sees it on the Mac.
+
+`--private` puts a date on the `--as` person's own calendar, in their own
+folder, instead of the family's (`private`): a date a person asked for
+just for themselves. `show calendar` for that person alone shows their
+own dates among the family's.
 """
 
 from __future__ import annotations
@@ -32,6 +44,8 @@ from typing import Callable, NamedTuple
 
 from ..lib import vault_path_for
 from ._curator import pull_now
+from ._graph import may_read, take_audience
+from ._own_calendar import NotKept, OwnCalendar, Shown, keeper_of, shown_to
 from ._shared_bucket import shared_bucket
 from ._update import still_to_follow, update_memory
 
@@ -68,6 +82,7 @@ from stack.vault import slug as vault_slug
 
 USAGE = """\
     stack memory list show                          every list, with its open items counted
+    stack memory list show --topic camping          only the lists that belong to that topic
     stack memory list show groceries [--all]        the open items (--all: the ticked ones too)
     stack memory list show calendar --days 7        the family calendar's next 7 days, each
                                                     entry with its weekday (2: today, tomorrow)
@@ -84,6 +99,11 @@ USAGE = """\
     stack memory list add calendar "10:30 Parents' evening" --due 2026-10-20 --as marge
                                                     `calendar` is the family calendar, whatever
                                                     its name; add starts it when there is none
+    stack memory list add calendar "09:00 Dentist" --due 2026-12-02 --as homer --private
+                                                    on Homer's own calendar in his own folder,
+                                                    made with its first date; remove, tick and
+                                                    untick take --private too. `show calendar`
+                                                    for --audience homer shows his dates as well
     stack memory list tick|untick|remove groceries yogurt --as homer
     stack memory list tick "Field trip form" --as marge   on whichever list it is
     stack memory list move groceries eggs --to market [--section Eggs] --as marge
@@ -135,6 +155,7 @@ def _parser() -> argparse.ArgumentParser:
     show.add_argument("slug", nargs="?")
     show.add_argument("--all", action="store_true")
     show.add_argument("--days", type=int, default=None)
+    show.add_argument("--topic", default="")
 
     create = verbs.add_parser("create", add_help=False)
     # The slug is optional: a family names a list, and `Baumarkt` makes
@@ -196,11 +217,14 @@ def _parser() -> argparse.ArgumentParser:
     for sub in (create, add, move, reset, details, delete,
                 *[verbs.choices[v] for v in ("tick", "untick", "remove")]):
         sub.add_argument("--as", dest="actor", default="")
+    # `calendar` then names the actor's own calendar, not the family's.
+    for sub in (add, *[verbs.choices[v] for v in ("tick", "untick", "remove")]):
+        sub.add_argument("--private", action="store_true")
     return parser
 
 
 def run(args, stacklet, config):
-    argv = list(args or [])
+    argv, audience = take_audience(args)
     if not argv or argv[0] not in VERBS:
         print(USAGE)
         return {"verbs": list(VERBS)} if not argv else \
@@ -219,32 +243,41 @@ def run(args, stacklet, config):
         return {"error": "no vault found; is the memory stacklet installed?"}
     if behind := pull_now(config):
         print(behind, file=sys.stderr)
+    def readable(path: str) -> bool:
+        return may_read(path, audience, config)
+
     try:
         if ns.verb == "show":
-            _name_the_calendar(ns, _all_lists_at(vault), config)
-            _name_by_title(ns, _all_lists_at(vault))
-            return show(vault, ns.slug, show_all=ns.all, days=ns.days,
-                        language=_language(config))
+            own = shown_to(vault, audience, language=_language(config),
+                           shared_bucket=shared_bucket(config)) \
+                if ns.slug == CALENDAR_NAME else None
+            _name_the_calendar(ns, _all_lists_at(vault, readable), config)
+            _name_by_title(ns, _all_lists_at(vault, readable))
+            return show(vault, ns.slug, show_all=ns.all, days=ns.days, topic=ns.topic,
+                        language=_language(config), readable=readable, own=own)
         if not ns.actor.strip():
             # Every change is a commit with a person's name on it; one
             # without a name cannot be told apart from anybody else's.
             raise Refusal(f"say who {ns.verb}s: add --as <person>, the family member it is for")
         actor = _actor(ns.actor)
+        if getattr(ns, "private", False):
+            return private(vault, config, ns, actor, audience)
         if ns.verb != "create":
-            _name_the_calendar(ns, _all_lists_at(vault), config)
-            _name_by_title(ns, _all_lists_at(vault))
+            _name_the_calendar(ns, _all_lists_at(vault, readable), config)
+            _name_by_title(ns, _all_lists_at(vault, readable))
         if ns.verb == "create":
             return create(vault, config, ns, actor)
         if ns.verb == "set":
-            return change_details(vault, config, ns, actor)
+            return change_details(vault, config, ns, actor, readable=readable)
         if ns.verb == "move":
-            return move(vault, config, ns.slug, ns.items, ns.to, actor, section=ns.section)
+            return move(vault, config, ns.slug, ns.items, ns.to, actor, section=ns.section,
+                        readable=readable)
         if ns.verb == "delete":
-            return delete(vault, config, ns.slug, actor, even_open=ns.yes)
+            return delete(vault, config, ns.slug, actor, even_open=ns.yes, readable=readable)
         if ns.verb == "add":
-            return add(vault, config, ns, actor)
-        return change(vault, config, ns, actor)
-    except Refusal as e:
+            return add(vault, config, ns, actor, readable=readable)
+        return change(vault, config, ns, actor, readable=readable)
+    except (Refusal, NotKept) as e:
         return {"error": str(e)}
 
 
@@ -272,19 +305,36 @@ def _one_place(ns) -> None:
 
 # ── Reading ──────────────────────────────────────────────────────────────
 
+def _every_list(path: str) -> bool:
+    """The admin's view: every list is readable."""
+    return True
+
+
 def show(vault: Path, slug: str | None, *, show_all: bool, days: int | None = None,
-         language: str = "") -> dict:
-    """Print every list, or one list's items under their sections.
+         topic: str = "", language: str = "",
+         readable: Callable[[str], bool] = _every_list,
+         own: Shown | None = None) -> dict:
+    """Print every list `readable` keeps, or one of their items under their sections.
+
+    Without a `slug`, `topic` keeps only the lists whose `topics:` name it:
+    the agent's brief asks which lists belong to a topic room this way.
 
     A calendar's entries carry their weekday and how far away they are,
     worked out here: a model asked for the week counts weekdays instead,
     and gets some wrong. `days` keeps the entries from today on that fall
     within that many days.
+
+    `own` is the listener's own calendar (`_own_calendar.shown_to`): its
+    entries are shown among the family calendar's, by day, each marked
+    `private`, so a person asking what is planned hears their own dates
+    next to the family's and the agent knows which ones are theirs alone.
+    The family calendar's count stays its own.
     """
     if not slug:
-        lists = _all_lists(vault)
+        lists = [lst for lst in _all_lists(vault, readable) if not topic or topic in lst.topics]
         if not lists:
-            print("No lists yet. Start one with `stack memory list create`.")
+            print(f"No list belongs to the topic {topic!r}." if topic else
+                  "No lists yet. Start one with `stack memory list create`.")
         for lst in lists:
             about = f"  ({lst.description})" if lst.description else ""
             kind = f" ({lst.kind})" if lst.kind != TODO else ""
@@ -293,8 +343,13 @@ def show(vault: Path, slug: str | None, *, show_all: bool, days: int | None = No
                            "kind": x.kind, "topics": x.topics, "open": len(x.open_items)}
                           for x in lists]}
 
-    path, lst = _find_list(vault, slug)
+    path, lst = _find_list(vault, slug, readable)
     items = lst.items if show_all else lst.open_items
+    mine = (own.list.items if show_all else own.list.open_items) \
+        if own and own.list is not None and lst.kind == CALENDAR else []
+    if mine:
+        items = sorted([*items, *mine], key=lambda i: i.due or "9999-99-99")
+    private_ids = {id(i) for i in mine}
     when = {}
     if lst.kind == CALENDAR:
         today = clock.today()
@@ -303,14 +358,24 @@ def show(vault: Path, slug: str | None, *, show_all: bool, days: int | None = No
             items = [i for i in items if id(i) in when and 0 <= when[id(i)]["in_days"] < days]
     done = len(lst.items) - len(lst.open_items)
     print(f"{lst.title} ({path}): {len(lst.open_items)} open, {done} done")
+    if mine and own and own.list is not None:
+        print(f"{own.list.title} ({own.path}): {len(own.list.open_items)} open, "
+              "private: only you see them, marked (private)")
+    if own and own.hint:
+        print(own.hint)
     section = ""
     for item in items:
         if item.section != section:
             section = item.section
             print(f"## {section}")
-        print(_describe(item, when.get(id(item))))
-    return {"slug": lst.slug, "path": path, "title": lst.title,
-            "items": [{**_as_dict(i), **when.get(id(i), {})} for i in items]}
+        print(_describe(item, when.get(id(item))) + ("  (private)" if id(item) in private_ids else ""))
+    answer = {"slug": lst.slug, "path": path, "title": lst.title, "open": len(lst.open_items),
+              "items": [{**_as_dict(i), **when.get(id(i), {}),
+                         **({"private": True} if id(i) in private_ids else {})} for i in items]}
+    if own and (own.list is not None or own.hint):
+        answer["own"] = {"path": own.path, "hint": own.hint,
+                         "open": len(own.list.open_items) if own.list is not None else 0}
+    return answer
 
 
 # A calendar entry's day as the household says it: "Fr 25.12. (in 3 Tagen)".
@@ -360,15 +425,20 @@ def _as_dict(item: Item) -> dict:
             "due": item.due, "done_on": item.done_on}
 
 
-def _all_lists(vault: Path) -> list[FamilyList]:
-    return [lst for _, lst in _all_lists_at(vault)]
+def _all_lists(vault: Path, readable: Callable[[str], bool] = _every_list) -> list[FamilyList]:
+    return [lst for _, lst in _all_lists_at(vault, readable)]
 
 
-def _all_lists_at(vault: Path) -> list[tuple[str, FamilyList]]:
-    """Every list with its vault path; a file that is not a list is skipped."""
+def _all_lists_at(vault: Path, readable: Callable[[str], bool] = _every_list,
+                  ) -> list[tuple[str, FamilyList]]:
+    """Every list `readable` keeps, with its vault path; a file that is not a
+    list is skipped."""
     found = []
     for file in sorted(vault.glob(f"*/{LISTS_DIR}/*.md")):
         path = _rel(vault, file)
+        # SAFETY: a list the audience may not read is not read at all.
+        if not readable(path):
+            continue
         try:
             found.append((path, read_list(file.read_text(encoding="utf-8"), path=path)))
         except (ListError, OSError, UnicodeDecodeError):
@@ -391,16 +461,18 @@ def _history(vault: Path, lists: list[tuple[str, FamilyList]]) -> list[tuple[str
     return pairs
 
 
-def _slugs(vault: Path) -> str:
+def _slugs(vault: Path, readable: Callable[[str], bool] = _every_list) -> str:
     """Every list's slug, for a refusal that names the lists to choose from."""
-    return ", ".join(x.slug for x in _all_lists(vault)) or "(none yet)"
+    return ", ".join(x.slug for x in _all_lists(vault, readable)) or "(none yet)"
 
 
-def _find_list(vault: Path, slug: str) -> tuple[str, FamilyList]:
-    """The vault path and contents of the list `slug`, or a refusal naming the lists."""
-    files = sorted(vault.glob(f"*/{LISTS_DIR}/{slug}.md"))
+def _find_list(vault: Path, slug: str, readable: Callable[[str], bool] = _every_list,
+               ) -> tuple[str, FamilyList]:
+    """The vault path and contents of the list `slug` among those `readable`
+    keeps, or a refusal naming them."""
+    files = [f for f in sorted(vault.glob(f"*/{LISTS_DIR}/{slug}.md")) if readable(_rel(vault, f))]
     if not files:
-        raise Refusal(f"no list {slug!r}. Lists: {_slugs(vault)}")
+        raise Refusal(f"no list {slug!r}. Lists: {_slugs(vault, readable)}")
     if len(files) > 1:
         raise Refusal(f"{slug!r} is a list in several buckets: "
                       + ", ".join(_rel(vault, f) for f in files))
@@ -413,9 +485,10 @@ def _find_list(vault: Path, slug: str) -> tuple[str, FamilyList]:
 
 # ── Writing ──────────────────────────────────────────────────────────────
 
-def change_details(vault: Path, config, ns, actor: str) -> dict:
+def change_details(vault: Path, config, ns, actor: str, *,
+                   readable: Callable[[str], bool] = _every_list) -> dict:
     """Change a list's title, description, topics, kind or walking order."""
-    path, lst = _find_list(vault, ns.slug)
+    path, lst = _find_list(vault, ns.slug, readable)
     given = {"title": ns.title, "description": ns.description,
              "topics": _named(ns.topic), "sections": _named(ns.section), "kind": ns.kind}
     changed = [name for name, value in given.items() if value is not None]
@@ -445,8 +518,11 @@ def create(vault: Path, config, ns, actor: str) -> dict:
     slug = ns.slug.strip() or vault_slug(ns.title)
     if not _SLUG.match(slug):
         raise Refusal(f"{slug!r} is not a slug: lowercase letters, digits and dashes")
+    # SAFETY: a list's name is unique over every folder, so a name in a
+    # folder the caller may not read is refused too, with the same text: it
+    # does not tell a person's own list from a shared one.
     if list(vault.glob(f"*/{LISTS_DIR}/{slug}.md")):
-        raise Refusal(f"the list {slug!r} already exists")
+        raise Refusal(f"the list name {slug!r} is taken; choose another name")
     path = list_path(slug, bucket=shared_bucket(config))
     text = new_list(ns.title.strip(), path=path, description=ns.description.strip(),
                     topics=ns.topic, sections=ns.section, kind=ns.kind)
@@ -458,7 +534,8 @@ def create(vault: Path, config, ns, actor: str) -> dict:
     return _commit(config, path, _create, actor, f"started the list {ns.title.strip()}")
 
 
-def add(vault: Path, config, ns, actor: str) -> dict:
+def add(vault: Path, config, ns, actor: str, *,
+        readable: Callable[[str], bool] = _every_list) -> dict:
     """Add items, each to its list: the one named, or where it was last bought.
 
     An item the household had before keeps its spelling and its section.
@@ -467,7 +544,7 @@ def add(vault: Path, config, ns, actor: str) -> dict:
     the agent sorts a list. `calendar` names the family calendar, which is
     started with the first entry when there is none. One commit per list.
     """
-    lists = _all_lists_at(vault)
+    lists = _all_lists_at(vault, readable)
     slug, names = _list_and_items(lists, ns.items)
     start = ""
     if slug == CALENDAR_NAME and not any(lst.slug == slug for _, lst in lists):
@@ -587,6 +664,32 @@ def _calendar(lists: list[tuple[str, FamilyList]], config) -> tuple[str, FamilyL
     return path, read_list(start, path=path), start
 
 
+# ── A person's own calendar ──────────────────────────────────────────────
+
+def private(vault: Path, config, ns, actor: str, audience: frozenset[str] | None) -> dict:
+    """add, tick, untick or remove dates on `actor`'s own calendar (`_own_calendar`).
+
+    `stack memory list add calendar "09:00 Dentist" --due 2026-12-02 --as homer --private`
+    writes `homer/lists/dates-homer.md`, and makes it with its first date.
+    Refuses another list than `calendar`; the module refuses an actor who
+    keeps no calendar here. The family's calendar is never touched.
+    """
+    slug, names = _list_and_items([], ns.items)
+    if slug != CALENDAR_NAME:
+        raise Refusal("--private is for the calendar: stack memory list "
+                      f"{ns.verb} calendar <date> --as <person> --private")
+    person = keeper_of(vault, actor=actor, audience=audience, shared_bucket=shared_bucket(config))
+    own = OwnCalendar.of(vault, person, language=_language(config))
+    if ns.verb != "add":
+        if own.start:
+            raise Refusal(f"{person.first_name} has no dates of their own yet")
+        return _change_list(config, own.path, own.list, ns.verb, names, actor)
+    if not ns.due or not _ISO_DAY.match(ns.due):
+        raise Refusal("a date needs its day: --due YYYY-MM-DD")
+    return _add_to(config, own.path, own.list, [_Entry(name, "", "") for name in names], [],
+                   ns.due, actor, start=own.start)
+
+
 def _add_to(config, path: str, lst: FamilyList, entries: list[_Entry],
             people: list, due: str, actor: str, *, start: str = "") -> dict:
     bucket = path.split("/", 1)[0]
@@ -610,18 +713,19 @@ def _which_list(name: str, candidates: list[tuple[str, FamilyList]], topic: str)
             f"`stack memory list create <name> --title \"<Title>\"`. Lists: {lists}")
 
 
-def change(vault: Path, config, ns, actor: str) -> dict:
+def change(vault: Path, config, ns, actor: str, *,
+           readable: Callable[[str], bool] = _every_list) -> dict:
     """tick, untick, remove or reset; one commit per list it touches.
 
     Without a list, each item is looked up on every list, so "I signed the
     permission slip" ticks it on whichever list the archivist put it.
     """
     if ns.verb == "reset":
-        return _change_list(config, *_find_list(vault, ns.slug), "reset", [], actor)
-    lists = _all_lists_at(vault)
+        return _change_list(config, *_find_list(vault, ns.slug, readable), "reset", [], actor)
+    lists = _all_lists_at(vault, readable)
     slug, names = _list_and_items(lists, ns.items)
     if slug:
-        return _change_list(config, *_find_list(vault, slug), ns.verb, names, actor)
+        return _change_list(config, *_find_list(vault, slug, readable), ns.verb, names, actor)
     plan: dict[str, tuple[FamilyList, list[str]]] = {}
     for name in names:
         path, lst = _locate(lists, name, ns.verb)
@@ -693,7 +797,8 @@ def _combined(results: list[dict]) -> dict:
     return {"error": "; ".join(errors)} if errors else {"ok": True, "lists": results}
 
 
-def delete(vault: Path, config, slug: str, actor: str, *, even_open: bool) -> dict:
+def delete(vault: Path, config, slug: str, actor: str, *, even_open: bool,
+           readable: Callable[[str], bool] = _every_list) -> dict:
     """Delete a list, so a list nobody needs is gone instead of left empty.
 
     Open items are what someone still meant to do, so a list with any is
@@ -702,7 +807,7 @@ def delete(vault: Path, config, slug: str, actor: str, *, even_open: bool) -> di
     of what was bought, and a list started again under the same name
     finds its known items there.
     """
-    path, lst = _find_list(vault, slug)
+    path, lst = _find_list(vault, slug, readable)
 
     def _delete(prior: str) -> None:
         current = read_list(prior, path=path)
@@ -717,7 +822,7 @@ def delete(vault: Path, config, slug: str, actor: str, *, even_open: bool) -> di
 
 
 def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str, *,
-         section: str = "") -> dict:
+         section: str = "", readable: Callable[[str], bool] = _every_list) -> dict:
     """Move items to another list, or to `section` of the same list.
 
     To another list, an item is added there first and removed here after,
@@ -726,12 +831,12 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str, 
     there the second commit would take the only line. A `--to` that names
     no list but a section of this one moves the items to that section.
     """
-    path, lst = _find_list(vault, slug)
+    path, lst = _find_list(vault, slug, readable)
     # An exact slug, not a glob: on macOS a glob ignores case, and `to` is
     # the caller's text, which may hold glob characters.
-    if to and to not in {x.slug for x in _all_lists(vault)}:
-        to, section = "", _section_in_to(vault, lst, to, section)
-    target_path, target = _find_list(vault, to) if to else (path, lst)
+    if to and to not in {x.slug for x in _all_lists(vault, readable)}:
+        to, section = "", _section_in_to(vault, lst, to, section, readable)
+    target_path, target = _find_list(vault, to, readable) if to else (path, lst)
     if target_path == path:
         return _move_within(config, path, lst, names, section, actor)
     asked = _section(target, section) if section.strip() else ""
@@ -758,7 +863,8 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str, 
     return _commit(config, path, _remove_all, actor, said)
 
 
-def _section_in_to(vault: Path, lst: FamilyList, to: str, section: str) -> str:
+def _section_in_to(vault: Path, lst: FamilyList, to: str, section: str,
+                   readable: Callable[[str], bool] = _every_list) -> str:
     """The section of `lst` that a `--to` naming no list means, or a refusal.
 
     Matched as `_section` matches, but only against the sections the list
@@ -769,7 +875,7 @@ def _section_in_to(vault: Path, lst: FamilyList, to: str, section: str) -> str:
     named = _section_named(lst, to)
     if not named:
         raise Refusal(f"--to {to!r} names no list and no section of {lst.title}. "
-                      f"Lists: {_slugs(vault)}. Sections of {lst.title}: {'; '.join(lst.sections) or '(none)'}")
+                      f"Lists: {_slugs(vault, readable)}. Sections of {lst.title}: {'; '.join(lst.sections) or '(none)'}")
     if section.strip() and _section(lst, section) != named:
         raise Refusal(f"--to {to!r} and --section {section!r} name two sections of {lst.title}; "
                       "name one")

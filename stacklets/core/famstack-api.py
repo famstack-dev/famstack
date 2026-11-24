@@ -25,7 +25,11 @@ knows about tokens. A request with no token, an unknown one or the other
 surface's is refused and runs nothing, `discover` included.
 
     {"cmd": "list", "token": "<core's token>"}          core's tools server
-    token <the agent's token> memory search tent        the agent's shim
+    token <the agent's token> audience <marge, signed> memory search tent   the agent's shim
+
+The agent's line names the people in its room after the token, signed by
+its runtime with the agent's audience key; a memory read runs for them
+alone, and only with a valid signature (`stack.agent_audience`).
 
 Protocol (JSON):  client sends a JSON object + newline; server replies JSON + newline.
                   With `"stream": true` (`up`, `follow`, `runs`) the server
@@ -53,6 +57,10 @@ import time
 from pathlib import Path
 
 from stack.agent_access import allowed_commands
+from stack.agent_audience import (AUDIENCE_KEY, audience_refusal,
+                                  signed_audience, take_signed_audience, with_audience)
+from stack.agent_confirm import delete_refusal, take_confirmation
+from stack.plugins import plugin_words
 from stack import host_api, passwords, runs
 from stack.live import follow
 from stack.live.envelope import RESULT, Event
@@ -120,7 +128,9 @@ DOMAIN_ALLOW = [
     # What changed, when, and who did it. The vault is a git repo and has
     # always known this; nothing read it back until now.
     ["memory", "history"],
-    ["docs", "show"],
+    # No `docs show`: Paperless has one account for the stack, so it would
+    # read any person's document in any room. A document's text is in its
+    # card, which `memory card` reads for the room (`stack.agent_audience`).
     # Speaking aloud on the server Mac. It plays sound and stores nothing;
     # `ai switch` and `ai download` change the instance and stay out.
     ["ai", "say"],
@@ -165,6 +175,8 @@ SCHEDULE_VERBS = {"list", "add", "remove"}
 REMINDER_PREFIX = "remind-"
 # `core schedule add <name> <when>` come first, then the options and the command.
 ADD_OPTIONS_START = 5
+REMINDER_READS = ("a reminder cannot read or change the memory: it runs later, "
+                  "without the people in the room")
 
 
 def schedule_refusal(args, domain_allow):
@@ -173,7 +185,8 @@ def schedule_refusal(args, domain_allow):
     The scheduler runs a stacklet command later, as the admin, on the host.
     Through the agent it runs only what the agent may run now: a command it
     is allowed and that names no path on the host, or a message it sends as
-    itself. The command is read as `core schedule add` reads it, because a
+    itself, never a memory command (it would run without the room's people),
+    and never a delete that waits for a person's yes. The command is read as `core schedule add` reads it, because a
     second reading would check one command and store another.
     """
     if args[:2] != ["core", "schedule"]:
@@ -197,7 +210,11 @@ def schedule_refusal(args, domain_allow):
         return sender_refusal(command)
     if command[:2] == ["core", "schedule"] or not any(command[:len(p)] == p for p in domain_allow):
         return f"'{' '.join(command[:2])}' is not allowed in a reminder"
-    return None
+    # SAFETY: the scheduler runs the command later, as the admin, without the
+    # room's people: a read for the audience would be the admin's view of every
+    # person's own notes, and a reminder is never a person's yes to a delete.
+    # Every memory and docs command outside `NO_PRIVATE_READS` is refused, with one reason.
+    return REMINDER_READS if audience_refusal(command, "") else None
 
 
 def _instance_stack():
@@ -852,25 +869,9 @@ def handle_plaintext(line):
     status, refusals included. A refusal the caller cannot distinguish from an
     answer is a retry loop waiting to happen.
     """
-    try:
-        args = shlex.split(line)
-    except ValueError as e:
-        return _with_exit(f"error: could not parse command ({e})\n", 2)
-    if not args:
-        return _with_exit("error: empty command\n", 2)
-    if _hides_its_command(args):
-        return _with_exit(f"error: {OPTION_REFUSAL}\n", 126)
-    if _names_a_host_path(args):
-        return _with_exit(f"error: {HOST_PATH_REFUSAL}\n", 126)
-    domain_allow = _domain_allow()
-    if not any(args[:len(p)] == p for p in domain_allow):
-        allowed = ", ".join(" ".join(p) for p in domain_allow)
-        return _with_exit(
-            f"error: '{' '.join(args[:2])}' is not allowed. Allowed: {allowed}\n", 126,
-        )
-    refusal = sender_refusal(args) or schedule_refusal(args, domain_allow)
+    args, refusal = agent_command(line, _domain_allow(), _agents_secret(AUDIENCE_KEY))
     if refusal:
-        return _with_exit(f"error: {refusal}\n", 126)
+        return refusal
     if unmigrated := _unmigrated_after_waiting():
         # 75, EX_TEMPFAIL: the same command succeeds once `stack up` has run them.
         return _with_exit(f"error: the stack is migrating its data ({', '.join(unmigrated)}); "
@@ -885,6 +886,57 @@ def handle_plaintext(line):
         return _with_exit("error: command timed out\n", 124)
     except Exception as e:
         return _with_exit(f"error: {e}\n", 1)
+
+
+def agent_command(line, domain_allow, audience_key, now=None):
+    """The argv the agent's `line` runs, or the refusal it gets: `(args, None)`
+    or `(None, reply)`. Decides only; runs nothing.
+
+    The line may start with the people in the agent's room, signed by its
+    runtime with `audience_key` (`audience bart,marge:<expiry>:<mac> memory
+    find gift`, `stack.agent_audience`): a memory read is then run with
+    `--audience bart,marge`, and refused without a valid signature. `now`
+    is the time the signature is checked at, the clock's when None.
+
+        agent_command(f"audience {sign(['marge'], key, now=t)} memory find gift",
+                      DOMAIN_ALLOW, key)
+        # (["memory", "find", "--audience", "marge", "gift"], None)
+    """
+    try:
+        args = shlex.split(line)
+    except ValueError as e:
+        return None, _with_exit(f"error: could not parse command ({e})\n", 2)
+    now = time.time() if now is None else now
+    signed, args = take_signed_audience(args)
+    confirmation, args = take_confirmation(args)
+    # SAFETY: every rule below reads, and the API runs, the words the
+    # command gets. The CLI takes `--json` out wherever it stands, so a
+    # `--json` between a command's words would hide them from the rules.
+    args = plugin_words(args)
+    # SAFETY: the audience comes from the runtime's signature alone; a value
+    # the agent's shell made up, changed or kept past its time names nobody.
+    audience = signed_audience(signed, audience_key, now=now)
+    if not args:
+        return None, _with_exit("error: empty command\n", 2)
+    if _hides_its_command(args):
+        return None, _with_exit(f"error: {OPTION_REFUSAL}\n", 126)
+    if _names_a_host_path(args):
+        return None, _with_exit(f"error: {HOST_PATH_REFUSAL}\n", 126)
+    if not any(args[:len(p)] == p for p in domain_allow):
+        allowed = ", ".join(" ".join(p) for p in domain_allow)
+        return None, _with_exit(
+            f"error: '{' '.join(args[:2])}' is not allowed. Allowed: {allowed}\n", 126,
+        )
+    # SAFETY: a memory read without the room's people would be the admin's
+    # view, which reads every person's own notes.
+    # SAFETY: a list with open items goes only after the person said yes,
+    # which the runtime's list_edit signs; the shell cannot.
+    refusal = (audience_refusal(args, audience) or sender_refusal(args)
+               or schedule_refusal(args, domain_allow)
+               or delete_refusal(args, confirmation, audience_key, now=now))
+    if refusal:
+        return None, _with_exit(f"error: {refusal}\n", 126)
+    return with_audience(args, audience), None
 
 
 # ── Callers and their tokens ───────────────────────────────────────────────
@@ -943,10 +995,20 @@ def _json_object(data):
 
 def _opens(token, caller):
     """Whether `token` is `caller`'s token, compared in constant time."""
-    secrets = TomlSecretStore(_instance_dir() / ".stack" / "secrets.toml").all()
-    expected = secrets.get(f"{caller}__{TOKEN_NAME}")
+    expected = _secret(caller, TOKEN_NAME)
     return (isinstance(token, str) and isinstance(expected, str) and bool(expected)
             and hmac.compare_digest(token.encode(), expected.encode()))
+
+
+def _agents_secret(name):
+    """The agent stacklet's secret `name`, "" before `stack up agent` made it."""
+    value = _secret("agent", name)
+    return value if isinstance(value, str) else ""
+
+
+def _secret(stacklet, name):
+    """`stacklet`'s secret `name` as the secret store holds it now, or None."""
+    return TomlSecretStore(_instance_dir() / ".stack" / "secrets.toml").all().get(f"{stacklet}__{name}")
 
 
 def _token_refusal(data):
