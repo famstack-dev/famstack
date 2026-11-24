@@ -336,7 +336,7 @@ class TestHandlersTakeManyIds:
 
     def test_destroy_removes_every_named_stacklet(self, tmp_path, monkeypatch):
         from argparse import Namespace
-        from stack.cli import handle_destroy
+        from stack.removal import handle_destroy
         cli, _ = _make_cli(tmp_path, {"a": {}, "b": {"requires": ["a"]}, "c": {}})
         for sid in ("a", "b", "c"):
             cli.up(sid)
@@ -347,7 +347,7 @@ class TestHandlersTakeManyIds:
 
     def test_destroy_with_an_unknown_id_destroys_nothing(self, tmp_path, monkeypatch):
         from argparse import Namespace
-        from stack.cli import handle_destroy
+        from stack.removal import handle_destroy
         cli, _ = _make_cli(tmp_path, {"a": {}})
         cli.up("a")
         with pytest.raises(SystemExit):
@@ -409,7 +409,7 @@ class TestDestroyAfterAFailedFirstUp:
 
     def test_its_containers_are_removed(self, tmp_path, docker):
         from argparse import Namespace
-        from stack.cli import handle_destroy
+        from stack.removal import handle_destroy
         cli = self._stacklet_with_compose(tmp_path)
         docker.running(myapp="failing")
 
@@ -422,7 +422,7 @@ class TestDestroyAfterAFailedFirstUp:
 
     def test_without_containers_only_the_leftover_data_goes(self, tmp_path, docker):
         from argparse import Namespace
-        from stack.cli import handle_destroy
+        from stack.removal import handle_destroy
         cli = self._stacklet_with_compose(tmp_path)
 
         handle_destroy(cli.stack, Namespace(stacklet=["myapp"], yes=True))

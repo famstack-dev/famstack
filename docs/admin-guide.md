@@ -1880,7 +1880,23 @@ The backup stacklet does not cover this yet. It archives Paperless's files but n
 ./stack uninstall
 ```
 
-Stops every stacklet and deletes its data. Asks for confirmation. There is no undo. It also removes the `famstack` command the installer put on your PATH, and nothing else of that name.
+Stops every stacklet and removes its containers, then removes `stack.toml`, `users.toml` and the runtime state in `.stack/`. Asks for confirmation first. There is no undo. It also removes the `famstack` command the installer put on your PATH, and nothing else of that name.
+
+Then it asks about the data folder (`~/famstack-data`). Type `delete` to delete the data and its secrets in `.stack/secrets.toml`. Any other answer, or Ctrl+C, keeps every file and the secrets. The secrets hold the passwords of the databases in the data folder, so that a new install can open the kept data. `--not <stacklet>` keeps that stacklet's state, secrets and data in both cases.
+
+The uninstall asks about the data only when `stack.toml` names the data folder (`[core] data_dir`) and the folder exists. In these cases it does not ask, deletes no data and keeps `.stack/secrets.toml`:
+
+- There is no `stack.toml`, for example in a second `./stack uninstall` after a kept data folder.
+- `stack.toml` does not parse, or it names no `data_dir`.
+- The data folder does not exist, for example because its disk is not mounted or the folder was moved.
+
+The uninstall then shows where the secrets are, and the missing data folder. The secrets go without the question only when nothing was set up. To delete the data and its secrets later, do these steps:
+
+1. Mount the disk or move the folder back, if necessary.
+2. Run `./stack install` with the same data folder.
+3. Run `./stack uninstall` and type `delete`.
+
+`./stack destroy <stacklet>` of a stacklet that is not set up deletes its data folder too. When the folder holds files, it shows the folder and asks first. The files can be data that an uninstall kept. `--yes` skips the question.
 
 For a single stacklet:
 
