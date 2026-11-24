@@ -64,6 +64,7 @@ units = [
     "said",
     "schedule",
     "secrets",
+    "snapshot",
     "stack",
     "stacklet_code",
     "updater",

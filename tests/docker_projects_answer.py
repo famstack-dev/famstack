@@ -107,6 +107,15 @@ def _create(folder: Path, state: dict, argv: list[str]) -> None:
         log.write(json.dumps([_compose_file(argv).parent.name, sorted(created)]) + "\n")
 
 
+def _follow(folder: Path, state: dict, step: str, argv: list[str]) -> None:
+    """With `follows_compose` set, a `compose up` makes the stacklet of the
+    compose file run, and a `compose stop` or `down` stops it."""
+    stacklet = _compose_file(argv).parent.name
+    if step in ("up", "stop", "down"):
+        state["projects"] = {**state["projects"], stacklet: "running" if step == "up" else "stopped"}
+        (folder / "state.json").write_text(json.dumps(state))
+
+
 def _answer(folder: Path, argv: list[str]) -> int:
     """What `docker <argv>` prints and exits with, as a real daemon answers."""
     state = json.loads((folder / "state.json").read_text())
@@ -144,6 +153,8 @@ def _answer(folder: Path, argv: list[str]) -> int:
         print(message or "", file=sys.stderr, end="")
         if step == "up" and not message:
             _create(folder, state, argv)
+        if state.get("follows_compose") and not message:
+            _follow(folder, state, step, argv)
         return 1 if message else 0
     if (argv[:1] == ["inspect"] and any("{{range .Config.Env}}" in a for a in argv)
             and argv[1] in state.get("containers", {})):

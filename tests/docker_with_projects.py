@@ -21,7 +21,9 @@ The states are the ones `stack list` shows: `running`, `starting`,
 
     docker compose ls ...             one row per stacklet set
     docker compose up|pull|down ...   exit 0, or the failure set with `fail`;
-                                      `up` creates the services it names, or all
+                                      `up` creates the services it names, or all;
+                                      after `follows_compose`, `up` starts the
+                                      stacklet and `stop` or `down` stops it
     docker compose config             each service's resolved environment
     docker inspect --format {{range .Config.Env}}...
                                       the environment `up` created it with
@@ -84,6 +86,17 @@ class Docker:
     def commits(self, **by_stacklet: str) -> None:
         """Say which commit each stacklet's containers were started from."""
         self._write(commits=by_stacklet)
+
+    def follows_compose(self, follows: bool = True) -> None:
+        """Make `compose up` start the stacklet of its compose file and
+        `compose stop` or `down` stop it, as a real daemon does. Without
+        it, or with `follows=False`, the states stay as the test set them:
+        a stop that exits 0 and leaves a container up."""
+        self._write(follows_compose=follows)
+
+    def state_of(self, stacklet: str) -> str | None:
+        """The state of `stacklet` now: one of `running`'s states, or None."""
+        return self._read()["projects"].get(stacklet)
 
     def daemon_down(self) -> None:
         """Make `docker info` fail, as with the runtime installed and not started."""

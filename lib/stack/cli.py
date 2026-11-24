@@ -46,6 +46,7 @@ from . import run_log
 from .removal import handle_destroy, handle_uninstall
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .devices import cli as devices_cli
+from .snapshot import cli as snapshot_cli
 from .config_file import StackTomlUnreadable, configured_data_dir, read_stack_toml
 from .stack import Stack
 
@@ -3201,6 +3202,7 @@ DISPATCH = {
     "uninstall": handle_uninstall,
     "family": handle_family,
     "devices": devices_cli.run,
+    "snapshot": snapshot_cli.run,
     "init": handle_init,
     "up": handle_up,
     "down": handle_down,
@@ -3240,6 +3242,7 @@ _HELP_COMMANDS = [
         ("config admin",       "Print tech admin credentials"),
         ("family",             "Show the family; 'family set --from <file>' writes it"),
         ("devices",            "The paired phones and laptops; 'devices pair <person>' adds a phone, 'devices allow <code>' lets a waiting browser in ('dismiss <code>' ends its request), 'devices remove <id>' removes one, 'devices admin-link' opens the Mac's pages"),
+        ("snapshot create <stacklet>", "Stop the stacklet, clone its state into .snapshots/, start it again; 'snapshot list' shows them"),
         ("env <stacklet>",     "Print rendered environment variables"),
         ("logs <stacklet>",    "Tail container logs"),
         ("errors [--since 24h]", "Recent error lines across every stacklet"),
@@ -3458,6 +3461,7 @@ def _main():
     p = sub.add_parser("host")
     p.add_argument("--json", action="store_true", help="Output as JSON")
     devices_cli.add_parser(sub)
+    snapshot_cli.add_parser(sub)
     p = sub.add_parser("family")
     p.add_argument("verb", nargs="?", default=None, help="set")
     p.add_argument("--from", dest="source", metavar="FILE",

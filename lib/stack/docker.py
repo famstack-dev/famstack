@@ -592,6 +592,20 @@ def running_project_ids() -> set[str]:
     return {sid for sid, state in states.items() if state in ("running", "starting")}
 
 
+def ids_with_a_container_up() -> set[str]:
+    """The stacklet ids whose project may have a container that runs: every
+    project state except "stopped".
+
+    Wider than `running_project_ids`, because a "failing" project can have
+    one crashed container and a database server that still writes, and an
+    "unknown" one (paused, created) may run too. A caller that copies a
+    stacklet's files asks this, not whether the stacklet serves.
+
+        ids_with_a_container_up()    # {"docs"} while Paperless restarts and Postgres runs
+    """
+    return {sid for sid, state in project_states().items() if state != "stopped"}
+
+
 def container_commits() -> dict[str, str]:
     """The commit each stacklet's running containers were started from.
 
