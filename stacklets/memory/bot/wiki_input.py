@@ -5,6 +5,10 @@
     wiki_input.publish(brain, media, wiki, shared_bucket="family")
     # wiki/index.md, wiki/family/..., wiki/media/<files a shared card shows>
 
+    wiki = wiki_input.WikiInput(brain, media, wiki_dir, shared_bucket="family",
+                                version=brain_version)
+    wiki.refresh()     # publishes; None when the brain has not moved since
+
 The family wiki is one static site for every paired device. It cannot ask
 who reads a page, so it holds only what the family as a whole may read:
 the cards `stack.cards.audience.readable` gives an audience of no single
@@ -26,23 +30,29 @@ The media archive is dated, not split by bucket, so a file of it is in
 the folder only when a shared card embeds or links it. A photo only a
 person's own note shows is not served.
 
-The curator owns the brain and calls `publish` after each turn of its
-loop. The folder is a derived copy: it can be deleted, and the next
-publish writes it again. Media files are hard links into the archive
-where the file system allows, so a photo library is not stored twice.
+The curator owns the brain and asks `WikiInput.refresh` after each turn
+of its loop. A publish walks the whole brain and reads every shared card,
+under the brain's writer lock, so it runs only when the brain moved: a new
+commit or another set of uncommitted changes. The folder is a derived
+copy: it can be deleted, and the next publish after a change writes it
+again (a restart of the curator publishes at once). Media files are hard
+links into the archive where the file system allows, so a photo library
+is not stored twice; `Published.copied_media` counts the files that had
+to be copied instead, so the caller can say so.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from stack.cards.audience import readable
 from stacklets.memory.graph import media_in
 
-__all__ = ["publish", "Published", "shared_paths"]
+__all__ = ["WikiInput", "publish", "Published", "shared_paths"]
 
 # The media archive's place inside the wiki's input: cards embed its
 # files as `/media/<path>` (ADR-017 §3).
@@ -61,12 +71,48 @@ class Published:
 
     written: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
+    # Media files written as a copy because a hard link failed: each one
+    # is stored twice on the disk.
+    copied_media: int = 0
 
     def __bool__(self) -> bool:
         return bool(self.written or self.removed)
 
 
 # ── Publishing ───────────────────────────────────────────────────────────────
+
+class WikiInput:
+    """The wiki's input, published again only when the brain moved.
+
+    `version` says what the brain holds now (the curator's: its commit and
+    its uncommitted changes); a publish runs when that differs from the last
+    published one, or when the version is unknown (""). Kept in memory, so
+    the first `refresh` after a start always publishes.
+
+        wiki = WikiInput(brain, media, wiki_dir, shared_bucket="family", version=brain.version)
+        wiki.refresh()   # Published(written=[...], ...)
+        wiki.refresh()   # None: nothing moved
+    """
+
+    def __init__(self, brain: Path, media: Path, wiki: Path, *, shared_bucket: str,
+                 version: Callable[[], str]):
+        self.brain, self.media, self.wiki = Path(brain), Path(media), Path(wiki)
+        self.shared_bucket, self.version = shared_bucket, version
+        self._published = ""
+
+    def refresh(self) -> Published | None:
+        """Publish when the brain moved since the last publish; None when it did not.
+
+        A publish that raises leaves the last version as it was, so the next
+        `refresh` tries again.
+        """
+        now = self.version()
+        if now and now == self._published:
+            return None
+        done = publish(self.brain, self.media, self.wiki, shared_bucket=self.shared_bucket)
+        self._published = now
+        return done
+
 
 def publish(brain: Path, media: Path, wiki: Path, *, shared_bucket: str) -> Published:
     """Make `wiki` hold exactly the shared part of `brain`, and the files of
@@ -85,8 +131,11 @@ def publish(brain: Path, media: Path, wiki: Path, *, shared_bucket: str) -> Publ
     wiki.mkdir(parents=True, exist_ok=True)
     done = Published()
     for rel, source in sorted(wanted.items()):
-        if _place(source, wiki / rel, staging, link=rel.startswith(f"{MEDIA_DIR}/")):
+        placed = _place(source, wiki / rel, staging, link=rel.startswith(f"{MEDIA_DIR}/"))
+        if placed:
             done.written.append(rel)
+        if placed == _COPIED_MEDIA:
+            done.copied_media += 1
     for rel in sorted(_files_in(wiki) - set(wanted)):
         (wiki / rel).unlink()
         done.removed.append(rel)
@@ -137,22 +186,30 @@ def _files_in(root: Path) -> set[str]:
 
 # ── Writing ──────────────────────────────────────────────────────────────────
 
-def _place(source: Path, target: Path, staging: Path, *, link: bool) -> bool:
-    """Put `source` at `target` when it is not there yet; True when it wrote.
+# What `_place` did: nothing, wrote the file, or copied a media file that
+# should have been a hard link.
+_UNCHANGED, _WRITTEN, _COPIED_MEDIA = "", "written", "copied media"
+
+
+def _place(source: Path, target: Path, staging: Path, *, link: bool) -> str:
+    """Put `source` at `target` when it is not there yet, and say what it did.
 
     A copy keeps the source's modification time, so an unchanged file
     has the same size and time on the next publish and is not written
-    again. A media file is a hard link when the file system allows it.
+    again. A media file (`link`) is a hard link when the file system
+    allows it, and a copy otherwise.
     """
     if _same(source, target):
-        return False
+        return _UNCHANGED
     temporary = staging / target.name
     temporary.unlink(missing_ok=True)
+    done = _WRITTEN
     if not (link and _hard_link(source, temporary)):
         shutil.copy2(source, temporary)
+        done = _COPIED_MEDIA if link else _WRITTEN
     target.parent.mkdir(parents=True, exist_ok=True)
     os.replace(temporary, target)
-    return True
+    return done
 
 
 def _same(source: Path, target: Path) -> bool:

@@ -6,8 +6,8 @@ content. The curator fills it with the family's shared part of the brain
 mount of a missing folder leaves it to Docker to make one on the host. An
 empty folder made here, as the admin, is the whole fix.
 
-It runs on every start, because the folder is disposable: deleting it is
-how an admin makes the curator write it again.
+It runs on every start, because the folder is disposable: an admin may
+delete it, and the curator writes it again when it starts.
 """
 
 from __future__ import annotations

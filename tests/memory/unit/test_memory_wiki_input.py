@@ -16,9 +16,14 @@ and a shared note beside them. A case takes a few milliseconds.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
-from stacklets.memory.bot import wiki_input
+import pytest
+
+from stacklets.memory.bot import curator, wiki_input
 
 SHARED_NOTE = "family/notes/2026/11/ausflug.md"
 BRAIN = {
@@ -136,3 +141,71 @@ def test_a_card_moved_into_a_persons_bucket_leaves(tmp_path):
 
     assert SHARED_NOTE not in memory.publish()
     assert not list(memory.wiki.rglob("ausflug.md"))
+
+
+def test_a_photo_is_linked_not_stored_twice(tmp_path):
+    """Given a shared photo, when the wiki's input is published on one file
+    system, then the input's photo is the archive's file, and no copy is counted."""
+    memory = Memory(tmp_path)
+
+    done = wiki_input.publish(memory.brain, memory.media, memory.wiki, shared_bucket="family")
+
+    assert (memory.wiki / "media/2026/11/lake.jpg").samefile(memory.media / "2026/11/lake.jpg")
+    assert done.copied_media == 0
+
+
+# ── Only when the brain moved ────────────────────────────────────────────────
+#
+# The curator asks after every turn of its loop, every 30 seconds. A publish
+# reads every shared card under the brain's writer lock, so it runs only when
+# the brain moved: a new commit, or other uncommitted changes. The brain's
+# version is the curator's own (`curator.Brain.version`), over a real git
+# working copy.
+
+def _git(brain: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(brain), *args], check=True, capture_output=True,
+                   env={**os.environ, "GIT_AUTHOR_NAME": "curator", "GIT_AUTHOR_EMAIL": "c@example.org",
+                        "GIT_COMMITTER_NAME": "curator", "GIT_COMMITTER_EMAIL": "c@example.org"})
+
+
+@pytest.fixture
+def published(tmp_path) -> tuple[Memory, wiki_input.WikiInput]:
+    """A brain committed in git, and the wiki's input published once from it."""
+    memory = Memory(tmp_path)
+    shutil.rmtree(memory.brain / ".git")
+    _git(memory.brain, "init", "-q", "-b", "main")
+    _git(memory.brain, "add", "-A")
+    _git(memory.brain, "commit", "-q", "-m", "brain: project sync source")
+    wiki = wiki_input.WikiInput(memory.brain, memory.media, memory.wiki, shared_bucket="family",
+                                version=curator.Brain(memory.brain, memory.brain).version)
+    assert wiki.refresh()
+    return memory, wiki
+
+
+def test_nothing_moved_publishes_nothing(published):
+    """Given a published input, when the brain has not moved, then the next
+    turn publishes nothing: a file taken out of the input stays out."""
+    memory, wiki = published
+    (memory.wiki / "index.md").unlink()
+
+    assert wiki.refresh() is None
+    assert not (memory.wiki / "index.md").exists()
+
+
+def test_a_commit_publishes(published):
+    memory, wiki = published
+    _write(memory.brain, {"family/notes/2026/11/neu.md": "# Neu\n"})
+    _git(memory.brain, "add", "-A")
+    _git(memory.brain, "commit", "-q", "-m", "brain: project sync source")
+
+    assert wiki.refresh().written == ["family/notes/2026/11/neu.md"]
+
+
+def test_an_uncommitted_view_publishes(published):
+    """Given a published input, when a compile writes a view the curator has
+    not committed yet, then the next turn publishes it, as the wiki showed the
+    brain's working copy before."""
+    memory, wiki = published
+    _write(memory.brain, {"family/camping/about.md": "# Camping, compiled\n"})
+
+    assert wiki.refresh().written == ["family/camping/about.md"]

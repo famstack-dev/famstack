@@ -32,7 +32,7 @@ services:
     # Read-only: the wiki is a pure view. Quartz renders the family's
     # shared part of the brain: the top level, the shared bucket, and the
     # files of the media archive their cards show. The curator copies it
-    # out of the brain after every turn (bot/wiki_input.py). Each person's
+    # out of the brain whenever the brain moved (bot/wiki_input.py). Each person's
     # own bucket is not in it, because every paired device reads the same
     # static site; their cards are on the memory pages, which check who
     # asks. Edits round-trip through the memory repo (see the "edit on

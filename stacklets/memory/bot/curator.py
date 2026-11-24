@@ -33,10 +33,11 @@ container is a pure view that just watches the files). Jobs:
    from the memory bot in one commit through the card store
    (`give_ids_since`, with `memory.lib.card_ids_for`, the rule migration
    0002 applied to the files that were there before).
-4. **The wiki's input, after every turn.** The family wiki shows only
-   what the family shares, so the curator copies that part of the brain,
-   and the media its cards show, into the folder the wiki container
-   reads (`wiki_input.publish`). A person's own bucket never reaches it.
+4. **The wiki's input, when the brain moved.** The family wiki shows only
+   what the family shares, so after a turn that moved the brain the
+   curator copies that part of it, and the media its cards show, into the
+   folder the wiki container reads (`wiki_input`). A person's own bucket
+   never reaches it.
 
 Rebuilds run the CLI entrypoint as a subprocess (same code path as
 `stack memory wiki` and `diary pages`), so a wedged LLM call dies with
@@ -1216,6 +1217,20 @@ class Brain:
             logger.debug("[curator] brain git {} failed: {}", args[0], err)
         return rc, out, err
 
+    def version(self) -> str:
+        """What the working copy holds: its commit and its uncommitted
+        changes as git lists them; "" when git cannot say.
+
+        A file changed again while it is already listed as changed keeps
+        the same version until the next commit, which every turn that
+        writes the brain makes.
+        """
+        rc, head, _ = self._run("rev-parse", "HEAD")
+        changed_rc, changed, _ = self._run("status", "--porcelain", "-z", "--untracked-files=all")
+        if rc or changed_rc:
+            return ""
+        return f"{head.strip()}\n{changed}"
+
     async def tracked_files(self) -> list[str]:
         _, out, _ = await asyncio.to_thread(self._run, "ls-files", "-z")
         return [p for p in out.split("\0") if p.strip()]
@@ -1558,21 +1573,27 @@ def _card_editor(store: CardStore, shared_bucket: str, language: str, state_dir:
 
 # ── Main loop ────────────────────────────────────────────────────────────
 
-def publish_wiki_input(brain_dir: Path, media_dir: Path, wiki_dir: Path, shared_bucket: str) -> None:
-    """Bring the family wiki's input up to date with the brain (`wiki_input`).
+def publish_wiki_input(wiki: wiki_input.WikiInput) -> None:
+    """Bring the family wiki's input up to date when the brain moved (`wiki_input`).
 
     Holds the brain's writer lock, so no view is copied while a compile
     writes it. A failure is logged and the wiki keeps what it had: the
     next turn publishes again.
     """
     try:
-        with brain_lock.held(brain_dir):
-            done = wiki_input.publish(brain_dir, media_dir, wiki_dir, shared_bucket=shared_bucket)
+        with brain_lock.held(wiki.brain):
+            done = wiki.refresh()
     except OSError as e:
-        logger.error("[curator] could not publish the wiki's input to {}: {}", wiki_dir, e)
+        logger.error("[curator] could not publish the wiki's input to {}: {}", wiki.wiki, e)
         return
-    if done:
-        logger.info("[curator] wiki input: {} written, {} removed", len(done.written), len(done.removed))
+    if not done:
+        return
+    logger.info("[curator] wiki input: {} written, {} removed", len(done.written), len(done.removed))
+    if done.copied_media:
+        # A hard link failed (another file system, or a mount that has
+        # none), so each of these photos is now on the disk twice.
+        logger.warning("[curator] wiki input: {} media files copied, not linked: they take their "
+                       "space twice in {}", done.copied_media, wiki.wiki)
 
 
 def _serve_cards(brain_dir: Path, vault_dir: Path, media_dir: Path, shared_bucket: str,
@@ -1911,8 +1932,10 @@ async def main() -> None:
     # install asks it to clone and seed a new memory (`POST /sync`), and the
     # migrations write through it.
     media_dir = Path(os.environ.get("MEDIA_ARCHIVE_DIR", "/data/memory/media"))
-    wiki_dir = Path(os.environ.get("WIKI_INPUT_DIR", "/data/memory/wiki"))
     _serve_cards(brain_dir, vault_dir, media_dir, cycle.shared_bucket, state_dir, vault, away=away)
+    wiki = wiki_input.WikiInput(brain_dir, media_dir,
+                                Path(os.environ.get("WIKI_INPUT_DIR", "/data/memory/wiki")),
+                                shared_bucket=cycle.shared_bucket, version=brain.version)
     await hold_until_migrated()
 
     while (await vault.sync()).state == "missing":
@@ -1947,8 +1970,9 @@ async def main() -> None:
     )
 
     # The wiki shows only the family's shared part, which the curator copies
-    # out of the brain after every turn (`wiki_input`).
-    await asyncio.to_thread(publish_wiki_input, brain_dir, media_dir, wiki_dir, cycle.shared_bucket)
+    # out of the brain at its start and after every turn that moved it
+    # (`wiki_input`).
+    await asyncio.to_thread(publish_wiki_input, wiki)
     away.clear()
     while True:
         # A mirror-now trigger (from `stack memory sync`) forces this
@@ -1960,7 +1984,7 @@ async def main() -> None:
         if forced:
             logger.info("[curator] mirror-now trigger received")
         await cycle.turn(forced)
-        await asyncio.to_thread(publish_wiki_input, brain_dir, media_dir, wiki_dir, cycle.shared_bucket)
+        await asyncio.to_thread(publish_wiki_input, wiki)
 
 
 if __name__ == "__main__":

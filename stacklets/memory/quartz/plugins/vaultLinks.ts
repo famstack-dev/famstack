@@ -1,7 +1,9 @@
 import { QuartzTransformerPlugin } from "../types"
 import { Root, Link } from "mdast"
-import { visit } from "unist-util-visit"
+import { visit, SKIP } from "unist-util-visit"
+import fs from "fs"
 import path from "path"
+import { shown, vaultPathOf, viewOf } from "../../components/vaultPaths"
 
 // NEW TRANSFORMER (not an upstream override).
 //
@@ -13,43 +15,36 @@ import path from "path"
 // lands one or more levels too high and 404s. This resolves each relative
 // link against its file's directory first and hands CrawlLinks the
 // root path it expects. A link that would climb out of the vault is left
-// as it is.
+// as it is. A link to a person, topic or correspondent card goes to the
+// view compiled from it (`viewOf` in components/vaultPaths.ts).
 //
-// A record links a card's own file (ADR-017 §3). Three kinds of card are
-// not pages on the site but are read through the view compiled from
-// them, and this is the one place that maps the card to its view:
-//
-//   family/people/homer.md                 -> homer/about.md
-//   family/itchy-scratchy-land/topic.md    -> family/itchy-scratchy-land/about.md
-//   family/correspondents/kwik-e-mart.md   -> family/correspondents/kwik-e-mart/about.md
+// The wiki holds only the family's shared part, so a link into a person's
+// bucket would open a missing page: the home page's line for each member
+// (`[Homer](homer/about)`), a person card's link, a link to someone's own
+// note. Such a link becomes its text. The wiki's listener serves no
+// `/go` links, so there is no memory page to send it to from here.
 //
 // Core's `/go/card/<card_id>` lands on the card's own page (`/card/<card_id>`),
 // which links this view.
 
 const RELATIVE = /^\.\.?\//
-const PERSON_CARD = /^[^/]+\/people\/([^/]+)\.md$/
-const TOPIC_CARD = /^([^/]+\/[^/]+)\/topic\.md$/
-const CORRESPONDENT_CARD = /^([^/]+\/correspondents\/[^/]+)\.md$/
-
-export function viewOf(card: string): string {
-  const person = PERSON_CARD.exec(card)
-  if (person) return `${person[1]}/about.md`
-  // Before the topic: `correspondents/` is never a topic's folder, and a
-  // correspondent slugged `topic` would otherwise read as one's card.
-  const correspondent = CORRESPONDENT_CARD.exec(card)
-  if (correspondent) return `${correspondent[1]}/about.md`
-  const topic = TOPIC_CARD.exec(card)
-  if (topic) return `${topic[1]}/about.md`
-  return card
-}
 
 export const VaultLinks: QuartzTransformerPlugin = () => ({
   name: "VaultLinks",
-  markdownPlugins() {
+  markdownPlugins(ctx) {
+    // Asked per link, not once per build: `--serve` keeps this plugin while
+    // the curator adds a top folder (the media, on its first photo).
+    const holds = (top: string) => fs.existsSync(path.join(ctx.argv.directory, top))
     return [
       () => (tree: Root, file) => {
         const dir = path.posix.dirname(file.data.relativePath ?? "")
-        visit(tree, "link", (node: Link) => {
+        visit(tree, "link", (node: Link, index, parent) => {
+          const target = vaultPathOf(node.url, dir)
+          if (target === undefined) return
+          if (!shown(viewOf(target), holds) && parent && index !== undefined) {
+            parent.children.splice(index, 1, ...node.children)
+            return [SKIP, index]
+          }
           if (!RELATIVE.test(node.url)) return
           const resolved = path.posix.normalize(path.posix.join(dir, node.url))
           if (!resolved.startsWith("..")) node.url = "/" + viewOf(resolved)

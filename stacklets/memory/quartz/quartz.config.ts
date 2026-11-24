@@ -55,8 +55,7 @@ const config: QuartzConfig = {
     // own labels match the navigation's.
     locale: (process.env.WIKI_LANGUAGE ?? "").toLowerCase().startsWith("de") ? "de-DE" : "en-US",
     baseUrl,
-    // Skip git internals and Obsidian config dirs. The vault is a
-    // real git clone, not a stripped checkout, so `.git` matters.
+    // Skip Obsidian config dirs and, should one ever appear, git's.
     // `**/*.json` keeps every sidecar record out of the published site:
     // the media archive's, each naming the room, the sender's full mxid and
     // the original filename, and a card's (ADR-018), which says where its
@@ -142,10 +141,12 @@ const config: QuartzConfig = {
       SourceSenders(),
       // A calendar's page ends with its last seven days, from the archive.
       CalendarLookBack(),
-      // The vault is a git repo — let git timestamps win over
-      // filesystem mtime so a fresh clone shows real commit dates.
+      // The content is the curator's copy of the shared part, not a git
+      // repository. The copy keeps each file's modification time from the
+      // brain, which is when the curator wrote it there, so a page without
+      // a date of its own shows that.
       Plugin.CreatedModifiedDate({
-        priority: ["frontmatter", "git", "filesystem"],
+        priority: ["frontmatter", "filesystem"],
       }),
       // github-dark in light mode is not a typo. custom.scss puts code
       // blocks on slate, the way famstack.dev does, and a light token
