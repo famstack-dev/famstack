@@ -186,6 +186,28 @@ def remove_image(image: str) -> bool:
     return removed.returncode == 0
 
 
+def inspect_image(image: str) -> dict | None:
+    """What Docker knows of the image `image` on this Mac: its `Id`, its
+    `RepoDigests` and the rest of `docker image inspect`. None when the
+    Mac does not hold the image."""
+    result = _docker("image", "inspect", image, capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        return None
+    found = json.loads(result.stdout)
+    return found[0] if found else None
+
+
+def inspect_containers(names: list[str]) -> list[dict]:
+    """What Docker knows of each named container: its `Image` id, its
+    `Config` with the image reference and the compose labels, and the
+    rest of `docker container inspect`. A name that Docker does not know
+    is left out."""
+    if not names:
+        return []
+    result = _docker("container", "inspect", *names, capture_output=True, text=True, timeout=60)
+    return json.loads(result.stdout) if result.stdout.strip() else []
+
+
 def find_compose_file(stacklet_dir: Path) -> Path | None:
     """Find docker-compose.yml for a stacklet. Returns path or None."""
     compose = stacklet_dir / "docker-compose.yml"
