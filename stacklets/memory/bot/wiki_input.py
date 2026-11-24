@@ -52,7 +52,7 @@ from pathlib import Path
 from stack.cards.audience import readable
 from stacklets.memory.graph import media_in
 
-__all__ = ["WikiInput", "publish", "Published", "shared_paths"]
+__all__ = ["WikiInput", "publish", "Published", "NotTheWikiInput", "shared_paths"]
 
 # The media archive's place inside the wiki's input: cards embed its
 # files as `/media/<path>` (ADR-017 §3).
@@ -61,8 +61,17 @@ MEDIA_DIR = "media"
 # Git's own files are no part of the memory.
 _GIT = ".git"
 
+# The mark a publish leaves in the folder it owns. Publishing removes files,
+# so it writes only into an empty folder it marks, or one that carries the
+# mark: a folder of someone else's keeps its files.
+MARK = ".wiki-input"
+
 # No single person is the audience of what the family reads together.
 _THE_FAMILY: frozenset[str] = frozenset()
+
+
+class NotTheWikiInput(ValueError):
+    """The target is no folder a publish may write and remove files in."""
 
 
 @dataclass
@@ -95,9 +104,9 @@ class WikiInput:
     """
 
     def __init__(self, brain: Path, media: Path, wiki: Path, *, shared_bucket: str,
-                 version: Callable[[], str]):
+                 version: Callable[[], str], keep_out: tuple[Path, ...] = ()):
         self.brain, self.media, self.wiki = Path(brain), Path(media), Path(wiki)
-        self.shared_bucket, self.version = shared_bucket, version
+        self.shared_bucket, self.version, self.keep_out = shared_bucket, version, keep_out
         self._published = ""
 
     def refresh(self) -> Published | None:
@@ -109,37 +118,53 @@ class WikiInput:
         now = self.version()
         if now and now == self._published:
             return None
-        done = publish(self.brain, self.media, self.wiki, shared_bucket=self.shared_bucket)
+        done = publish(self.brain, self.media, self.wiki, shared_bucket=self.shared_bucket,
+                       keep_out=self.keep_out)
         self._published = now
         return done
 
 
-def publish(brain: Path, media: Path, wiki: Path, *, shared_bucket: str) -> Published:
+def publish(brain: Path, media: Path, wiki: Path, *, shared_bucket: str,
+            keep_out: tuple[Path, ...] = ()) -> Published:
     """Make `wiki` hold exactly the shared part of `brain`, and the files of
     `media` that a shared card shows, under `wiki/media/`.
 
-    Writes a file only when it is new or changed, and removes every file
-    the shared part no longer has (a removed card, a card moved into a
-    person's bucket), then the folders left empty. Each file is written
-    beside the input and moved into place, so Quartz never reads half a
-    file. Reads `brain` without its writer lock: the caller holds it.
+    First removes every file the shared part no longer has (a removed card,
+    a card moved into a person's bucket), then writes each file that is new
+    or changed. Each file is written beside the input and moved into place,
+    so Quartz never reads half a file. A file that cannot be written does
+    not stop the others; the first such error is raised at the end. Reads
+    `brain` without its writer lock: the caller holds it.
+
+    Raises `NotTheWikiInput`, and touches nothing, for a target that is no
+    folder of its own: see `_claim`. `keep_out` names more folders the
+    target must stay clear of (the curator passes the memory's clone).
     """
     brain, media, wiki = Path(brain), Path(media), Path(wiki)
+    _claim(wiki, (brain, media, *keep_out))
     wanted = _wanted(brain, media, shared_bucket)
+    done = Published()
+    # SAFETY: stale files go first, so a write that fails below never leaves
+    # a card in the wiki that has moved into a person's bucket.
+    for rel in sorted(_files_in(wiki, with_links=True) - set(wanted) - {MARK}):
+        (wiki / rel).unlink()
+        done.removed.append(rel)
+    _remove_empty_folders(wiki)
     staging = wiki.parent / f".{wiki.name}-staging"
     staging.mkdir(parents=True, exist_ok=True)
-    wiki.mkdir(parents=True, exist_ok=True)
-    done = Published()
+    failed: list[OSError] = []
     for rel, source in sorted(wanted.items()):
-        placed = _place(source, wiki / rel, staging, link=rel.startswith(f"{MEDIA_DIR}/"))
+        try:
+            placed = _place(source, wiki / rel, staging, link=rel.startswith(f"{MEDIA_DIR}/"))
+        except OSError as e:
+            failed.append(e)
+            continue
         if placed:
             done.written.append(rel)
         if placed == _COPIED_MEDIA:
             done.copied_media += 1
-    for rel in sorted(_files_in(wiki) - set(wanted)):
-        (wiki / rel).unlink()
-        done.removed.append(rel)
-    _remove_empty_folders(wiki)
+    if failed:
+        raise failed[0]
     return done
 
 
@@ -154,6 +179,34 @@ def shared_paths(paths: list[str], *, shared_bucket: str) -> list[str]:
             if p.split("/", 1)[0] != _GIT and readable(p, _THE_FAMILY, shared_bucket=shared_bucket)]
 
 
+# ── Where it may write ───────────────────────────────────────────────────────
+
+def _claim(wiki: Path, sources: tuple[Path, ...]) -> None:
+    """Make sure `wiki` is a folder a publish may write and remove files in.
+
+    SAFETY: publishing removes every file it did not mean to write, so the
+    target must be the wiki's own folder. Refused, with nothing touched:
+    an empty or relative path (an unset `WIKI_INPUT_DIR` is the working
+    folder); a folder that is one of `sources` (the brain, the media
+    archive, the memory's clone), lies inside one or holds one; a folder
+    with files but no `MARK`. A missing or empty folder is made and marked.
+    """
+    if not str(wiki) or not wiki.is_absolute():
+        raise NotTheWikiInput(f"the wiki's input needs an absolute folder, not {str(wiki)!r}")
+    target = wiki.resolve()
+    for source in sources:
+        source = Path(source).resolve()
+        if target == source or target.is_relative_to(source) or source.is_relative_to(target):
+            raise NotTheWikiInput(f"{wiki} is or holds {source}, which a publish must not touch")
+    if (wiki / MARK).is_file():
+        return
+    wiki.mkdir(parents=True, exist_ok=True)
+    if any(wiki.iterdir()):
+        raise NotTheWikiInput(f"{wiki} holds files no publish wrote ({MARK} is missing)")
+    (wiki / MARK).write_text("The family wiki's input, written by the memory curator.\n",
+                             encoding="utf-8")
+
+
 # ── What goes in ─────────────────────────────────────────────────────────────
 
 def _wanted(brain: Path, media: Path, shared_bucket: str) -> dict[str, Path]:
@@ -165,9 +218,23 @@ def _wanted(brain: Path, media: Path, shared_bucket: str) -> dict[str, Path]:
     for rel in shared:
         if rel.endswith(".md"):
             for name in media_in(_text(brain / rel), rel):
-                if (media / name).is_file():
+                if _plain_file(media, name):
                     wanted[f"{MEDIA_DIR}/{name}"] = media / name
     return wanted
+
+
+def _plain_file(root: Path, rel: str) -> bool:
+    """Whether `root/rel` is a file, reached through no symbolic link below `root`.
+
+    SAFETY: the archive is dated, not split by person, and a link in it
+    could name any file; only what is really there is served.
+    """
+    path = root
+    for part in rel.split("/"):
+        path = path / part
+        if path.is_symlink():
+            return False
+    return path.is_file()
 
 
 def _text(path: Path) -> str:
@@ -177,11 +244,27 @@ def _text(path: Path) -> str:
         return ""
 
 
-def _files_in(root: Path) -> set[str]:
-    """Every file under `root`, by its path inside it; none for a missing root."""
+def _files_in(root: Path, *, with_links: bool = False) -> set[str]:
+    """Every file under `root`, by its path inside it; none for a missing root.
+
+    SAFETY: a symbolic link is never followed, and is no file unless
+    `with_links` asks for links too (to remove them). The audience rule
+    judges a path, and a link in the shared bucket could carry a card of a
+    person's own bucket under it.
+    """
     if not root.is_dir():
         return set()
-    return {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+    found = set()
+    for folder, _, names in os.walk(root):  # does not descend into a linked folder
+        for name in names:
+            path = Path(folder) / name
+            if path.is_symlink() and not with_links:
+                continue
+            found.add(path.relative_to(root).as_posix())
+        if with_links:
+            found.update(Path(folder, d).relative_to(root).as_posix() for d in _
+                         if Path(folder, d).is_symlink())
+    return found
 
 
 # ── Writing ──────────────────────────────────────────────────────────────────
@@ -205,7 +288,7 @@ def _place(source: Path, target: Path, staging: Path, *, link: bool) -> str:
     temporary.unlink(missing_ok=True)
     done = _WRITTEN
     if not (link and _hard_link(source, temporary)):
-        shutil.copy2(source, temporary)
+        shutil.copy2(source, temporary, follow_symlinks=False)
         done = _COPIED_MEDIA if link else _WRITTEN
     target.parent.mkdir(parents=True, exist_ok=True)
     os.replace(temporary, target)
@@ -222,7 +305,7 @@ def _same(source: Path, target: Path) -> bool:
 
 def _hard_link(source: Path, target: Path) -> bool:
     try:
-        os.link(source, target)
+        os.link(source, target, follow_symlinks=False)
     except OSError:
         return False
     return True

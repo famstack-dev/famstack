@@ -80,9 +80,9 @@ class Memory:
         _write(self.media, MEDIA)
 
     def publish(self) -> set[str]:
-        """Publish the wiki's input; the files it then holds."""
+        """Publish the wiki's input; the files it then holds, besides its mark."""
         wiki_input.publish(self.brain, self.media, self.wiki, shared_bucket="family")
-        return _files(self.wiki)
+        return _files(self.wiki) - {wiki_input.MARK}
 
 
 def test_holds_only_what_the_family_shares(tmp_path):
@@ -209,3 +209,103 @@ def test_an_uncommitted_view_publishes(published):
     _write(memory.brain, {"family/camping/about.md": "# Camping, compiled\n"})
 
     assert wiki.refresh().written == ["family/camping/about.md"]
+
+
+# ── What publishing never does ───────────────────────────────────────────────
+
+def test_a_link_in_the_brain_is_not_followed(tmp_path):
+    """Given a file in the family's bucket that is a link to Marge's own note,
+    and a folder link to her bucket, when the wiki's input is published, then
+    neither is in it: the rule judges a path, so a link could carry any card."""
+    memory = Memory(tmp_path)
+    (memory.brain / "family/notes/link.md").symlink_to("../../marge/notes/2026/11/planung.md")
+    (memory.brain / "family/marge").symlink_to("../marge", target_is_directory=True)
+
+    assert memory.publish() == SHARED
+    assert "SURPRISE-PARTY" not in "".join(
+        p.read_text(encoding="utf-8") for p in memory.wiki.rglob("*.md"))
+
+
+def test_a_link_in_the_archive_is_not_followed(tmp_path):
+    """Given a shared note that embeds an archive file which is a link to
+    Marge's photo, and one under a linked folder, then neither is published."""
+    memory = Memory(tmp_path)
+    (memory.media / "2026/11/alias.jpg").symlink_to("cake.jpg")
+    (memory.media / "2026/12").symlink_to("11", target_is_directory=True)
+    _write(memory.brain, {"family/notes/2026/11/fotos.md": (
+        "# Fotos\n\n![[/media/2026/11/alias.jpg]]\n\n![[/media/2026/12/cake.jpg]]\n")})
+
+    files = memory.publish()
+
+    assert {f for f in files if f.startswith("media/")} == {"media/2026/11/lake.jpg"}
+
+
+@pytest.mark.parametrize("target", ["", "wiki", "brain", "brain/family", "media", "."])
+def test_refuses_a_target_that_is_not_its_own_folder(tmp_path, monkeypatch, target):
+    """Given a target that is empty, relative, the brain, inside it, the
+    archive, or a folder holding them, when the input is published there,
+    then it refuses and removes nothing."""
+    memory = Memory(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    before = _files(tmp_path)
+    wiki = Path(target) if target in ("", "wiki") else (tmp_path if target == "." else tmp_path / target)
+
+    with pytest.raises(wiki_input.NotTheWikiInput):
+        wiki_input.publish(memory.brain, memory.media, wiki, shared_bucket="family")
+
+    assert _files(tmp_path) == before
+
+
+def test_refuses_the_vault(tmp_path):
+    memory = Memory(tmp_path)
+    vault = tmp_path / "vault"
+    vault.mkdir()
+
+    with pytest.raises(wiki_input.NotTheWikiInput):
+        wiki_input.publish(memory.brain, memory.media, vault / "wiki", shared_bucket="family",
+                           keep_out=(vault,))
+
+
+def test_a_folder_it_did_not_make_keeps_its_files(tmp_path):
+    """Given a target folder with a file of someone else's and no mark of a
+    publish, when the input is published there, then it refuses and the file stays."""
+    memory = Memory(tmp_path)
+    _write(memory.wiki, {"notes.txt": "mine"})
+
+    with pytest.raises(wiki_input.NotTheWikiInput):
+        memory.publish()
+
+    assert _files(memory.wiki) == {"notes.txt"}
+
+
+def test_a_file_it_cannot_read_does_not_keep_a_moved_card(tmp_path):
+    """Given a published input, when a shared note moves into Marge's bucket and
+    another shared file cannot be read, then the publish fails, the moved note
+    is gone from the input all the same, and the other new files are in it."""
+    memory = Memory(tmp_path)
+    memory.publish()
+    (memory.brain / SHARED_NOTE).rename(memory.brain / "marge/notes/2026/11/ausflug.md")
+    _write(memory.brain, {"family/notes/2026/11/neu.md": "# Neu\n", "family/notes/2026/11/zu.md": "# Zu\n"})
+    (memory.brain / "family/notes/2026/11/zu.md").chmod(0)
+    try:
+        with pytest.raises(OSError):
+            memory.publish()
+    finally:
+        (memory.brain / "family/notes/2026/11/zu.md").chmod(0o644)
+
+    files = _files(memory.wiki)
+    assert SHARED_NOTE not in files
+    assert "family/notes/2026/11/neu.md" in files
+
+
+def test_a_failed_publish_does_not_end_the_curators_loop(tmp_path):
+    """Given a wiki's input the curator may not write (a relative folder, as
+    from an unset setting), when the curator publishes after a turn, then it
+    logs the failure and returns, so its loop goes on."""
+    memory = Memory(tmp_path)
+    wiki = wiki_input.WikiInput(memory.brain, memory.media, Path("wiki"), shared_bucket="family",
+                                version=lambda: "")
+
+    curator.publish_wiki_input(wiki)
+
+    assert not (tmp_path / "wiki").exists()

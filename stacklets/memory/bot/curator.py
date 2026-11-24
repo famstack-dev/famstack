@@ -1577,13 +1577,13 @@ def publish_wiki_input(wiki: wiki_input.WikiInput) -> None:
     """Bring the family wiki's input up to date when the brain moved (`wiki_input`).
 
     Holds the brain's writer lock, so no view is copied while a compile
-    writes it. A failure is logged and the wiki keeps what it had: the
-    next turn publishes again.
+    writes it. A failure of any kind is logged and the wiki keeps what it
+    had: the next turn publishes again, and the curator's loop goes on.
     """
     try:
         with brain_lock.held(wiki.brain):
             done = wiki.refresh()
-    except OSError as e:
+    except Exception as e:  # noqa: BLE001 - the wiki's copy must never end the curator's loop
         logger.error("[curator] could not publish the wiki's input to {}: {}", wiki.wiki, e)
         return
     if not done:
@@ -1935,7 +1935,13 @@ async def main() -> None:
     _serve_cards(brain_dir, vault_dir, media_dir, cycle.shared_bucket, state_dir, vault, away=away)
     wiki = wiki_input.WikiInput(brain_dir, media_dir,
                                 Path(os.environ.get("WIKI_INPUT_DIR", "/data/memory/wiki")),
-                                shared_bucket=cycle.shared_bucket, version=brain.version)
+                                shared_bucket=cycle.shared_bucket, version=brain.version,
+                                keep_out=(vault_dir,))
+    # The wiki's input is a disposable folder, and the wiki shows nothing
+    # until it is written. A brain from an earlier run is published at once,
+    # without waiting for the migrations and the clone below.
+    if (brain_dir / ".git").exists():
+        await asyncio.to_thread(publish_wiki_input, wiki)
     await hold_until_migrated()
 
     while (await vault.sync()).state == "missing":
