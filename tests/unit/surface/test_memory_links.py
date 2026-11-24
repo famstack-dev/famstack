@@ -10,8 +10,10 @@ card ever had is a 404. `/go/capture/<id>`, `/go/diary/<entry id>` and
 no card has it) land on the card's address in one redirect. A list link
 names one list. Without the memory, a card link and a card's page say
 that the memory is not set up yet. `/go/<card id>` without `card/` is a
-404: no released version wrote it. Topic and person links keep landing in the
-wiki.
+404: no released version wrote it. A shared topic's link keeps landing in the
+wiki. A person's link and a person's own topic land on the memory pages,
+because the wiki shows only what the family shares; a device that may not
+read the topic gets a 404.
 
 A card's page leads on into the memory's pages: a person's chip opens the
 person's page when the device may read it, a topic's tag the topic's page,
@@ -106,6 +108,9 @@ CARDS = {
     "family/notes/2026/11/pot-roast.md": (
         f"---\ntype: note\ncard_id: {POT_ROAST}\ntitle: Pot roast on Sunday\n"
         "persons:\n  - Mom\n---\n\nMom makes the pot roast.\n"),
+    # Marge's own topic: only her phone and the Mac read it.
+    "marge/geschenke/topic.md": ("---\ntype: topic\ncard_id: topic-geschenke\ntitle: Geschenke\n"
+                                 "---\n\n# Geschenke\n"),
     # A folder topic named like the ontology's topic `medical`, and a note
     # in it tagged `medical`: the ontology's tag, which names no folder.
     "family/medical/topic.md": "---\ntype: topic\ncard_id: topic-medical\ntitle: Doctors\n---\n\n# Doctors\n",
@@ -373,13 +378,36 @@ def test_without_the_memory_a_document_link_opens_in_paperless(without_memory, m
 
 # ── What stays ────────────────────────────────────────────────────────────
 
-def test_topic_and_person_links_keep_landing_in_the_wiki(tools, monkeypatch):
-    """Resting state: the pages compiled from many cards stay in the wiki."""
+def test_a_shared_topic_link_keeps_landing_in_the_wiki(tools, monkeypatch):
+    """Resting state: the pages compiled from the family's cards stay in the wiki."""
     server = tools_server("server")
 
     monkeypatch.setattr(server, "WIKI_PUBLIC_URL", "http://192.168.1.20:42070")
     assert lands(tools, "/go/topic/camping") == "http://192.168.1.20:42070/family/camping/about"
-    assert lands(tools, "/go/person/homer/todo") == "http://192.168.1.20:42070/homer/todos"
+    assert lands(tools, "/go/topic/family/camping") == "http://192.168.1.20:42070/family/camping/about"
+
+
+# ── A person's own part opens in the memory ───────────────────────────────
+#
+# The wiki is one site for every paired device, so it shows only what the
+# family shares. A person's page and their own topics are on the memory
+# pages, which check who asks.
+
+def test_a_person_link_lands_on_their_memory_page(tools):
+    assert lands(tools, "/go/person/homer") == "/memory/person/homer"
+    assert lands(tools, "/go/person/homer/todo") == "/memory/person/homer"
+
+
+def test_a_persons_own_topic_link_lands_on_its_memory_page(tools):
+    """Given Marge's own topic, when her phone taps its link, then the topic's
+    memory page opens; it is not sent to the wiki."""
+    assert lands_as(tools, "/go/topic/marge/geschenke", "marge") == "/memory/topic/topic-geschenke"
+
+
+def test_a_persons_own_topic_link_is_a_404_for_someone_else(tools):
+    """Given Marge's own topic, when Homer's phone taps its link, then it is a
+    404, as for a topic that does not exist."""
+    assert taps(tools, "/go/topic/marge/geschenke", person="homer").status == 404
 
 
 # ── A card's page leads on into the memory ────────────────────────────────

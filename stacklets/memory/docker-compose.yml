@@ -29,23 +29,16 @@ services:
       - "stack.commit=${STACK_COMMIT:-unknown}"
     networks:
       - stack
-    # Read-only: the wiki is a pure view. Quartz renders the brain
-    # projection — the curator owns brain's git (mirror + generated
-    # pages, committed and pushed). Edits round-trip through the memory
-    # repo (see the "edit on Forgejo" link in quartz.layout.ts) and flow
-    # back into brain via the curator's mirror.
+    # Read-only: the wiki is a pure view. Quartz renders the family's
+    # shared part of the brain: the top level, the shared bucket, and the
+    # files of the media archive their cards show. The curator copies it
+    # out of the brain after every turn (bot/wiki_input.py). Each person's
+    # own bucket is not in it, because every paired device reads the same
+    # static site; their cards are on the memory pages, which check who
+    # asks. Edits round-trip through the memory repo (see the "edit on
+    # Forgejo" link in quartz.layout.ts).
     volumes:
-      - ${BRAIN_REPO_DIR}:/vault:ro
-      # The media archive, mounted into the tree Quartz renders so the
-      # originals are served from the same site as the pages that embed
-      # them. Quartz only emits what is under its content root, and a
-      # separate origin would need an absolute URL that is wrong in one
-      # of the two deployment modes. The bytes still live outside brain.
-      #
-      # Docker cannot create this mountpoint itself: the parent is a
-      # read-only bind and mkdir fails there, taking the container down
-      # with it. The on_start hook makes the directory first.
-      - ${MEDIA_ARCHIVE_DIR}:/vault/media:ro
+      - ${WIKI_INPUT_DIR}:/vault:ro
     environment:
       # Used by quartz.config.ts to build "edit on Forgejo" links and
       # absolute URLs. Resolved by the runtime from stack.toml.
@@ -97,6 +90,8 @@ services:
       MEMORY_VAULT_DIR: /data/memory/vault
       BRAIN_REPO_DIR: /data/memory/brain
       MEDIA_ARCHIVE_DIR: /data/memory/media
+      # The family's shared part, which the wiki container renders.
+      WIKI_INPUT_DIR: /data/memory/wiki
       CURATOR_STATE_DIR: /data/memory/curator
       DIARY_STATE_DIR: /data/memory/diary
       # The diary compiler reads the memories room and decodes its

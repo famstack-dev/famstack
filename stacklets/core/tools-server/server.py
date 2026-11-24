@@ -254,6 +254,13 @@ async def _resolved(kind: str, rest: list[str], request: Request) -> Response | 
             return _card_at(path)
         return None
 
+    def readable_id(path: str) -> str | None:
+        # The memory pages take a card id, never a path: a card without
+        # one, or none at `path`, is not found.
+        if audience is None or readable(path, audience, shared_bucket=LINK_SHARED_BUCKET):
+            return card_id_at(path, root=BRAIN_DIR) or None
+        return None
+
     url = await asyncio.to_thread(
         build_redirect, kind, rest, docs_base=DOCS_PUBLIC_URL, wiki_base=WIKI_PUBLIC_URL,
         shared_bucket=LINK_SHARED_BUCKET,
@@ -261,6 +268,7 @@ async def _resolved(kind: str, rest: list[str], request: Request) -> Response | 
         find_document=lambda n: readable_at(find_document(n, root=BRAIN_DIR)),
         find_list=lambda slug: readable_at(find_list(slug, root=BRAIN_DIR, audience=audience,
                                                      shared_bucket=LINK_SHARED_BUCKET)),
+        find_card_id=readable_id,
     )
     return RedirectResponse(url, status_code=302) if url else None
 

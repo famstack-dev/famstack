@@ -85,9 +85,13 @@ BRAIN_REPO_DIR = "{data_dir}/memory/brain"
 # The media archive: the originals behind the pages, kept as plain
 # dated files. Its own store rather than a folder inside brain, because
 # brain is a projection that can be deleted and rebuilt at any time and
-# these bytes cannot be rebuilt from anything. The wiki container
-# mounts it into the rendered tree so pages can address it.
+# these bytes cannot be rebuilt from anything.
 MEDIA_ARCHIVE_DIR = "{data_dir}/memory/media"
+
+# What the family wiki renders: the family's shared part of the brain and
+# the media its cards show, copied there by the curator. Disposable, like
+# brain.
+WIKI_INPUT_DIR = "{data_dir}/memory/wiki"
 
 # Bind-mount source for the curator sidecar: the memory data dir as a
 # whole, so one mount covers the source clone, the brain working copy,

@@ -334,7 +334,9 @@ If the first pass isn't enough, it tells you it's looking deeper and reads the a
 
 > Needs the `memory` stacklet.
 
-Everything the archivist files becomes more than a pile of documents: the memory stacklet renders it as a wiki of your family life. A home page, a page per family member, topic pages, a page per correspondent (the insurance company, the school, the doctor's office).
+Everything the archivist files becomes more than a pile of documents: the memory stacklet renders it as a wiki of your family life. A home page, topic pages, a page per correspondent (the insurance company, the school, the doctor's office).
+
+The wiki shows what the family shares. Every paired device sees the same wiki, because it cannot tell who reads it. Your own notes and your private topics are not in the wiki. Find them on the memory pages, which show each person only what is theirs and what the family shares. A link in the chat to a person or to a person's own topic opens the memory pages too.
 
 Open it at `http://<mac-ip>:42070` (or `memory.<your-domain>` if the admin set up a domain). It opens on a phone or computer that is paired with famstack, the same as the dashboard. A filed item shows on its pages within seconds. The written summaries of the home page and the family members' pages are updated once a night.
 
@@ -342,7 +344,6 @@ The menu on the left is sorted by what you look for, not by how the files are st
 
 - **Recent**: the topics where something was filed in the last four weeks.
 - **Diary**: the family diary, month by month.
-- **People**: a page per family member.
 - **Topics**: everything filed about a subject, grouped by area of life (money and work, health, home, the car, …). A topic appears once something is filed under it, with the number of entries next to it.
 - **Documents**: every document by type, by year and by sender.
 - **Notes & links**: every note and saved link, newest first.
