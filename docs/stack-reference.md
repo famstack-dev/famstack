@@ -229,7 +229,7 @@ Available template variables:
 | `{admin_username}` | Tech admin username (`stackadmin`) |
 | `{admin_email}` | Tech admin email (`stackadmin@home.local`) |
 | `{admin_password}` | Tech admin password, generated and stored in `secrets.toml` |
-| `{messages_user_ids}` | Comma-separated user IDs of everyone with a chat account: the admins, and the members whose `stacklets` list has `messages` |
+| `{parent_user_ids}` | Comma-separated user IDs of the parents with a chat account: the people whose `relation` is `parent` and who are admins or have `messages` in their `stacklets` list |
 | `{family_names}` | Comma-separated first names of everyone in `users.toml` |
 | `{ai_off}` | `"true"` while `[ai].provider = "none"` (no AI for now), else empty. The bot runner and the curator read it as `AI_OFF`: the archivist files without tags, the memory compiles without the model |
 | `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url`; empty while `[ai].provider = "none"`, as are the whisper and speech addresses and the upstreams |
@@ -452,7 +452,7 @@ reformat = true
 | `name` | Display name in Matrix. |
 | `room` | Room alias to create/join. Optional — omit for bots that only respond to DMs/invites. |
 | `room_topic` | Topic set on auto-created room. |
-| `room_members` | Who the bot runner joins to `room` on every start. `"everyone"`: every person with a chat account (the Documents Room). Omitted: the admins only (the Server Room). People are only added, never removed. A member who left the room or was banned from it is not joined again; the bot and the admins are. A room whose members are already right gets no new event. |
+| `room_members` | Who the bot runner joins to `room` on every start. `"parents"`: the admins and every person whose `relation` is `parent` and who has a chat account (the Documents Room). Omitted: the admins only (the Server Room). Anyone else joins when an admin invites them. People are only added, never removed, so an invited person stays. A parent who left the room or was banned from it is not joined again; the bot and the admins are. A room whose members are already right gets no new event. |
 | `join_rooms` | Aliases of rooms another stacklet owns that the bot takes part in. Joined on every start when they exist; never created, and no one else is joined to them. |
 | `settings` | Arbitrary key-value pairs passed as kwargs to the bot constructor. |
 | `module` | The code that answers as the account, when it is not the file named after the ID: `"<stem>"` in this stacklet's `bot/`, `"<stacklet>/<stem>"` in another stacklet's, shipped or extension. Empty: the runner only provisions the account, and something outside it answers (the agent's nanobot). Optional. |

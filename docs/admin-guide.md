@@ -683,7 +683,7 @@ Paperless-ngx archive with OCR and structured classification. Receipts, letters,
 ./stack up docs
 ```
 
-The archivist bot creates a room called Documents Room in your chat. AI classifies and tags incoming documents when the `ai` stacklet is running. Without `ai`, documents are still stored and searchable by OCR text, just not auto-tagged. Type `show 42` in the Documents Room to read a document; type any term to search.
+The archivist bot creates a room called Documents Room in your chat. On every start of core, it joins the admins and each person whose `relation` is `parent` in `users.toml`. Invite anyone else in Element, because anyone in the room can see every family document. AI classifies and tags incoming documents when the `ai` stacklet is running. Without `ai`, documents are still stored and searchable by OCR text, just not auto-tagged. Type `show 42` in the Documents Room to read a document; type any term to search.
 
 On first setup, famstack seeds Paperless with common document categories and types in your configured language. The LLM picks from these when classifying, so tags stay consistent. See [`stacklets/docs/taxonomy.toml`](../stacklets/docs/taxonomy.toml).
 

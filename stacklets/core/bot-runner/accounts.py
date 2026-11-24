@@ -3,13 +3,15 @@
 Runs on bot-runner startup before any bots are launched. Uses the
 Synapse admin API to create accounts, create each bot's declared room
 and join the bot and its people to it. A bot's `room_members` says who
-those are: `"everyone"` joins every person with a chat account (the
-Documents Room), anything else the admins only (the Server Room).
+those are: `"parents"` joins the admins and the parents (the Documents
+Room), anything else the admins only (the Server Room). Anyone else, a
+child for example, joins when an admin invites them.
 
 Idempotent, so it is safe on every restart: people are only added, never
-removed, and a room whose members are already right gets no new event.
-A member who left a room for everyone, or was banned from it, stays out:
-only the bot and the admins are joined again.
+removed, so an invited member stays, and a room whose members are
+already right gets no new event. A parent who left a room for the
+parents, or was banned from it, stays out: only the bot and the admins
+are joined again.
 """
 
 import json
@@ -111,13 +113,14 @@ def setup_bot_accounts(bots, homeserver, server_name, admin_user, admin_password
 
 
 def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
-                 admin_user_ids=None, member_user_ids=None):
+                 admin_user_ids=None, parent_user_ids=None):
     """Ensure bot rooms exist and their people are in them.
 
     Always runs on startup, even when bot sessions already exist. Creates
     each bot's room, joins the bot, and joins the people its declaration
-    names: every user in `member_user_ids` for `room_members = "everyone"`,
-    otherwise the admins only. Admins are made admins of the room.
+    names: the admins and every user in `parent_user_ids` for
+    `room_members = "parents"`, otherwise the admins only. Admins are made
+    admins of the room.
 
     It only adds: nobody is removed, and a person already in the room is
     not joined again, so a restart with the right members writes nothing.
@@ -137,7 +140,7 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
 
     space_id = _resolve_space(base, token, server_name)
     admins = [f"@{uid}:{server_name}" for uid in admin_user_ids or []]
-    everyone = [f"@{uid}:{server_name}" for uid in member_user_ids or []]
+    parents = [f"@{uid}:{server_name}" for uid in parent_user_ids or []]
 
     for bot in bots_with_rooms:
         bot_user = f"@{bot['id']}:{server_name}"
@@ -158,7 +161,7 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         if not room_id:
             continue
 
-        people = everyone if bot.get("room_members") == "everyone" else []
+        people = parents if bot.get("room_members") == "parents" else []
         _join_missing(base, token, room_id, [bot_user, *admins],
                       [p for p in people if p not in admins])
         # The tech admin created the room and is otherwise the only

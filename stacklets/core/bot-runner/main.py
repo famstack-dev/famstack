@@ -311,8 +311,8 @@ def _ensure_bot_accounts(configs):
         logger.info("All bots have sessions — skipping account creation")
 
     # Rooms and joins must run every time — a new stacklet may have been
-    # enabled since last boot, and its people need to be joined. A person
-    # added to users.toml since then is joined to the rooms for everyone.
+    # enabled since last boot, and its people need to be joined. A parent
+    # added to users.toml since then is joined to the rooms for the parents.
     all_bots = [{
         "id": c["bot_id"],
         "room": c.get("room"),
@@ -324,7 +324,7 @@ def _ensure_bot_accounts(configs):
         all_bots, MATRIX_HOMESERVER, MATRIX_SERVER_NAME,
         admin_user, admin_password,
         admin_user_ids=_user_ids("STACK_ADMIN_USER_IDS"),
-        member_user_ids=_user_ids("STACK_MESSAGES_USER_IDS"),
+        parent_user_ids=_user_ids("STACK_PARENT_USER_IDS"),
     )
 
 

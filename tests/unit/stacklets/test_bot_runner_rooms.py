@@ -2,13 +2,16 @@
 
 On every start the bot runner makes sure each bot's room exists and that
 the bot and the people are in it. A bot's `bot.toml` says who belongs
-there: `room_members = "everyone"` makes it a room for every person with
-a chat account (the Documents Room, where anyone drops a letter); without
-it the room is for the admins only (the Server Room). The runner only
-adds people. It removes nobody, a member who left the room or was banned
-stays out, and a room whose members are already right gets no new event,
-because the runner starts on every restart. The people are the user IDs
-core renders into the runner's environment from `users.toml`.
+there: `room_members = "parents"` makes it a room for the admins and the
+parents (the Documents Room, where they drop letters); without it the
+room is for the admins only (the Server Room). A child, a grandparent, an
+`other` and a person without a relation join a parents' room only when an
+admin invites them, because anyone in the Documents Room can search and
+show every document. The runner only adds people. It removes nobody, so an
+invited child stays; a member who left the room or was banned stays out,
+and a room whose members are already right gets no new event, because the
+runner starts on every restart. The people are the user IDs core renders
+into the runner's environment from `users.toml`.
 
 Synapse is stood in on localhost by `tests/synapse.py`. The bot runner's
 `accounts` module is the real one, loaded as the framework loads stacklet
@@ -31,7 +34,9 @@ SERVER = "simpson"
 STACKLETS = Path(__file__).resolve().parents[3] / "stacklets"
 CORE = STACKLETS / "core"
 ADMINS = ["homer"]
-EVERYONE = ["homer", "marge", "bart"]
+# Homer is the admin; Marge is the other parent. Bart, a child, and Grampa,
+# a grandparent, have chat accounts too but are not on the parents' list.
+PARENTS = ["homer", "marge"]
 
 
 def _declared(stacklet: str) -> dict:
@@ -50,39 +55,50 @@ def synapse(httpserver):
     return Synapse(httpserver, server=SERVER)
 
 
-def _start_bot_runner(httpserver, everyone=EVERYONE):
+def _start_bot_runner(httpserver, parents=PARENTS):
     """Set up the rooms as the bot runner does on every start."""
     accounts = load(CORE, CORE / "bot-runner" / "accounts.py")
     accounts.ensure_rooms(BOTS, httpserver.url_for("/"), SERVER, "stackadmin", ADMIN_PASSWORD,
-                          admin_user_ids=ADMINS, member_user_ids=everyone)
+                          admin_user_ids=ADMINS, parent_user_ids=parents)
 
 
-def test_a_new_documents_room_holds_everyone_and_the_server_room_the_admins(httpserver, synapse):
-    """Given a fresh install, the Documents Room gets every person, the Server Room only the admin."""
+def test_a_new_documents_room_holds_the_parents_and_the_server_room_the_admins(httpserver, synapse):
+    """Given a fresh install, the Documents Room gets the admin and the parent,
+    not the child or the grandparent; the Server Room only the admin."""
     _start_bot_runner(httpserver)
 
-    assert {"homer", "marge", "bart", "archivist-bot"} <= synapse.members_of("documents")
+    assert synapse.members_of("documents") == {"stackadmin", "archivist-bot", "homer", "marge"}
     assert synapse.members_of("famstack") == {"stackadmin", "stacker-bot", "homer"}
 
 
-def test_an_admins_only_documents_room_gets_the_missing_people(httpserver, synapse):
-    """Given a Documents Room from 0.4.x with the admin only, the members are joined and nobody leaves."""
-    synapse.has_room("documents", "homer", "archivist-bot", "grampa")
+def test_an_admins_only_documents_room_gets_the_missing_parent(httpserver, synapse):
+    """Given a Documents Room from 0.4.x with the admin only, the parent is joined and nobody leaves."""
+    synapse.has_room("documents", "homer", "archivist-bot")
 
     _start_bot_runner(httpserver)
 
-    assert synapse.members_of("documents") == {
-        "stackadmin", "homer", "archivist-bot", "grampa", "marge", "bart"}
+    assert synapse.members_of("documents") == {"stackadmin", "homer", "archivist-bot", "marge"}
 
 
-def test_a_person_added_later_is_joined_on_the_next_start(httpserver, synapse):
-    """Given Lisa is added to the family after the first start, the next start joins her."""
+def test_a_parent_added_later_is_joined_on_the_next_start(httpserver, synapse):
+    """Given a second parent is added to the family after the first start, the
+    next start joins them to the Documents Room and not to the Server Room."""
     _start_bot_runner(httpserver)
 
-    _start_bot_runner(httpserver, everyone=[*EVERYONE, "lisa"])
+    _start_bot_runner(httpserver, parents=[*PARENTS, "patty"])
 
-    assert "lisa" in synapse.members_of("documents")
-    assert "lisa" not in synapse.members_of("famstack")
+    assert "patty" in synapse.members_of("documents")
+    assert "patty" not in synapse.members_of("famstack")
+
+
+def test_an_invited_child_stays_in_the_documents_room(httpserver, synapse):
+    """Given an admin invited Bart and he joined, the next start keeps him in
+    the room: the runner never removes anyone."""
+    synapse.has_room("documents", "homer", "archivist-bot", "marge", "bart")
+
+    _start_bot_runner(httpserver)
+
+    assert "bart" in synapse.members_of("documents")
 
 
 def test_a_second_start_changes_nothing(httpserver, synapse):
@@ -96,7 +112,7 @@ def test_a_second_start_changes_nothing(httpserver, synapse):
 
 
 @pytest.mark.parametrize("membership", ["leave", "ban"])
-def test_a_member_who_left_or_was_banned_stays_out(httpserver, synapse, membership):
+def test_a_parent_who_left_or_was_banned_stays_out(httpserver, synapse, membership):
     """Given Marge left the Documents Room or was banned from it, the next start does not join her again."""
     _start_bot_runner(httpserver)
     synapse.left("documents", "marge", membership)
@@ -116,16 +132,20 @@ def test_an_admin_who_left_is_joined_again(httpserver, synapse):
     assert "homer" in synapse.members_of("documents")
 
 
-def test_core_renders_everyone_with_a_chat_account_for_the_runner(tmp_path):
-    """Given an admin, a member with a chat account and one without, core's
-    environment for the runner lists the first two as the room's people."""
+def test_core_renders_the_parents_with_a_chat_account_for_the_runner(tmp_path):
+    """Given an admin, a parent, a parent without a chat account, a child, a
+    grandparent and a person without a relation, core's environment for the
+    runner lists the admin and the parent with a chat account as the parents."""
     instance = write_instance(tmp_path)
     (instance / "users.toml").write_text(
-        '[[users]]\nid = "homer"\nname = "Homer"\nrole = "admin"\n'
-        '[[users]]\nid = "marge"\nname = "Marge"\nrole = "member"\nstacklets = ["messages"]\n'
-        '[[users]]\nid = "maggie"\nname = "Maggie"\nrole = "member"\nstacklets = ["photos"]\n')
+        '[[users]]\nid = "homer"\nname = "Homer"\nrole = "admin"\nrelation = "parent"\n'
+        '[[users]]\nid = "marge"\nname = "Marge"\nrole = "member"\nrelation = "parent"\nstacklets = ["messages"]\n'
+        '[[users]]\nid = "patty"\nname = "Patty"\nrole = "member"\nrelation = "parent"\nstacklets = ["photos"]\n'
+        '[[users]]\nid = "bart"\nname = "Bart"\nrole = "member"\nrelation = "child"\nstacklets = ["messages"]\n'
+        '[[users]]\nid = "abe"\nname = "Abe"\nrole = "member"\nrelation = "grandparent"\nstacklets = ["messages"]\n'
+        '[[users]]\nid = "ned"\nname = "Ned"\nrole = "member"\nstacklets = ["messages"]\n')
 
     env = make_stack(instance).env("core")
 
-    assert env["STACK_MESSAGES_USER_IDS"] == "homer,marge"
+    assert env["STACK_PARENT_USER_IDS"] == "homer,marge"
     assert env["STACK_ADMIN_USER_IDS"] == "homer"

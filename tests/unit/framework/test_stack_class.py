@@ -121,16 +121,19 @@ data_dir = "/tmp/test-data"
         env = Stack(root=tmp_path, data=tmp_path / "data").env("myapp")
         assert env["FAMILY"] == "Homer,Marge,Bart"
 
-    def test_messages_user_ids_are_everyone_with_a_chat_account(self, tmp_path):
-        # Admins get an account on every stacklet; a member only on the
-        # stacklets their entry lists. The bot runner joins exactly these
-        # people to a room that is for everyone.
+    def test_parent_user_ids_are_the_parents_with_a_chat_account(self, tmp_path):
+        # The bot runner joins these people to a room for the parents: a
+        # parent with a chat account (an admin has one on every stacklet,
+        # a member on the stacklets their entry lists). A parent without
+        # one, a child and a person without a relation are not in it.
         (tmp_path / "users.toml").write_text(
-            '[[users]]\nname = "Homer"\nrole = "admin"\n'
-            '[[users]]\nname = "Marge"\nrole = "member"\nstacklets = ["messages", "photos"]\n'
-            '[[users]]\nname = "Maggie"\nrole = "member"\nstacklets = ["photos"]\n'
+            '[[users]]\nname = "Homer"\nrole = "admin"\nrelation = "parent"\n'
+            '[[users]]\nname = "Marge"\nrole = "member"\nrelation = "parent"\nstacklets = ["messages", "photos"]\n'
+            '[[users]]\nname = "Patty"\nrole = "member"\nrelation = "parent"\nstacklets = ["photos"]\n'
+            '[[users]]\nname = "Lisa"\nrole = "member"\nrelation = "child"\nstacklets = ["messages"]\n'
+            '[[users]]\nname = "Ned"\nrole = "member"\nstacklets = ["messages"]\n'
         )
-        _create_stacklet(tmp_path, "myapp", env_defaults={"PEOPLE": "{messages_user_ids}"})
+        _create_stacklet(tmp_path, "myapp", env_defaults={"PEOPLE": "{parent_user_ids}"})
 
         from stack import Stack
         env = Stack(root=tmp_path, data=tmp_path / "data").env("myapp")

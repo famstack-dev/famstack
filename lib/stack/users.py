@@ -94,10 +94,13 @@ def user_ids_with_role(users: list[dict], role: str) -> str:
     return ",".join(user_id(u) for u in users if u.get("role") == role)
 
 
-def user_ids_with_account(users: list[dict], stacklet_id: str) -> str:
-    """The comma-separated user IDs of the entries with an account on a
-    stacklet (`has_account_on`): `"homer,marge"` for `"messages"`."""
-    return ",".join(user_id(u) for u in users if has_account_on(u, stacklet_id))
+def parent_user_ids(users: list[dict]) -> str:
+    """The comma-separated user IDs of the parents with a chat account:
+    the entries whose `relation` is `"parent"` and that have an account on
+    messages (`has_account_on`), such as `"homer,marge"`. A parent without
+    a chat account cannot be joined to a room, so they are left out."""
+    return ",".join(user_id(u) for u in users
+                    if u.get("relation") == "parent" and has_account_on(u, "messages"))
 
 
 def password_key(user: dict) -> str:
