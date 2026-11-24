@@ -12,7 +12,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-from stacklets.docs.bot.clean_words import CLEAN_MAX_CHARS, is_cleanable, kept, kept_rebuilt  # noqa: E402
+from stack.filing.clean_words import CLEAN_MAX_CHARS, is_cleanable, kept, kept_rebuilt  # noqa: E402
 
 MESSY = ("ok so for the trip: homer needs to call the hotel abt the late checkin, "
          "bart forgot his swimsuit AGAIN buy one at the mall b4 sat, also lisa wants "

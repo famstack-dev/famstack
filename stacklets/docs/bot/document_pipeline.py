@@ -16,11 +16,14 @@ work lives here.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from loguru import logger
 
+from stack.filing.correction.document import DocumentCorrection
 from .matching import build_document_event
 from .pdf_analysis import (
     has_ocr_text_layer,
@@ -33,12 +36,17 @@ from .pdf_render import render_pages
 from .pipeline import (
     EnrichResult,
     ImageAttachment,
+    LLMModelNotFoundError,
+    LLMTimeoutError,
+    LLMUnavailableError,
     PaperlessDuplicateError,
+    apply_classification,
     enrich_document,
     extract_bot_summary,
     reformat_document,
 )
 from stack import resolve_model
+from stack.cards.events import Correction
 from stack.links import go_document, public
 
 # Text-like extensions skip reformat (the content is already clean) but
@@ -107,12 +115,16 @@ class FilingOutcome:
 class ReprocessOutcome:
     """The result of re-enriching a filed doc with a user correction.
 
-    status: doc_missing (target gone) | llm_error | reclassified.
+    status: doc_missing (target gone) | llm_error | not_changed | reclassified.
     """
 
     status: str
     doc_id: int
     llm_error: tuple[str, str] | None = None
+    # Why a `not_changed` wrote nothing, as a code the reply words (`why_<code>`).
+    failure_reason: str = ""
+    # People that a correction asked to add and that the person files do not hold.
+    unknown_persons: tuple[str, ...] = ()
     title: str = ""
     resolved_topics: list[str] = field(default_factory=list)
     resolved_persons: list[str] = field(default_factory=list)
@@ -451,54 +463,65 @@ class DocumentPipeline:
         )
 
     async def reprocess(
-        self, *, doc_id: int, user_hint: str, date_filed: str | None = None,
-        initial_classification: dict | None = None,
-        write_in: str | None = None,
+        self, *, doc_id: int, corrections: Sequence[Correction], filed: dict | None,
         changed_by: str | None = None,
     ) -> ReprocessOutcome:
-        """Re-enrich an already-filed doc with the user's reply as a hint.
+        """Correct a filed document with `corrections`.
 
-        `changed_by` is the Matrix id of the person whose reply corrects
-        it: the card's commit is their change, not the filer's.
+        ``corrections`` are the corrections of people, in time order
+        (`stack.cards.events.Correction`). ``filed`` is the filing as first
+        made: the data of the `document.filed` envelope. It holds the title,
+        date, topics, persons, correspondent and document type. ``changed_by``
+        is the Matrix id of the person whose reply corrects the document. The
+        card's commit is that person's change, not the filer's.
 
-        The hint becomes a high-priority correction in the classify prompt;
-        `is_reprocess=True` preserves the document's filing date. The mirror
-        publish is idempotent on the paperless_id, so it overwrites the
-        prior entry. Returns a ReprocessOutcome the orchestrator renders.
+        The model reads the card conversation (ADR-018 §7). It answers what the
+        corrections change. `stack.filing.correction.changes` keeps each tag and
+        person that no correction names. The type, the correspondent and the
+        summary stay as filed.
 
-        ``initial_classification`` is the LLM's original output for this
-        document (from the chain walker's `*.filed` boundary). Threading
-        it into the prompt anchors each reprocess pass on the same
-        starting state -- corrections behave like deltas, and the same
-        chain of hints produces the same output regardless of how many
-        intermediate reclassifications have already happened.
+        The result goes to Paperless and to the card. The card's write uses the
+        card's version from before the model call. A change that landed in the
+        meantime therefore refuses the write.
+
+        The method returns a ReprocessOutcome, which the archivist turns into a
+        reply. Its status is ``reclassified``, ``doc_missing`` or ``llm_error``.
+        It is ``not_changed`` with ``model_unreadable`` when the answer is not
+        an object. The method then writes nothing.
+
+            await pipeline.reprocess(doc_id=47, corrections=[Correction(
+                "marge", "", 'the title is "Fuel receipt, March"')],
+                filed={"title": "Fuel receipt", "topics": ["vehicle"], "persons": ["Homer"]})
+            # status 'reclassified', title 'Fuel receipt, March', vehicle and Homer kept
         """
         doc = await self._paperless.get_doc(doc_id)
         if not doc:
             return ReprocessOutcome(status="doc_missing", doc_id=doc_id)
 
         ontology = self._document_ontology()
-        result = await enrich_document(
-            paperless=self._paperless,
-            classifier=self._classifier,
-            doc=doc,
-            classify_max_chars=self.classify_max_chars,
-            ontology_section=ontology.classifier_prompt_section(self.language),
-            correspondents_section=self._vault.correspondents_section(),
-            persons_section=self._vault.persons_section(),
-            people=self._vault.people(),
-            ontology=ontology,
-            lang=self.language,
-            is_reprocess=True,
-            date_filed=date_filed,
-            user_hint=user_hint,
-            initial_classification=initial_classification,
-            write_in=write_in,
-        )
-        if result.llm_error:
-            return ReprocessOutcome(
-                status="llm_error", doc_id=doc_id, llm_error=result.llm_error,
-            )
+        correction = DocumentCorrection.of(filed, title=doc.get("title"))
+        messages = correction.messages((doc.get("content") or "")[:self.classify_max_chars], corrections)
+        # The card's version before the model answers. A correction that lands
+        # in the meantime refuses this write, because it must not be overwritten.
+        read_at = await self._mirror.document_version(doc_id) if self._mirror else None
+        try:
+            answer = await self._classifier.correct_card(messages, text=False)
+        except (LLMUnavailableError, LLMModelNotFoundError, LLMTimeoutError) as e:
+            return ReprocessOutcome(status="llm_error", doc_id=doc_id,
+                                    llm_error=(type(e).__name__, str(e)))
+        if not answer:
+            return ReprocessOutcome(status="not_changed", doc_id=doc_id,
+                                    failure_reason="model_unreadable")
+        people = self._vault.people() or []
+        classification, corrected = correction.after(answer, corrections, people=people)
+        tags, doc_types, correspondents = await asyncio.gather(
+            self._paperless.get_tags(), self._paperless.get_doc_types(),
+            self._paperless.get_correspondents())
+        result = await apply_classification(
+            paperless=self._paperless, doc=doc, classification=classification,
+            tags=tags, doc_types=doc_types, correspondents=correspondents,
+            ontology=ontology, lang=self.language,
+            is_reprocess="date" not in corrected.changed, people=people)
 
         # Refetch so the mirror sees the post-PATCH title/tags.
         refreshed = await self._paperless.get_doc(doc_id) or doc
@@ -521,6 +544,7 @@ class DocumentPipeline:
             paperless_tags=paperless_tags,
             summary=result.summary,
             by=changed_by,
+            read_at=read_at,
         )
 
         title = result.classification.get("title") or refreshed.get("title") or f"#{doc_id}"
@@ -540,7 +564,7 @@ class DocumentPipeline:
         )
         envelope["type"] = "document.reclassified"
         envelope["summary"] = f"{title} reclassified (#{doc_id})"
-        envelope["data"]["user_hint"] = user_hint
+        envelope["data"]["user_hint"] = "\n".join(c.words for c in corrections)
 
         return ReprocessOutcome(
             status="reclassified", doc_id=doc_id, title=title,
@@ -550,6 +574,7 @@ class DocumentPipeline:
             resolved_correspondent=result.resolved_correspondent,
             envelope=envelope,
             classification=result.classification,
+            unknown_persons=corrected.unknown,
             date=(result.classification.get("date")
                   or str(refreshed.get("created") or "")[:10] or None),
             link=self._link(doc_id, card_id),
@@ -557,17 +582,19 @@ class DocumentPipeline:
 
     async def safe_mirror(
         self, *, doc_id, classification, body_text, processing, model,
-        fallback_title, paperless_tags, summary=None, by=None,
+        fallback_title, paperless_tags, summary=None, by=None, read_at=None,
     ) -> str:
-        """Mirror a filed doc to Forgejo — never raises, never blocks a reply.
+        """Write a filed document to its card in the memory. It never raises and never blocks a reply.
 
-        Returns the card id of the card the memory wrote, which the reply
-        links; "" when no card was written (no memory, or the write failed).
+        The method returns the id of the card that the memory wrote, and the
+        reply links it. It returns "" when no card was written: the memory is
+        not set up, or the write failed.
 
-        Shared with the reprocess flow so the archive stays 1:1 with
-        Paperless regardless of which path filed/updated the doc.
-        `by` is the Matrix id of whoever sent or corrected the document:
-        the card's commit is theirs (`GitMirror.publish`).
+        The first filing and the correction both call it, because each
+        Paperless document has exactly one card. ``by`` is the Matrix id of the
+        person who sent or corrected the document. The card's commit is that
+        person's (`GitMirror.publish`). ``read_at`` is the card's version that a
+        correction read before the model call. The write goes on that version.
         """
         if not self._mirror:
             return ""
@@ -583,6 +610,7 @@ class DocumentPipeline:
                 fallback_title=fallback_title,
                 summary=summary,
                 by=by,
+                read_at=read_at,
             )
         except Exception as e:
             logger.warning("[archivist] Git mirror failed for doc #{}: {}", doc_id, e)

@@ -36,7 +36,7 @@ import aiohttp
 from loguru import logger
 
 from .note_topics import TOPICS_FIELD, TOPICS_RULE, tags_hint
-from .clean_words import TIDY
+from stack.filing.clean_words import TIDY
 from .matching import (
     MAX_TITLE_LENGTH,
     _is_empty,
@@ -61,8 +61,7 @@ from stack.ai.client import (
 from stack.ai.language import language_code, language_name
 from stack.ai.transcripts import fingerprint
 
-from .card_conversation import build_conversation, conversation_template
-from .note_correction import build_correction_prompt, correction_prompt_template
+from stack.filing.correction.conversation import conversation_template
 
 # The recall prompt lives with the vault it searches. See
 # `memory.lib`'s query-rewrite section for why it moved there.
@@ -756,7 +755,6 @@ class Classifier:
         write_in: str | None = None,
         kind: str = "note",
         clean_words: bool = False,
-        classify_only: bool = False,
         topics: list[str] | None = None,
     ) -> dict:
         """Capture-specific classification.
@@ -769,8 +767,6 @@ class Classifier:
 
         ``clean_words`` asks for a clean version of a note's own words
         (`clean`) in place of the summary and facts (`clean_words`).
-        ``classify_only`` asks for none of them: the text is a note's
-        rebuilt clean version already (`rebuild_note`).
 
         ``extract_action_items`` opts a note into todo extraction. The
         caller sets it only for a note in the writer's own words
@@ -807,7 +803,6 @@ class Classifier:
             write_in=target,
             kind=kind,
             clean_words=clean_words,
-            classify_only=classify_only,
             topics=topics or [],
         )
         prompt = _build_capture_prompt(**prompt_args)
@@ -845,22 +840,28 @@ class Classifier:
             answer["prompt_template"] = capture_prompt_template(**prompt_args)
         return answer
 
-    async def correct_note(self, *, words: str, corrections: str) -> dict:
-        """A note's clean version with the family's corrections worked in,
-        for a note nobody edited by hand (`note_correction`).
+    async def correct_card(self, messages: list[dict[str, str]], *, text: bool,
+                           todos: bool = False) -> dict:
+        """What a correction changes on a card, asked as the card conversation
+        (`stack.filing.correction.conversation`, ADR-018 §7).
 
-        ``words`` are the note's original words, ``corrections`` each
-        correction on a line of its own after who wrote it
-        (`stack.cards.sources.corrections_of`). The answer is
-        ``{"clean": <text>, "prompt_template": <hash>}``: the text as the
-        model wrote it, unchecked (`clean_words.kept_rebuilt` checks it),
-        and the hash of the prompt's skeleton for the card's sidecar.
-        ``{}`` when the model answered no JSON object; transport failures
-        raise as in `classify_capture`.
+        ``text`` is true for a card with a text, such as a note. ``todos`` is
+        true when the conversation also asks for the to-dos of a topic's list.
+        These two pick the skeleton whose hash the answer records.
+
+        The answer is the model's object as it wrote it. This method does not
+        check it, because `stack.filing.correction.changes` and
+        `stack.filing.clean_words.kept_rebuilt` do. The answer also holds
+        ``prompt_template``: the hash of the skeleton for the card's sidecar.
+        The answer is ``{}`` when the model answered no JSON object. A failed
+        transport raises, as in `classify_capture`.
+
+            answer = await classifier.correct_card(build_conversation(...), text=False)
+            answer   # {'title': 'Camper van fuel, March', 'prompt_template': '...'}
         """
-        response = await self._llm.complete(
-            "classifier", build_correction_prompt(words=words, corrections=corrections),
-            json_mode=True, temperature=0.0, max_tokens=CAPTURE_MAX_TOKENS,
+        response = await self._llm.converse(
+            "classifier", messages, json_mode=True, temperature=0.0,
+            max_tokens=CAPTURE_MAX_TOKENS,
         )
         try:
             answer = json.loads(response or "")
@@ -869,39 +870,7 @@ class Classifier:
             return {}
         if not isinstance(answer, dict):
             return {}
-        return {"clean": str(answer.get("clean") or ""),
-                "prompt_template": correction_prompt_template()}
-
-    async def rebuild_note(self, *, writer: str, words: str, prior: str,
-                           events: list[str]) -> dict:
-        """A note's clean version rebuilt from the events after it, for a note
-        a person edited by hand (ADR-018 §7).
-
-        ``writer`` is who wrote the note, as a name; ``words`` its original
-        words; ``prior`` the clean version the events apply to; ``events``
-        each correction and person's edit as a message, in time order
-        (`stack.cards.events`). Asked as the card conversation
-        (`card_conversation`). The answer is ``{"clean": <text>,
-        "prompt_template": <hash>}``: the text as the model wrote it,
-        unchecked (`clean_words.kept_rebuilt` checks it), and the hash of
-        the conversation's skeleton for the card's sidecar. ``{}`` when the
-        model answered no JSON object; transport failures raise as in
-        `classify_capture`.
-        """
-        response = await self._llm.converse(
-            "classifier", build_conversation(writer=writer, words=words, prior=prior,
-                                             events=events),
-            json_mode=True, temperature=0.0, max_tokens=CAPTURE_MAX_TOKENS,
-        )
-        try:
-            answer = json.loads(response or "")
-        except json.JSONDecodeError:
-            logger.warning("[pipeline] rebuild: LLM returned invalid JSON: {}", (response or "")[:200])
-            return {}
-        if not isinstance(answer, dict):
-            return {}
-        return {"clean": str(answer.get("clean") or ""),
-                "prompt_template": conversation_template()}
+        return {**answer, "prompt_template": conversation_template(text=text, todos=todos)}
 
     async def reformat(
         self, ocr_text: str, *, max_chars: int = DEFAULT_CLASSIFY_MAX_CHARS,
@@ -1405,16 +1374,13 @@ def _summary_field(*, kind: str, user_hint: str | None) -> tuple[str, str]:
     return _DIGEST_SUMMARY, _DIGEST_SUMMARY_RULE
 
 
-def _content_fields(*, kind: str, clean_words: bool, classify_only: bool,
+def _content_fields(*, kind: str, clean_words: bool,
                     user_hint: str | None) -> tuple[str, str]:
     """What the answer says about the content, as JSON lines, and their rules.
 
-    A note in its writer's own words gets a clean version of them and no
-    summary or facts; a note whose corrected clean version was written
-    already gets none of them; everything else gets a summary and facts.
+    A note in its writer's own words gets a clean version, without a
+    summary or facts. Every other capture gets a summary and facts.
     """
-    if classify_only:
-        return "", ""
     if clean_words:
         return f'  "clean": "{_CLEAN_FIELD}",', _CLEAN_RULE
     summary_field, summary_rule = _summary_field(kind=kind, user_hint=user_hint)
@@ -1491,39 +1457,33 @@ def _build_capture_prompt(
     write_in: str | None = None,
     kind: str = "note",
     clean_words: bool = False,
-    classify_only: bool = False,
     topics: list[str] | None = None,
 ) -> str:
-    """The capture prompt — smaller and focused on summary + tags.
+    """The capture prompt, which asks for a summary and tags.
 
-    ``lang`` picks the worked examples, ``write_in`` the language the
-    answer is written in (a code or `SOURCE_LANGUAGE`; the examples'
-    language when not given). See `_language_rule`.
+    ``lang`` picks the worked examples. ``write_in`` is the language of the
+    answer: a code or `SOURCE_LANGUAGE`. Without it, the answer uses the
+    language of the examples (`_language_rule`).
 
-    ``kind`` is what the capture is filed as (``note``, ``bookmark``,
-    ``email``) and decides what the summary says (`_summary_field`).
-    ``clean_words`` says a note is in its writer's own words: it asks for
-    a clean version of them instead of a summary and facts
-    (`_content_fields`, `clean_words`). ``classify_only`` says the text is
-    a note's rebuilt clean version (`Classifier.rebuild_note`): it asks
-    for the title, the tags and the persons and nothing about the text.
+    ``kind`` is the type of the capture (``note``, ``bookmark`` or
+    ``email``). It decides what the summary says (`_summary_field`).
+    ``clean_words`` is true for a note in its writer's own words. The prompt
+    then asks for a clean version instead of a summary and facts
+    (`_content_fields`, `stack.filing.clean_words`).
 
-    Captures are bookmarks (URL pointers with a digest) and notes
-    (pasted text with a digest). Unlike documents, they don't carry a
-    sender, a document type, or a place in the Paperless taxonomy.
-    The user's question at retrieval time is "what was this about?"
-    The summary answers it; tags index it.
+    A capture is a bookmark (a URL with a digest) or a note (text with a
+    digest). A capture has no sender, no document type and no place in the
+    Paperless taxonomy. A person who finds a capture later asks what it was
+    about. The summary answers that question, and the tags index it.
 
-    `topics` are the household's topics the card may carry; given, the
-    tags hint lists them and the answer has a `topics` key
-    (`note_topics`). Documents and email pass none.
+    ``topics`` are the topics that the card can carry. When given, the tags
+    hint lists them and the answer has a `topics` key (`note_topics`).
+    Documents and email pass none.
 
-    `existing_tags` is the vocabulary the system already uses for
-    captures. Feeding it in biases the LLM toward consistency — the
-    second time someone saves something about LLMs, it lands under
-    the same tag as the first. New tags are still allowed when
-    nothing existing fits; the dream-cycle wiki rebuild canonicalizes
-    synonyms across the whole corpus later.
+    ``existing_tags`` are the tags that captures already use. The prompt
+    shows them, because the model then picks the same tag for the same
+    subject. The model can still add a new tag when no tag fits. The wiki
+    rebuild merges synonyms later.
     """
     existing_tags = existing_tags or []
     # The model needs an anchor to turn relative-time phrases ("this Friday",
@@ -1533,7 +1493,7 @@ def _build_capture_prompt(
     today_line = (
         f'\nToday\'s date is {today}. Use it to resolve relative-time phrases '
         f'("this Friday", "next week", "the 14th to 16th") into concrete dates.\n'
-        if today and not (clean_words or classify_only) else ""
+        if today and not clean_words else ""
     )
     # Action items are asked for only when the caller decided the note is in
     # the writer's own words (`own_words`): copied text carries its author's
@@ -1574,14 +1534,10 @@ def _build_capture_prompt(
     )
     ex = _examples_for(lang)
     content_fields, content_rules = _content_fields(
-        kind=kind, clean_words=clean_words, classify_only=classify_only, user_hint=user_hint)
-    user_context = (_note_context_block(user_hint) if clean_words or classify_only
+        kind=kind, clean_words=clean_words, user_hint=user_hint)
+    user_context = (_note_context_block(user_hint) if clean_words
                     else _user_hint_block(user_hint, lang))
     task, job, language_fields, verb = (
-        ("Tag this note",
-         "give it a title and tags that position it among their interests",
-         "title and tags", "tag")
-        if classify_only else
         ("Clean up and tag this note",
          "write it out cleanly in their own words, and give it a title and\n"
          "tags that position it among their interests",
@@ -1982,7 +1938,45 @@ async def enrich_document(
 
     if not classification:
         return EnrichResult()
+    return await apply_classification(
+        paperless=paperless, doc=doc, classification=classification, tags=tags,
+        doc_types=doc_types, correspondents=correspondents, ontology=ontology, lang=lang,
+        is_reprocess=is_reprocess, submitter_mxid=submitter_mxid, people=people)
 
+
+async def apply_classification(
+    *,
+    paperless: PaperlessAPI,
+    doc: dict,
+    classification: dict,
+    tags: dict,
+    doc_types: dict,
+    correspondents: dict,
+    ontology: "Ontology | None" = None,
+    lang: str = "en",
+    is_reprocess: bool = False,
+    submitter_mxid: str | None = None,
+    people: "list[Person] | None" = None,
+) -> EnrichResult:
+    """Write `classification` onto the Paperless document `doc`.
+
+    The method writes these fields: title, tags, type, correspondent, date
+    and the summary note. ``tags``, ``doc_types`` and ``correspondents``
+    map names to ids. They were read from Paperless before. A missing topic, person tag, type or correspondent is created.
+
+    The classification is the whole state of the document. The method
+    removes each tag that the classification does not name.
+    ``is_reprocess`` keeps the document's date.
+
+    The first filing calls this method after the classifier answered
+    (`enrich_document`). A correction calls it with the fields from the card
+    conversation (`DocumentPipeline.reprocess`).
+
+        result = await apply_classification(paperless=paperless, doc=doc,
+                                            classification={"title": "Fuel receipt", "topics": ["vehicle"]},
+                                            tags=tags, doc_types={}, correspondents={})
+        result.resolved_topics   # ['vehicle']
+    """
     result = EnrichResult(classification=classification)
     updates: dict[str, Any] = {}
 

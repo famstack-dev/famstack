@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Callable
 
 from stack.briefing import render_briefing
@@ -45,6 +46,7 @@ __all__ = [
     "render_filing_reply",
     "render_unclassified_filing_reply",
     "render_reprocessed_reply",
+    "with_unknown_people",
 ]
 
 # `t(key, **kwargs) -> str`: the archivist's translation lookup.
@@ -153,6 +155,24 @@ def render_reprocessed_reply(
         captured_at=date, language=language, correspondent=correspondent,
         facts=_amount_facts(after),
     )
+
+
+def with_unknown_people(t: Translator, reply: "Reply", names: Sequence[str]) -> "Reply":
+    """`reply` with a line that names the people that a correction asked to add.
+
+    These are the people that the person files do not hold. Without such
+    people the result is `reply` itself.
+
+    These are the people that the person files do not hold. Without such
+    people the result is `reply` itself.
+
+        with_unknown_people(t, answer, ["Lenny"]).body
+        # '🔁 Updated [Tent](...) ...\n\n❓ I do not know Lenny, so they are not on the card.'
+    """
+    if not names:
+        return reply
+    line = t("correction_unknown_persons", names=", ".join(names))
+    return Reply(f"{reply.body}\n\n{line}", reply.html + matrix_html(line))
 
 
 def render_capture_reply(

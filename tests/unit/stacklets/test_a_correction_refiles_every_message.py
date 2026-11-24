@@ -71,13 +71,9 @@ class ModelThatIsInterrupted(ModelAnswers):
         await self._answering()
         return await super().classify_capture(**asked)
 
-    async def correct_note(self, **asked):
+    async def correct_card(self, messages, *, text, todos=False):
         await self._answering()
-        return await super().correct_note(**asked)
-
-    async def rebuild_note(self, **asked):
-        await self._answering()
-        return await super().rebuild_note(**asked)
+        return await super().correct_card(messages, text=text, todos=todos)
 
 
 class HistoryDown(MemoryAPI):
@@ -436,8 +432,8 @@ async def test_a_reply_that_fixes_only_the_title_keeps_the_people_the_note_is_ab
     nobody, then the note is still about Bart: a correction changes what it names, and a person the
     note was about is not dropped for a reply that did not mention them."""
     about_bart = {**FILED, "persons": ["Bart"]}
-    retitled = {"title": "Charcoal and propane", "persons": [], "tags": [], "summary": ""}
-    chat = ChatRoom(tmp_path, memory, httpserver, ModelAnswers(about_bart, retitled))
+    chat = ChatRoom(tmp_path, memory, httpserver, ModelAnswers(about_bart))
+    chat.model.corrections.append({"title": "Charcoal and propane", "persons": [], "tags": []})
     try:
         path = await a_filed_grill_note(chat, memory)
         assert parse(memory.text(path))["persons"] == ["bart"]

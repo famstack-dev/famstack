@@ -153,11 +153,15 @@ class ModelAnswers:
     """The classifier's model: each call is answered in turn, the last answer again after that.
 
     `calls` keeps what each call was asked (`text`, `images`, `user_hint`,
-    `kind`), so a test can say what the model was shown.
+    `kind`), so a test can say what the model was shown. A correction is
+    answered from `corrections` in turn; with none left, it changes no
+    field and writes the events below the card's text.
     """
 
     def __init__(self, *answers: dict):
         self.answers, self.calls = list(answers), []
+        self.corrections: list[dict] = []
+        self.conversations: list[list[dict]] = []
 
     async def classify_capture(self, **asked):
         self.calls.append(asked)
@@ -172,13 +176,17 @@ class ModelAnswers:
         return text
 
 
-    async def correct_note(self, *, words, corrections):
-        """A note's words with the corrections worked in: the model writes both down."""
-        return {"clean": f"{words}\n\n{corrections}", "prompt_template": "correction"}
+    async def correct_card(self, messages, *, text, todos=False):
+        """What a correction changes: the next of `corrections`, else the
+        card's text with each event below it."""
+        import json
+        self.conversations.append(messages)
+        if self.corrections:
+            return dict(self.corrections.pop(0))
+        card = json.loads(messages[2]["content"])
+        events = [m["content"] for m in messages[3:-1]]
+        return {"clean": "\n\n".join([card.get("clean") or "", *events]).strip()} if text else {}
 
-    async def rebuild_note(self, *, writer, words, prior, events):
-        """A hand-edited note's clean version with the events worked in."""
-        return {"clean": "\n\n".join([prior, *events]), "prompt_template": "conversation"}
 
 
 class ModelDown:
@@ -211,12 +219,15 @@ class ChatRoom:
     """Marge's own capture room (she and the archivist), with the archivist in it.
 
     `memory` is memory's test instance, `httpserver` serves the uploads,
-    `model` answers the classifier. `bot`, `homeserver`, `pages` and
-    `model` are open for a test that needs them.
+    `model` answers the classifier. `documents`, when given, makes the
+    archivist's document pipeline from the room's mirror and vault
+    (`documents(mirror, vault)`), for a test that files a document
+    (`has_a_document`). `bot`, `homeserver`, `pages` and `model` are open
+    for a test that needs them.
     """
 
     def __init__(self, tmp_path, memory, httpserver, model: ModelAnswers, *, pages: Pages | None = None,
-                 memory_api: MemoryAPI | None = None):
+                 memory_api: MemoryAPI | None = None, documents=None):
         self.room = SimpleNamespace(
             room_id=ROOM_ID, canonical_alias=None, name=None,
             users={BOT_ID: object(), MARGE: object()})
@@ -233,7 +244,8 @@ class ChatRoom:
             homeserver=httpserver.url_for(""), user_id=BOT_ID, password="x",
             session_dir=tmp_path / "session",
             services=SimpleNamespace(capture=self.pipeline, mirror=self.mirror, vault=vault,
-                                     classifier=model, paperless=None, search=None))
+                                     classifier=model, paperless=None, search=None,
+                                     pipeline=documents and documents(self.mirror, vault)))
         self.bot._client = self.homeserver
         self._events = itertools.count(1)
         self._uploads: dict[str, bytes] = {}
@@ -333,6 +345,17 @@ class ChatRoom:
             kind="note", sender_mxid=MARGE, display_link="(pasted text)", actor=MARGE,
             capture_id="$first", sources=sources, clean_words=True)
         await self.bot._captures.reply(ROOM_ID, outcome, first.event_id)
+        return self.notices()[-1]
+
+    async def has_a_document(self, sender: str, filename: str) -> SimpleNamespace:
+        """A document `sender` sent, filed through the document pipeline and
+        answered in the room as the archivist answers a filing, in a thread
+        under the upload. Returns that answer."""
+        from stack.bot import context_for
+        upload = self._message(sender, {"msgtype": "m.file", "body": filename}, f"$upload-{filename}")
+        await self.bot._documents.file(
+            ROOM_ID, filename, filename, b"scan", reply_to=upload.event_id, submitter_mxid=sender,
+            ctx=context_for(self.room, bot_user_id=BOT_ID, config={}))
         return self.notices()[-1]
 
     # ── What the room shows ──

@@ -6,22 +6,21 @@
     if anchor and await corrections.handle(room_id, event, anchor, reply_to, ctx=ctx):
         return                                            # it was a correction
 
-A family member corrects a filing by answering it: "das ist von Marge,
-nicht von Homer" in the filing's thread, or as a quote of the filing.
-The archivist finds the filing the words are about (`anchor`), collects
-every correction of that item since it was filed, and runs the
-classification again with those words as an authoritative hint:
+A person corrects a filing with a reply in the filing's thread, or with
+a quote of the filing. For example: "this is from Marge, not Homer". The
+archivist finds the filing that the reply is about (`anchor`). It
+collects every correction of that item since the filing. Then it has the
+item corrected:
 
     reply ──> anchor: quoted filing | filing in the thread | thread off the upload
-          ──> chain: the user's words, newest first, back to the `*.filed` envelope
+          ──> chain: every correction back to the `*.filed` envelope, and its data
           ──> document: DocumentPipeline.reprocess  ──> reclassified summary
           ──> capture:  CapturePipeline.reprocess   ──> what changed, then the card
 
-Every answer goes into the same thread and carries a fresh
-`*.reclassified` envelope, because the next correction finds its
-anchor by asking the thread for the newest classification. A message
-with no words of its own, or one about nothing of ours, is handed back
-to normal routing.
+Every answer goes into the same thread with a new `*.reclassified`
+envelope. The next correction finds its anchor through the newest
+classification in the thread. A message without words of its own goes
+back to the normal routing. A message about no filing goes back too.
 """
 
 from __future__ import annotations
@@ -31,10 +30,11 @@ from typing import Callable
 from loguru import logger
 
 from stack.bot import CHECK, CROSS, EYES, RoomContext
+from stack.cards.events import Correction
 from stack.cards.sources import time_of_ms
 
-from .archivist_documents import event_date
-from .reply_presenter import render_reprocessed_reply
+from stack.filing.correction.chain import CorrectionChain
+from .reply_presenter import render_reprocessed_reply, with_unknown_people
 from .text_utils import attachment_caption, strip_reply_fallback
 
 from typing import TYPE_CHECKING
@@ -149,9 +149,8 @@ class ArchivistCorrections:
         of its own) is handed back to normal routing.
         """
         anchor_id, envelope = anchor
-        hint, initial = await self._collect_chain(
-            room_id, event, anchor_id, envelope,
-        )
+        chain = await self._collect_chain(room_id, event, anchor_id, envelope)
+        hint, initial = chain.hint, chain.latest
         if not hint:
             return False
 
@@ -163,9 +162,7 @@ class ArchivistCorrections:
         await self._acknowledge(room_id, reply_to)
         if doc_id is not None:
             await self.reprocess_document(
-                room_id, doc_id, hint, event.sender, reply_to, ctx=ctx,
-                date_filed=event_date(event),
-                initial_classification=initial,
+                room_id, doc_id, chain, event.sender, reply_to,
             )
             return True
 
@@ -194,46 +191,46 @@ class ArchivistCorrections:
 
     async def _collect_chain(
         self, room_id: str, event, anchor_id: str, anchor_envelope: dict,
-    ) -> tuple[str, dict | None]:
-        """Walk the reply chain back to the original filing; return both
-        the joined human-correction hint AND the latest classification
-        state the user was looking at when they wrote this correction.
+    ) -> "CorrectionChain":
+        """What the reply chain holds, back to the original filing (`CorrectionChain`).
 
-        Each round of correction → reclassification adds two layers to
-        the thread (user reply, bot's reclassified confirmation). We
-        walk those layers in pairs, collecting every user turn between
-        the current event and the bot's `*.filed` boundary -- beyond
-        that boundary the human's words belong to the upload's
-        caption, not to a correction.
+        The chain holds three things: every correction, the filing as
+        first made and the latest classification that the person saw.
 
-        The anchor envelope (`anchor`'s answer: the latest
-        classification of this item the user could see) carries the
-        post-correction-N state under ``data``. That's the picture the
-        human had on screen when they typed their note, so it's the
-        right anchor for "apply this correction as a delta": the LLM
-        works against what the user saw, not against the LLM's
-        untouched first pass. Each step (state_N + correction_(N+1) →
-        state_(N+1)) is deterministic; chaining them gives a
-        deterministic transform from the initial filing to the current
-        correction.
+        Each round of correction adds two messages to the thread: the
+        person's reply and the bot's answer. The walk takes them in
+        pairs. It collects every person's message between the current
+        event and the bot's `*.filed` message. The words before that
+        message are the upload's caption, not a correction.
 
-        Returned hint: numbered list when more than one correction is
-        present, plain string for a single correction.
+        The ``data`` of the anchor envelope is the latest state that the
+        person saw. A document is corrected from the first filing and
+        every correction in time order (ADR-018 §7). A capture reads the
+        corrections as one joined hint.
         """
-        bodies: list[str] = []
-        current_body = strip_reply_fallback(event.body)
-        if current_body:
-            bodies.append(current_body)
-
+        current = (event.sender, strip_reply_fallback(event.body))
         data = anchor_envelope.get("data")
-        latest_state: dict | None = data if isinstance(data, dict) else None
-        bodies.extend(await self._prior_corrections(room_id, anchor_id))
-        return (_joined_hint(bodies), latest_state)
+        latest: dict | None = data if isinstance(data, dict) else None
+        prior, filed = await self._prior_corrections(room_id, anchor_id)
+        newest_first = [c for c in (current, *prior) if c[1]]
+        return CorrectionChain(
+            hint=_joined_hint([body for _, body in newest_first]),
+            latest=latest,
+            filed=filed,
+            corrections=tuple(
+                Correction(_person_of(sender), at="", words=body)
+                for sender, body in reversed(newest_first)),
+        )
 
-    async def _prior_corrections(self, room_id: str, anchor_id: str) -> list[str]:
-        """The earlier corrections in the thread, newest first, back to
-        the bot's `*.filed` message."""
-        bodies: list[str] = []
+    async def _prior_corrections(
+        self, room_id: str, anchor_id: str,
+    ) -> tuple[list[tuple[str, str]], dict | None]:
+        """The earlier corrections in the thread, and the first filing.
+
+        The corrections are (sender, words) pairs, newest first, back to
+        the bot's `*.filed` message. The first filing is the data of that
+        message, or None when the walk does not reach it."""
+        found: list[tuple[str, str]] = []
         parent_id = anchor_id
         # Each loop iteration consumes one (bot, prior-user) pair from
         # the chain. Bounded by the framework's in_reply_to depth and a
@@ -254,7 +251,8 @@ class ArchivistCorrections:
             # `capture.{filed,reclassified}` without per-kind branches.
             env_type = envelope.get("type", "")
             if env_type.endswith(".filed"):
-                break
+                data = envelope.get("data")
+                return found, data if isinstance(data, dict) else None
             if not env_type.endswith(".reclassified"):
                 break
             grandparent_id = self._in_reply_to_id(parent)
@@ -263,10 +261,10 @@ class ArchivistCorrections:
                 break
             prior = strip_reply_fallback(getattr(grandparent, "body", "") or "")
             if prior:
-                bodies.append(prior)
+                found.append((getattr(grandparent, "sender", "") or "", prior))
             parent_id = self._in_reply_to_id(grandparent)
 
-        return bodies
+        return found, None
 
 
     @staticmethod
@@ -294,29 +292,25 @@ class ArchivistCorrections:
 
 
     async def reprocess_document(
-        self, room_id: str, doc_id: int, user_hint: str, sender_mxid: str, reply_to: str,
-        *, ctx: RoomContext, date_filed: str | None = None,
-        initial_classification: dict | None = None,
+        self, room_id: str, doc_id: int, chain: "CorrectionChain", sender_mxid: str,
+        reply_to: str,
     ) -> None:
-        """Re-enrich `doc_id` with the user's reply as a correction hint.
-        The card's commit is the replier's (`sender_mxid`), as a capture's.
+        """Correct `doc_id` with the corrections of `chain`.
 
-        The pipeline does the work and returns a ReprocessOutcome; this
-        maps it to a chat reply. The reclassified confirmation carries a
-        fresh `document.reclassified` envelope so the user can chain
-        another correction by replying to it.
+        The card's commit has the replier (`sender_mxid`) as its author,
+        as for a capture. The pipeline returns a ReprocessOutcome, and this
+        method turns it into a chat reply. The reply carries a new
+        `document.reclassified` envelope. A person can then reply to it
+        with the next correction.
 
-        Answers go back through `_answer`, so they land in the same
-        thread the correction came from. That placement is load-bearing
-        rather than tidiness: the next correction resolves its anchor by
-        asking the thread for the newest classification, so a
-        confirmation posted outside the thread would leave every later
-        correction anchored to the original filing.
+        The answers go through `_answer` into the thread of the
+        correction. The next correction finds its anchor through the
+        newest classification in the thread. An answer outside the thread
+        would tie every later correction to the original filing.
         """
         o = await self._services().pipeline.reprocess(
-            doc_id=doc_id, user_hint=user_hint, date_filed=date_filed,
-            initial_classification=initial_classification,
-            write_in=self._rooms.write_in(ctx), changed_by=sender_mxid,
+            doc_id=doc_id, corrections=chain.corrections,
+            filed=chain.filed or chain.latest, changed_by=sender_mxid,
         )
         # The terminal glyph beside the 👀 `handle` put there.
         await self._bot._react(
@@ -324,7 +318,7 @@ class ArchivistCorrections:
             CHECK if o.status == "reclassified" else CROSS,
         )
         if o.status == "reclassified":
-            answer = self._reprocessed_reply(o, initial_classification)
+            answer = self._reprocessed_reply(o, chain.latest)
             await self._bot._answer(
                 room_id, answer.body, reply_to,
                 metadata={"dev.famstack.event": o.envelope}, html=answer.html,
@@ -339,7 +333,7 @@ class ArchivistCorrections:
         envelope's data), so the line names what their note changed.
         """
         before = initial_classification or {}
-        return render_reprocessed_reply(
+        return with_unknown_people(self._bot.t, render_reprocessed_reply(
             self._bot.t,
             before={**before, "tags": before.get("topics")},
             after={**o.classification, "title": o.title,
@@ -348,12 +342,15 @@ class ArchivistCorrections:
             correspondent=o.resolved_correspondent,
             date=o.date,
             language=self._bot.language,
-        )
+        ), o.unknown_persons)
 
     def _reprocess_failed(self, o, doc_id: int) -> str:
         """Why a document could not be classified again."""
         if o.status == "doc_missing":
             return self._bot.t("reprocess_doc_missing", doc_id=doc_id)
+        if o.status == "not_changed":
+            return self._bot.t("capture_not_changed",
+                               reason=self._bot.t(f"why_{o.failure_reason or 'unknown'}"))
         kind, detail = o.llm_error
         return self._bot.t("reprocess_llm_error", doc_id=doc_id, kind=kind, detail=detail)
 
@@ -420,3 +417,8 @@ def _joined_hint(bodies: list[str]) -> str:
         "recent line supersedes earlier ones when they conflict for "
         "the same field; merge non-conflicting fields:\n" + numbered
     )
+
+
+def _person_of(mxid: str) -> str:
+    """The person id a Matrix id stands for: `@marge:simpson` is `marge`."""
+    return mxid.split(":")[0].lstrip("@").lower()

@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 
+from stack.cards.events import Correction
 from stack.lists import new_list
 from stack.memory import MemoryAPI
 from stacklets.docs.bot.document_pipeline import DocumentPipeline
@@ -79,7 +80,9 @@ NEWSLETTER = {"title": "Springfield Power Newsletter", "date": TODAY.isoformat()
 DENTAL_BILL = {"title": "Dental Bill", "date": TODAY.isoformat(),
                "correspondent": "Springfield Dental", "document_type": "Invoice",
                "persons": ["homer"], "summary": "A cleaning."}
-CORRECTED = {**DENTAL_BILL, "title": "Dental Bill for Marge", "persons": ["marge"]}
+# What the model answers to Marge's correction, as the card conversation asks.
+CORRECTED = {"title": "Dental Bill for Marge", "persons": {"add": ["Marge"], "remove": ["Homer"]}}
+MINE = 'this one is mine, call it "Dental Bill for Marge"'
 
 # Paperless's document ids, and the text it read from each letter.
 LETTERS = {45: (LETTER, "Registration for the Pin Pals. Entry fee 40.00 USD."),
@@ -142,9 +145,10 @@ class Model:
         return False
 
     async def classify(self, *, ocr_text, user_hint=None, **context):
-        if user_hint:
-            return dict(CORRECTED)
         return dict(next(c for c, text in LETTERS.values() if text == ocr_text))
+
+    async def correct_card(self, messages, *, text, todos=False):
+        return dict(CORRECTED)
 
 
 def archivist_pipeline(memory, data: Path) -> DocumentPipeline:
@@ -169,8 +173,8 @@ async def a_filing_day(pipeline: DocumentPipeline) -> list[str]:
                                    file_data=b"scan"),
             await pipeline.process(filename="dental.txt", display_name="dental.txt",
                                    file_data=b"scan", submitter_mxid="@homer:simpson")]
-    await pipeline.reprocess(doc_id=47, user_hint="this one is mine",
-                             changed_by="@marge:simpson")
+    await pipeline.reprocess(doc_id=47, corrections=[Correction("marge", "", MINE)],
+                             filed={**sent[2].envelope["data"]}, changed_by="@marge:simpson")
     return [s.envelope["data"]["card_id"] for s in sent]
 
 

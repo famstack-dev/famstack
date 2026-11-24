@@ -159,13 +159,13 @@ def _classified(**fields) -> dict:
 
 def test_marges_refile_of_a_family_note_gives_her_topics_title_as_a_keyword(memory, archivist, marge, model):
     """Given Homer's camping note in the family's bucket, when Marge refiles
-    it with `stack memory reprocess --msg` and the model answers "Homers
-    40th", then the note has the keyword `homers-40th`, never her topic's id:
-    a refile reads the topics of the note's place, not the corrector's."""
+    it with `stack memory reprocess --msg` that it is for "Homers 40th",
+    then the note has the keyword `homers-40th`, never her topic's id: a
+    refile reads the topics of the note's place, not the corrector's."""
     note = _filed(archivist, tags=["camping"], entity="family")
-    model.answers(_classified(tags=["camping", "Homers 40th"], clean=CLEAN))
+    model.answers({"tags": {"add": ["Homers 40th"]}, "clean": CLEAN})
 
-    refiled = marge.refiles(note.card_id, correction="it is for the party")
+    refiled = marge.refiles(note.card_id, correction="it is for Homers 40th")
 
     assert refiled.get("ok"), refiled
     assert _tags(memory, note.path) == ["camping", "homers-40th"]
@@ -223,15 +223,15 @@ def test_a_tag_marge_added_stays_when_lisa_corrects_the_note_in_the_chat(
         memory, archivist, marge, model):
     """Given Homer's note tagged `camping`, when Marge adds `tent` with
     `stack memory card edit` and Lisa then replies in the chat with a
-    correction, then the archivist's refile keeps Marge's tag, and the
-    correction is in the card, committed as Lisa's reply. Why: a refile
-    from the chat reads the
-    title, tags and persons again, and the bot runner has no clone to read
-    a person's edits from; it reads the card's history from the curator,
-    so a reply replays the same edits a refile at the terminal does."""
+    correction of the time, then the archivist's refile keeps Marge's tag
+    and takes the model's new tag, and the correction is
+    in the card, committed as Lisa's reply. Why: the bot runner has no
+    clone to read a person's edits from; it reads the card's history from
+    the curator, so a reply keeps the same edits a refile at the terminal
+    does."""
     note = _filed(archivist, tags=["camping"])
     marge.edits(note.card_id, "--add", "tags=tent")
-    model.answers({"clean": AT_5}, _classified(tags=["camping", "outdoors"]))
+    model.answers({"clean": AT_5, "tags": ["camping", "outdoors"]})
 
     outcome = _replies_in_the_chat(archivist, model, note, by="lisa",
                                    words="we leave at 5, not 4")
@@ -258,20 +258,20 @@ def test_a_correction_then_marges_edit_of_another_point_are_given_to_the_model_i
     rebuilt from the sources alone, it was lost. The note is refiled, not
     refused because somebody changed it by hand."""
     note = _filed(archivist, tags=["camping"])
-    model.answers({"clean": AT_5}, _classified())
+    model.answers({"clean": AT_5})
     homer.refiles(note.card_id, correction="we leave at 5, not 4")
     _edits_the_text(memory, note.path, "- Bring 3 sleeping bags.",
                     "- Bring 4 sleeping bags.", by="marge")
     rebuilt = AT_5.replace("3 sleeping", "4 sleeping")
-    model.answers({"clean": rebuilt}, _classified())
+    model.answers({"clean": rebuilt})
 
     refiled = marge.refiles(note.card_id)
 
     assert refiled.get("ok"), refiled
-    asked = model.requests[2]
+    asked = model.requests[1]
     assert [m["role"] for m in asked] == ["system", "user", "assistant", "user", "user", "user"]
     assert WORDS in asked[1]["content"] and "Homer" in asked[1]["content"]
-    assert json.loads(asked[2]["content"]) == {"clean": CLEAN}
+    assert json.loads(asked[2]["content"])["clean"] == CLEAN
     assert [m["content"] for m in asked[3:5]] == [
         "Homer: we leave at 5, not 4",
         "Marge edited the card: changed 'Bring 3 sleeping bags.' to 'Bring 4 sleeping bags.'"]

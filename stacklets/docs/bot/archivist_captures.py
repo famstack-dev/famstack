@@ -44,7 +44,7 @@ from .capture_pipeline import CaptureOutcome
 from .email_correction import EMAIL_PROVENANCE_SLUGS
 from .notifier import MatrixNotifier
 from .reasons import why
-from .reply_presenter import render_capture_correction_reply, render_capture_reply
+from .reply_presenter import render_capture_correction_reply, render_capture_reply, with_unknown_people
 
 from typing import TYPE_CHECKING
 
@@ -386,6 +386,7 @@ class ArchivistCaptures:
                 language=self._bot.language, changes=view.of_changes(_shown_changes(o.changes)),
                 source=o.display_link,
             )
+            answer = with_unknown_people(self._bot.t, answer, o.unknown_persons)
             reply, html = answer.body, answer.html
         else:
             reply = render_capture_reply(

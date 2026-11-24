@@ -107,14 +107,15 @@ class _AnsweredClassifier:
         self.answered = bool(answer)
         return answer
 
-    async def correct_note(self, **kwargs) -> dict:
-        """The corrected text comes before the classification, which
-        alone says whether the model answered."""
-        return await self._classifier.correct_note(**kwargs)
+    async def correct_card(self, messages, *, text: bool, todos: bool = False) -> dict:
+        """The model's answer to the card conversation.
 
-    async def rebuild_note(self, **kwargs) -> dict:
-        """As `correct_note`, for a note a person edited."""
-        return await self._classifier.rebuild_note(**kwargs)
+        A corrected note gets only this answer. It therefore shows whether the
+        model answered.
+        """
+        answer = await self._classifier.correct_card(messages, text=text, todos=todos)
+        self.answered = bool(answer)
+        return answer
 
 
 def _history(request: dict) -> CardHistory | None:
@@ -198,6 +199,9 @@ async def run(paperless: PaperlessAPI, classifier: Classifier, argv: list[str]) 
         vault_path=path, user_hint="", sender_mxid=by or filer or "archivist-bot",
         note=note, chat=chat, added=added,
         requested_by=by.split(":")[0].lstrip("@") or filer,
+        # The host's `--apply` writes only the card and puts nothing on a topic's
+        # list. The model is therefore not asked for to-dos.
+        todos=False,
     )
     if not model.answered or preview.entry is None:
         err(f"No proposal for {path}: the model gave no answer ({outcome.status}).")

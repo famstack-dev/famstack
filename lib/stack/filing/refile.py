@@ -46,7 +46,7 @@ write tells the person.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from ..cards.events import Correction, Event, in_order, name_of
 from ..cards.history import CardHistory
@@ -100,17 +100,29 @@ class NoteRead:
 
 @dataclass(frozen=True)
 class Rebuild:
-    """What a note's clean version is rebuilt from (ADR-018 §7): who wrote
-    the note, as a name; the clean version the events apply to; the
-    corrections and a person's edits, in time order (`stack.cards.events`).
+    """What a corrected note is rebuilt from (ADR-018 §7).
+
+    It holds five things:
+
+    - the name of the note's writer;
+    - the clean version that the events apply to;
+    - the corrections and edits of people, in time order (`stack.cards.events`);
+    - the card's fields as the card holds them (`title`, `tags`, `persons`,
+      `date`), which keep their values where no event names them;
+    - the clean version that the card shows now, with the edits of people.
+
+    An answer without a new text keeps the last one.
 
         Rebuild("Homer", "Camping trip next weekend: ...",
-                (Correction("homer", "2026-10-20T09:00:00+00:00", "we leave at 5, not 4"),))
+                (Correction("homer", "2026-10-20T09:00:00+00:00", "we leave at 5, not 4"),),
+                {"title": "Camping trip", "tags": ["camping"], "persons": ["homer"]})
     """
 
     writer: str
     prior: str
     events: tuple[Event, ...]
+    fields: dict = field(default_factory=dict)
+    current: str = ""
 
     def said(self) -> str:
         """Each event's message, one per line, as the model reads it."""
@@ -205,7 +217,8 @@ def refiling_of(note: NoteRead, sources: Sequence[Source]) -> Refiling:
     clean = bool(words.strip()) and not _shows_a_summary(note.text)
     return Refiling(
         sources=tuple(sources), words=words, clean=clean, corrections=corrections_of(sources),
-        rebuild=_rebuild_of(first, sources, note.history) if clean and first else None,
+        rebuild=_rebuild_of(first, sources, note.history, note.fields,
+                            interpretation_of(note.text)) if clean and first else None,
         images=tuple(s.media_link for s in sent if s.kind == "image" and s.media_link),
         filer=_filer(read_sidecar(note.sidecar), first),
         capture_id=first.id if first else "",
@@ -296,15 +309,21 @@ def _shows_a_summary(card_text: str) -> bool:
     return interpretation_of(card_text).lstrip().startswith(SUMMARY_CALLOUT)
 
 
-def _rebuild_of(first: Source, sources: Sequence[Source], history: CardHistory | None) -> Rebuild | None:
-    """What a clean-version note is rebuilt from; None when nobody corrected
-    or edited it, and it is filed again from its words alone.
+def _rebuild_of(first: Source, sources: Sequence[Source], history: CardHistory | None,
+                card: dict, shown: str = "") -> Rebuild | None:
+    """What a note with a clean version is rebuilt from.
 
-    The events are every correction the sources hold and, from the
-    history, every person's edit of the clean version, from the clean
-    version before the first of them. Without a history there are no
-    edits, and the corrections alone are worked in. The clean version is
-    "" for a note that shows none (the reader gives it one first).
+    None when nobody corrected or edited the note. The note is then filed
+    again from its words alone.
+
+    The events are every correction in the sources and every edit of the
+    clean version in the history. The edits start from the clean version
+    before the first edit. Without a history there are no edits, and only
+    the corrections apply.
+
+    The clean version is "" for a note that shows none, and the reader
+    then makes one first. The fields and ``shown`` are the card's values
+    as the card holds them now. ``shown`` is the clean version.
     """
     said = [Correction(s.person, s.time, s.words) for s in sources
             if s.role in (REPLY, NOTE) and s.words]
@@ -313,7 +332,9 @@ def _rebuild_of(first: Source, sources: Sequence[Source], history: CardHistory |
     if not events:
         return None
     start = "" if prior.lstrip().startswith(">") else prior.strip()
-    return Rebuild(name_of(first.person), start, tuple(events))
+    fields = {key: card[key] for key in ("title", "tags", "persons", "date") if key in card}
+    current = "" if shown.lstrip().startswith(">") else shown.strip()
+    return Rebuild(name_of(first.person), start, tuple(events), fields, current)
 
 
 def _filer(sidecar: dict, first: Source | None) -> str:

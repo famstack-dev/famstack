@@ -73,15 +73,19 @@ __all__ = ["Filing", "Directory", "Reader", "Reading", "Writer", "file"]
 class Reading:
     """The model's answer for a capture, as the intake's reader gives it.
 
-    ``classification`` is the answer (title, summary, tags, topics, persons,
-    action items), without the reader's own keys. ``clean`` is a note's
-    clean version, None when it has none; ``clean_rejected`` why one was
-    dropped. ``made_by`` is the sidecar's `made` entries the reader adds
-    (the template that rebuilt a note). ``model`` and ``template`` name what
-    made the answer. ``degraded`` says why it is not the model's ("" when it is).
-    ``said`` is what the model wrote about the capture that the card does not
-    keep (a clean note's summary): the people it names are on the card all the
-    same, as they are on a diary entry from the same words.
+    ``classification`` is the answer without the reader's own keys: title,
+    summary, tags, topics, persons and action items. ``clean`` is a note's
+    clean version, or None. ``clean_rejected`` is the reason for a dropped
+    clean version. ``made_by`` holds the `made` entries that the reader adds
+    to the sidecar, such as the template that rebuilt a note. ``model`` and
+    ``template`` name what made the answer.
+
+    ``degraded`` is the reason when the answer is not the model's, and ""
+    otherwise. ``said`` is text of the model that the card does not keep,
+    such as a clean note's summary. The core finds the people of the note in
+    it. ``unknown`` names the people that a correction asked to add and that
+    the person files do not hold. They are not on the card, and the reply
+    names them.
 
         Reading({"title": "Grill charcoal", "tags": ["grill"]}, model="qwen3")
     """
@@ -94,6 +98,7 @@ class Reading:
     template: str = ""
     degraded: str = ""
     said: str = ""
+    unknown: tuple[str, ...] = ()
 
 
 class Reader(Protocol):
@@ -146,14 +151,21 @@ class Writer(Protocol):
 class Filing:
     """What filing a capture did.
 
-    ``status`` is `filed`, `not_filed` (nothing written, ``reason`` says
-    why), `not_changed` (a correction that wrote nothing), or `on_file`
-    (a note whose message the memory holds already: nothing written,
-    ``filed`` and ``classification`` are the card as it is). ``filed`` is
-    where the card is. ``classification`` is what the card now holds: the
-    answer with the card's people and tags as written. ``entity`` is the
-    card's place, the topic's new one after a rename. A not-changed
-    correction from a degraded reading carries no classification.
+    ``status`` is one of these:
+
+    | Status | Meaning |
+    |---|---|
+    | `filed` | The card is written. |
+    | `not_filed` | Nothing is written. ``reason`` says why. |
+    | `not_changed` | A correction wrote nothing. |
+    | `on_file` | The memory already holds the note's message. Nothing is written. |
+
+    ``filed`` is where the card is. ``classification`` is what the card now
+    holds: the answer with the card's people and tags as written. For
+    `on_file`, both are the card as it is. ``entity`` is the card's place,
+    which after a rename is the topic's new place. A `not_changed` result of
+    a degraded reading has no classification. ``unknown`` names the people
+    of the reading that the person files do not hold.
 
         filing.status, filing.entity, filing.filed.path
         # ('filed', 'family/camping', 'family/camping/notes/2026/11/tent-3a338e.md')
@@ -166,6 +178,7 @@ class Filing:
     reason: str = ""
     clean_rejected: str = ""
     captured_at: str = ""
+    unknown: tuple[str, ...] = ()
 
 
 # ── Filing ────────────────────────────────────────────────────────────
@@ -263,7 +276,7 @@ async def file(capture: Capture, policy: Policy, *, reader: Reader, writer: Writ
     if filed.card is not None:
         classification = {**classification, **filed.card}
     return Filing("filed", entity, classification, filed, clean_rejected=reading.clean_rejected,
-                  captured_at=captured_at)
+                  captured_at=captured_at, unknown=reading.unknown)
 
 
 # ── The place and the people ──────────────────────────────────────────

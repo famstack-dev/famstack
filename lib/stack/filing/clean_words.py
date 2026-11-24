@@ -1,30 +1,33 @@
-"""A note's clean version: the writer's words, tidied, and checked in code.
+"""clean_words: a note's clean version, the writer's words tidied and checked in code.
 
-People jot things down the way they type in a chat: one run-on line,
-shorthand, no capitals, a list written as a sentence. A summary of such
-a note says the same again in other words, and its facts restate it line
-by line, so the card read long and awkward. A note written in a person's
-own words is filed as a clean version of those words instead: paragraphs,
-list items where the text is a list, spelling and punctuation fixed, in
-the note's own language, nothing added, nothing dropped. The words
-themselves follow on the card, as a quote.
+A **clean version** is a note's own words, tidied: paragraphs, list items
+where the text is a list, and correct spelling and punctuation. It is in
+the note's own language. It adds nothing and drops nothing. The card
+shows the words below it, as a quote.
 
-The model is asked for that, and what it answers is checked here before
-it is filed, because a tidy text that dropped "200" from "budget max 200"
-reads as if it were complete. Every number and every capitalised name of
-the note must be in the clean version, and the clean version may not
-carry a number the note does not. A correction the family wrote (a reply,
-or `--msg` on a reprocess) may change both: a value it mentions, or one it
-gives in place of another, counts as the writer's (`problems` states the
-rule). A clean version that fails is not filed; the card shows the words
-alone, and the log says what was lost.
+People write a note as they type in a chat: one long line, shorthand, no
+capitals. A summary of such a note says the same in other words. A note
+in its writer's own words therefore gets a clean version instead of a
+summary.
 
-A note with corrections or a person's edits is rebuilt from its events
-(`note_correction` for corrections alone, `card_conversation` when a
-person edited it), and checked by the same rule, cut down to it
-(`kept_rebuilt`): every number and name of the words is in the rebuilt
-clean version, unless a correction or an edit replaced it. Beyond that a
-rebuild is not refused for its wording (ADR-018 §7).
+The model writes the clean version. This module checks it before the
+card is written, because a tidy text without the "200" of "budget max
+200" looks complete. The rule is in `problems`:
+
+- Every number and every capitalised name of the note is in the clean
+  version.
+- The clean version holds no number that the note does not hold.
+- A correction can change both. A value that a correction mentions or
+  gives counts as the writer's.
+
+A clean version that fails the check is not written. The card then
+shows the words alone, and the log names what was lost.
+
+A note with corrections or edits is rebuilt from its events, in the card
+conversation (`stack.filing.correction.conversation`). The rebuilt text
+gets a shorter form of the same rule (`kept_rebuilt`). Every number and
+name of the words is in it, unless a correction or an edit replaced it.
+A rebuild is not refused for its wording (ADR-018 §7).
 
     >>> kept("ok budget max 200, ask Homer", "Budget: at most 200. Ask Homer.")
     ('Budget: at most 200. Ask Homer.', '')
@@ -34,16 +37,15 @@ rebuild is not refused for its wording (ADR-018 §7).
     ...      corrections="Marge: budget is 250 now")
     ('Budget: at most 250. Ask Homer.', '')
 
-Pure functions, no I/O.
+The module holds pure functions and has no I/O.
 """
 
 from __future__ import annotations
 
 import re
 
-# How a note's words are cleaned up, in the words of both prompts that
-# write a clean version from them: the capture prompt (`pipeline`) and the
-# correction prompt (`note_correction`), so the two write alike.
+# How a note's words are tidied, as the prompts say it. The capture prompt
+# writes a note's first clean version, and the card conversation rebuilds it.
 TIDY = (
     "Fix spelling, punctuation and capitalisation, write chat shorthand and "
     "abbreviations out, split run-on text into short paragraphs, and write a "
@@ -51,28 +53,28 @@ TIDY = (
     "short intro line when the note has one."
 )
 
-# Up to this many characters a note gets a clean version. Typed into a
-# chat or said into a phone, a note is rarely longer; a longer text is
-# usually pasted from somewhere else, and its reader is better served by
-# the digest a summary gives than by the whole text again.
+# The longest note that gets a clean version, in characters. A typed or
+# spoken note is rarely longer. A longer text is usually pasted, and a
+# summary serves its reader better than the whole text again.
 CLEAN_MAX_CHARS = 2000
 
-# A number standing on its own, or leading a word ("4pm", "2nd"). One that
-# follows a letter is part of a word ("b4", "mp3") and may be written out.
+# A number on its own, or at the start of a word ("4pm", "2nd"). A number
+# after a letter is part of a word ("b4", "mp3"), and the model can write
+# that word out.
 _NUMBER = re.compile(r"(?<![^\W\d_])\d+")
 _WORD = re.compile(r"[^\W\d_]+")
 # What may stand between a sentence's end and its first word: spaces,
 # list markers, opening quotes and brackets.
 _LEAD = " \t-*•\"'(["
 _SENTENCE_END = ".!?:\n"
-# The card file closes with the words as a quote and the replies under
-# their own heading, and both are read back from those lines; a clean
-# version with either would be read as one of them.
+# The card file ends with the words as a quote and the replies under a
+# heading. Both are read back from those lines. A clean version with a
+# heading or a quote line is refused, because it would be read as one.
 _STRUCTURE = re.compile(r"^\s*[#>]", re.MULTILINE)
 
 
 def is_cleanable(words: str) -> bool:
-    """Whether a note's own words get a clean version: some, and not too many.
+    """Whether a note's words get a clean version: they are not empty and not too long.
 
         >>> is_cleanable("buy milk b4 sat")
         True
@@ -85,10 +87,11 @@ def is_cleanable(words: str) -> bool:
 def kept(words: str, clean: str, *, corrections: str = "") -> tuple[str, str]:
     """The clean version to file for `words`, and why there is none.
 
-    ``("", "")`` when the model answered none or the words needed no
-    cleaning: the card shows them once. ``("", reason)`` when it fails
-    the check (`problems`), or carries a heading or a quote.
-    ``corrections`` is what the family wrote to correct the note.
+    ``("", "")`` when the model answered none, or when the words need no
+    tidying. The card then shows the words once. ``("", reason)`` when
+    the clean version fails the check (`problems`). It also fails when it
+    holds a heading or a quote line. ``corrections`` is the text of the
+    corrections of the note.
     """
     clean = (clean or "").strip()
     if not clean or same_words(words, clean):
@@ -103,10 +106,11 @@ def starting_point(words: str, answered: str) -> str:
     """The clean version a rebuild starts from, for a card that shows none.
 
     ``answered`` is what the capture prompt wrote for the words. A card
-    shows no clean version when it would only repeat the words with other
-    capitals, punctuation and list markers (`kept`); a rebuild still starts
-    from that tidy text, since the model keeps the shape of the version it
-    is given. A text that fails the check is not started from: the words are.
+    shows no clean version when it only repeats the words with other
+    capitals and punctuation (`kept`). A rebuild still starts from that
+    tidy text, because the model keeps the shape of the text it gets. A
+    text that fails the check is not used. The rebuild then starts from
+    the words.
 
         >>> starting_point("packing:\\ntowels", "Packing:\\n- Towels")
         'Packing:\\n- Towels'
@@ -122,11 +126,12 @@ def starting_point(words: str, answered: str) -> str:
 def kept_rebuilt(words: str, clean: str, *, events: str) -> tuple[str, str]:
     """The rebuilt clean version to file for `words`, and why there is none.
 
-    ``clean`` is what the rebuild answered; ``events`` what the
-    corrections and the person's edits say, one per line
-    (`stack.cards.events.text_of`). It is refused when it is empty, since the
-    conversation has no "needs no change" to answer, or when it fails
-    `rebuild_problems`; otherwise as `kept`.
+    ``clean`` is the text that the rebuild answered. ``events`` is the
+    text of the corrections and edits, one per line
+    (`stack.cards.events.text_of`). An empty text is refused, because the
+    conversation always asks for the whole text. A text that fails
+    `rebuild_problems` is refused too. Otherwise the result is as for
+    `kept`.
 
         >>> kept_rebuilt("budget max 200", "Budget: at most 300.",
         ...              events="budget is 250\\nno, 300")
@@ -149,14 +154,17 @@ def kept_rebuilt(words: str, clean: str, *, events: str) -> tuple[str, str]:
 def rebuild_problems(words: str, clean: str, *, events: str) -> list[str]:
     """What a rebuilt clean version lost of `words`, or added to them.
 
-    The rule of the first filing (`problems`), less what the events
-    replaced: a number or name of the words that is not in the clean
-    version is lost, unless an event mentions it (an edit names the line
-    it changed; "5, not 4"), or the events give a new value of its kind,
-    number for number and name for name, that the clean version carries
-    ("the budget is 250 now"). Several events may change one value in
-    turn, so no value an event gives is required, and none stands in for
-    just one lost value. A number of the clean version that neither the
+    The rule is the rule of the first filing (`problems`), without the
+    values that the events replaced. A number or name of the words that
+    is not in the clean version is lost, with two exceptions:
+
+    - an event mentions it, for example "5, not 4";
+    - the events give a new value of the same kind, and the clean version
+      holds it ("the budget is 250 now").
+
+    Several events can change one value in turn. A value that an event
+    gives is therefore not required, and one new value excuses every lost
+    value of its kind. A number of the clean version that neither the
     words nor the events hold is added.
     """
     gives_number = any(_has(clean, n) and not _has(words, n) for n in _numbers(events))
@@ -185,20 +193,19 @@ def same_words(words: str, clean: str) -> bool:
 def problems(words: str, clean: str, *, corrections: str = "") -> list[str]:
     """What the clean version lost of `words`, or added to them.
 
-    The rule, decided from the sources alone (the note's words and the
-    corrections the family gave it, replies and refile notes):
+    The rule uses the sources alone: the note's words and its
+    corrections, from replies and refile notes.
 
-    - Every number of the words, and every capitalised word that does not
-      open a sentence (a name, in most languages; every noun in some,
-      which only makes the check stricter), is in the clean version,
-      unless a correction says otherwise. A correction says otherwise
-      when it mentions the old value ("250, not 200"), or when it gives a
-      new value of the same kind, number for number and name for name,
-      that the clean version carries and the words do not ("the budget
-      is 250 now"). Each such new value stands in for one lost value, so
-      a correction that gives one amount cannot excuse two lost ones.
+    - Every number of the words is in the clean version.
+    - Every capitalised word that does not start a sentence is in the
+      clean version. In most languages that word is a name.
+    - A correction can excuse a lost value. It excuses the value when it
+      mentions the old value ("250, not 200").
+    - A correction also excuses a lost value with a new value of that
+      kind ("the budget is 250 now"). The clean version must hold it. Each new value excuses one lost value, because one new
+      amount cannot replace two.
     - Every number of the clean version is in the words or in a
-      correction: the model may not add one.
+      correction, because the model must not add a number.
 
     Anything else is a problem, named as `lost <value>` or `added <value>`.
     """

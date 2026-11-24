@@ -16,6 +16,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+from stack.cards.events import Correction  # noqa: E402
 from stacklets.docs.bot.document_pipeline import DocumentPipeline  # noqa: E402
 from stacklets.docs.bot.git_mirror import Filed  # noqa: E402
 from stacklets.docs.bot.pipeline import PaperlessDuplicateError  # noqa: E402
@@ -55,6 +56,16 @@ class FakePaperless:
     async def get_correspondents(self):
         return {}
 
+    async def update_doc(self, doc_id, updates):
+        self.updated = updates
+        return True
+
+    async def list_notes(self, doc_id):
+        return []
+
+    async def add_note(self, doc_id, text):
+        return None
+
 
 class FakeMirror:
     """A memory that does not answer: it takes the filing and writes no card."""
@@ -64,6 +75,9 @@ class FakeMirror:
 
     async def publish(self, **kwargs):
         self.published.append(kwargs)
+        return None
+
+    async def document_version(self, paperless_id):
         return None
 
 
@@ -220,13 +234,16 @@ class TestResumingAnUnfinishedFiling:
         assert out.status == "duplicate"
 
 
+GLOBEX = Correction("marge", "", "it's from Globex")
+
+
 class TestReprocess:
 
     @pytest.mark.asyncio
     async def test_doc_missing(self):
         # The doc the reply targets was deleted — reprocess can't enrich it.
         pipe = _pipeline(FakePaperless(doc=None))
-        out = await pipe.reprocess(doc_id=99, user_hint="it's from Globex")
+        out = await pipe.reprocess(doc_id=99, corrections=[GLOBEX], filed=None)
         assert out.status == "doc_missing"
         assert out.doc_id == 99
 
@@ -304,6 +321,9 @@ class _LanguageRecordingClassifier(FakeClassifier):
         self.write_in.append(kwargs.get("write_in"))
         return {}
 
+    async def correct_card(self, messages, *, text, todos=False):
+        return {"title": "Urlaub Valencia"}
+
 
 SPANISH_INVOICE = {
     "id": 5, "tags": [], "document_type": None,
@@ -372,16 +392,6 @@ class TestTheRoomsLanguageReachesTheClassifier:
         assert classifier.write_in == ["en"]
 
     @pytest.mark.asyncio
-    async def test_a_correction(self):
-        classifier = _LanguageRecordingClassifier()
-        pipeline = _pipeline(FakePaperless(doc_id=5, doc=SPANISH_INVOICE),
-                             mirror=FakeMirror(), classifier=classifier,
-                             vault=VaultContext(language="en", shared_bucket="family"))
-        await pipeline.reprocess(doc_id=5, user_hint="Urlaub Valencia",
-                                 write_in="source")
-        assert classifier.write_in == ["source"]
-
-    @pytest.mark.asyncio
     async def test_a_correction_returns_what_its_answer_shows(self):
         """The answer shows the new classification and the document's day.
         The link is the document's, since the fake mirror writes no card."""
@@ -389,8 +399,10 @@ class TestTheRoomsLanguageReachesTheClassifier:
         pipeline = _pipeline(FakePaperless(doc_id=5, doc=dated),
                              mirror=FakeMirror(), classifier=_LanguageRecordingClassifier(),
                              vault=VaultContext(language="en", shared_bucket="family"))
-        out = await pipeline.reprocess(doc_id=5, user_hint="Urlaub Valencia")
+        out = await pipeline.reprocess(
+            doc_id=5, corrections=[Correction("marge", "", 'the title is "Urlaub Valencia"')],
+            filed={"title": "Factura Hotel Playa Sol", "topics": [], "persons": []})
         assert out.status == "reclassified"
-        assert out.classification is not None
+        assert out.classification["title"] == "Urlaub Valencia"
         assert out.link.endswith("/go/docs/5")
         assert out.date == "2026-03-15"

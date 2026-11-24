@@ -21,8 +21,9 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
-from stack.bot import context_for  # noqa: E402
+from stack.cards.events import Correction  # noqa: E402
 from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
+from stack.filing.correction.chain import CorrectionChain  # noqa: E402
 
 BOT_ID = "@archivist-bot:server"
 DOC_ID = 42
@@ -53,6 +54,10 @@ def bot(tmp_path, pipeline):
     return bot
 
 
+# The document as the person saw it when they corrected it.
+SEEN = {"title": "Auto Insurance Policy 2026", "persons": ["Homer"], "topics": ["insurance"]}
+
+
 def _outcome():
     return SimpleNamespace(
         status="reclassified", doc_id=DOC_ID,
@@ -63,6 +68,7 @@ def _outcome():
         link=CARD_LINK,
         envelope={"source": "docs", "type": "document.reclassified",
                   "data": {"paperless_id": DOC_ID, "persons": ["Marge"]}},
+        unknown_persons=(),
     )
 
 
@@ -79,11 +85,9 @@ async def test_a_corrected_document_answers_as_a_short_card_with_the_card_folded
 
     pipeline.reprocess = _reprocess
     await bot._corrections.reprocess_document(
-        "!docs:server", DOC_ID, "this is Marge's", "@marge:server", "$upload",
-        ctx=context_for(SimpleNamespace(room_id="!docs:server"),
-                        bot_user_id=bot.user_id, config={}),
-        initial_classification={"title": "Auto Insurance Policy 2026",
-                                "persons": ["Homer"], "topics": ["insurance"]},
+        "!docs:server", DOC_ID, CorrectionChain(
+            "this is Marge's", SEEN, SEEN, (Correction("marge", "", "this is Marge's"),)),
+        "@marge:server", "$upload",
     )
 
     assert asked["changed_by"] == "@marge:server", "the correction is the replier's change"

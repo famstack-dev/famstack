@@ -127,7 +127,8 @@ class Household:
 
     def _answer(self, messages: list[dict]) -> str:
         prompt = messages[-1]["content"]
-        self.prompts.append(prompt)
+        # A conversation is kept whole, so a test reads all the model was shown.
+        self.prompts.append("\n\n".join(m["content"] for m in messages[1:]) if len(messages) > 2 else prompt)
         if prompt.startswith(_DIARY_ROOM_READING):
             count = len(re.findall(r"^\[\d+\] ", prompt, re.M))
             return json.dumps({"messages": [{"n": n, "mode": "note"} for n in range(1, count + 1)]})
@@ -143,10 +144,12 @@ class Household:
                                "summary": words if self._summary is None else self._summary,
                                "tags": self._tags, "persons": self._persons,
                                "topics": self._tags if self._topics is None else self._topics})
-        if prompt.startswith("Correct a note."):
-            # No clean version: the correction is then read as user context
-            # by the capture prompt, which names the people and the tags.
-            return json.dumps({"clean": ""})
+        if "Answer what the events change" in prompt:
+            # The card conversation: the people and tags it names now, as
+            # whole lists, and a note's clean version as the card holds it.
+            card = json.loads(messages[2]["content"])
+            answer = {"persons": self._persons, "tags": [*self._tags, *(self._topics or [])]}
+            return json.dumps({**answer, "clean": card["clean"]} if "clean" in card else answer)
         if prompt.startswith("Write the opening paragraph"):
             return "A month of camping and quilting."
         self.unknown.append(prompt[:80])

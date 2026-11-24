@@ -567,9 +567,9 @@ family/itchy-scratchy-land/notes/2026/10/lisa-s-sax-lesson-7903f2.json
   `note` for one given to a refile), never a change to an old one.
 - **Card and sidecar change together, in one commit.**
 
-`made.correction_template` is present when a refile worked corrections in.
-A rebuild with the card conversation (ADR-018 §7) may record
-`conversation_template` instead.
+`made.conversation_template` is present when a refile worked corrections
+or edits in with the card conversation (ADR-018 §7). Cards rebuilt by
+earlier versions may record `correction_template` instead.
 
 ## Media
 

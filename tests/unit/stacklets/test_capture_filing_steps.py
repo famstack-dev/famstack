@@ -8,6 +8,7 @@ the rest, one step each:
 
 - an email's correction is the corrector's commit;
 - a correction puts a note's to-do on its topic's list once, linked to the note;
+- a to-do the correction's words do not name stays off the list;
 - a correction's event carries what the person wrote;
 - an email keeps the names it was read with, because its sender is the mail bot.
 
@@ -141,17 +142,20 @@ async def test_a_correction_puts_the_notes_todo_on_the_list_once_linked_to_the_n
     """Given Marge's note in the camping room with nothing to do in it, when
     a correction makes it say "Call the campsite", then the camping list
     gets that item, linked to the note's card where it is; when a second
-    correction words it differently, the list still holds it once. The model
-    words an item differently each time, and the family may have ticked it."""
+    correction words it differently, the list still holds it once, and a
+    third that names nothing to do takes nothing off. The model words an
+    item differently each time, and the family may have ticked it."""
     first = {"title": "Campsite", "summary": "", "facts": [], "action_items": []}
-    pipeline = a_pipeline(tmp_path, memory, ModelAnswers(
-        first, {**first, "action_items": ["Call the campsite"]},
-        {**first, "action_items": ["Phone the campsite"]}))
+    model = ModelAnswers(first)
+    model.corrections += [{"clean": f"Campsite before Friday. {todo}.", "action_items": [todo]}
+                          for todo in ("Call the campsite", "Phone the campsite")]
+    model.corrections.append({"date": "2026-11-27"})
+    pipeline = a_pipeline(tmp_path, memory, model)
     filed = await pipeline.capture_text(text="campsite b4 fri", sender_mxid=MARGE,
                                         capture_id="$campsite", bucket="family/camping",
                                         seed_topics=["camping"])
 
-    for at, words in (("09:00", "call them"), ("10:00", "phone them")):
+    for at, words in (("09:00", "call them"), ("10:00", "phone them"), ("11:00", "it is the 27th")):
         await pipeline.reprocess(vault_path=filed.vault_path, user_hint=words, sender_mxid=MARGE,
                                  capture_id="$campsite", reply_text=words, reply_id=f"$reply-{at}",
                                  reply_at=f"2026-11-22T{at}:00+00:00")
@@ -159,4 +163,88 @@ async def test_a_correction_puts_the_notes_todo_on_the_list_once_linked_to_the_n
     camping = memory.text(list_path("camping", bucket="family"))
     assert [line for line in camping.splitlines() if line.startswith("- [ ]")] == [
         f"- [ ] Call the campsite [Campsite](../{filed.vault_path.removeprefix('family/')})"]
+    assert "Call the campsite" in model.conversations[-1][-1]["content"], "a later one is shown the list"
     assert parse(memory.text(filed.vault_path))["tags"][0] == "camping"
+
+
+async def test_a_todo_the_correction_does_not_name_stays_off_the_list(tmp_path, memory):
+    """Given Marge's bake-sale note in the school room, when Lisa corrects
+    the number of cups and the model answers a to-do about Bart, then the
+    school list stays as it was: no word of that item stands in the
+    correction. A wrong item on the family's list is worse than a missing one."""
+    first = {"title": "Bake sale", "summary": "", "facts": [], "action_items": []}
+    model = ModelAnswers(first)
+    model.corrections.append({"clean": "Bake sale on Friday. We need 50 cups.",
+                              "action_items": ["Bart helps at the stand"]})
+    pipeline = a_pipeline(tmp_path, memory, model)
+    filed = await pipeline.capture_text(text="bake sale fri, we need 30 cups", sender_mxid=MARGE,
+                                        capture_id="$bake", bucket="family/school",
+                                        seed_topics=["school"])
+
+    await pipeline.reprocess(vault_path=filed.vault_path, user_hint="it's 50 cups",
+                             sender_mxid=MARGE, capture_id="$bake", reply_text="it's 50 cups",
+                             reply_id="$reply-cups", reply_at="2026-11-22T09:00:00+00:00")
+
+    school = memory.text(list_path("school", bucket="family")) or ""
+    assert "Bart helps" not in school
+
+
+async def test_a_corrected_fact_from_a_voice_message_lands_in_the_text_and_the_rest_stays(
+        tmp_path, memory):
+    """Given Marge's voice message about Bart's school trip, which the
+    transcript heard as 30 euros, when she replies that it is 13 euros, then
+    the card's text says 13 euros and still says to pay by Friday and to
+    pack a lunch. Most corrections are such a fact in the content."""
+    transcript = "Bart's school trip costs 30 euros, we pay by Friday, and he needs a packed lunch."
+    first = {"title": "School trip", "summary": "", "facts": [], "action_items": [],
+             "clean": "Bart's school trip costs 30 euros. Pay by Friday. He needs a packed lunch."}
+    model = ModelAnswers(first)
+    model.corrections.append(
+        {"clean": "Bart's school trip costs 13 euros. Pay by Friday. He needs a packed lunch."})
+    pipeline = a_pipeline(tmp_path, memory, model)
+    filed = await pipeline.capture_text(text=transcript, sender_mxid=MARGE, capture_id="$trip",
+                                        bucket="family/school", seed_topics=["school"],
+                                        transcribed=True)
+
+    await pipeline.reprocess(vault_path=filed.vault_path, user_hint="it's 13 euros, not 30",
+                             sender_mxid=MARGE, capture_id="$trip",
+                             reply_text="it's 13 euros, not 30", reply_id="$reply-13",
+                             reply_at="2026-11-22T09:00:00+00:00")
+
+    body = (memory.text(filed.vault_path) or "").split("## Sources")[0]
+    assert "13 euros" in body and "30 euros" not in body
+    assert "Pay by Friday" in body and "packed lunch" in body
+
+
+THE_FAMILY = ["Homer", "Marge", "Bart", "Lisa"]
+
+
+@pytest.mark.parametrize(("filed_with", "words", "answered", "persons"), [
+    (["Homer"], "Marge was there too", ["Marge"], ["homer", "marge"]),
+    (THE_FAMILY, "only me", {"remove": ["Marge", "Bart", "Lisa"]}, ["homer"]),
+    (THE_FAMILY, "Marge and Bart were there", {"remove": ["Homer", "Lisa"]}, ["marge", "bart"]),
+    (THE_FAMILY, "it was 13 euros, not 30", {"remove": ["Marge"]}, ["homer", "marge", "bart", "lisa"]),
+])
+async def test_a_correction_says_who_was_there_and_only_then_the_people_change(
+        tmp_path, memory, filed_with, words, answered, persons):
+    """Given Homer's note, when he corrects who was there, then the people
+    are the card's with the model's additions and its explicit removals: a
+    whole list answered ("Marge" for "Marge was there too") only adds, so
+    nobody is lost by the model leaving them out. When he corrects a fact
+    and names nobody, the people stay as they were, whatever the model
+    answers. The model often puts the whole family on a card, and a
+    correction is how it is set right."""
+    first = {"title": "Texxon", "summary": "", "facts": [], "action_items": [],
+             "persons": filed_with, "clean": "Fuel at Texxon, 30 euros."}
+    model = ModelAnswers(first)
+    model.corrections.append({"persons": answered})
+    pipeline = a_pipeline(tmp_path, memory, model)
+    filed = await pipeline.capture_text(text="fuel at texxon 30 euros", sender_mxid="@homer:simpson",
+                                        capture_id="$fuel", bucket="family")
+    assert len(parse(memory.text(filed.vault_path))["persons"]) == len(filed_with)
+
+    await pipeline.reprocess(vault_path=filed.vault_path, user_hint=words,
+                             sender_mxid="@homer:simpson", capture_id="$fuel", reply_text=words,
+                             reply_id="$who", reply_at="2026-11-22T09:00:00+00:00")
+
+    assert sorted(parse(memory.text(filed.vault_path))["persons"]) == sorted(persons)

@@ -243,28 +243,45 @@ A note is its card and its sidecar (ADR-018, `stack.cards.sources`). The format 
 [memory-format.md](memory-format.md#a-notes-sources).
 
 **What the sidecar records.** The sidecar's `made.code_commit` is `STACK_COMMIT`. Its template hashes are
-`prompt_template`, `correction_template` and `conversation_template`. Each hashes a prompt's skeleton, with a fixed
+`prompt_template` and `conversation_template` (`correction_template` on cards rebuilt before the card conversation).
+Each hashes a prompt's skeleton, with a fixed
 placeholder for every value that varies per call. Thus a hash changes with a template's wording, never with the day or
 the note.
 
-**How a note is rebuilt.** Some notes are in their writer's own words. When such a note has corrections or edits, it is
-rebuilt in two calls (ADR-018 §7). Corrections are replies or `--msg`. Edits are a person's edits of its clean version.
+**How a card is corrected.** A note with corrections or edits is rebuilt in one call, the card conversation
+(`stack.filing.correction.conversation`, ADR-018 §7). Corrections are replies or `--msg`. Edits are a person's edits of its clean version.
+A document's correction in the chat uses the same conversation. The conversation holds these messages:
 
-The capture prompt then reads the rebuilt text as the note, for the title, tags and persons. The first call depends on
-what the note has:
+1. what was sent: a note's words, or a document's text;
+2. the card as filed, as the model's own answer: its title, tags, persons and date, and a note's clean version;
+3. one message for each correction or edit, in time order;
+4. the request to answer only what the events change.
 
-| The note has | The first call |
+The model answers only the keys that change. The code applies them with one guard for tags and people
+(`stack.filing.correction.changes`):
+
+| Field | After the correction |
 |---|---|
-| Corrections only | The correction prompt (`note_correction`) writes the note from the original's words and every correction. |
-| Also an edit by hand | The card conversation (`card_conversation`), see below. |
+| title, date | The model's answer. |
+| tags | The model's additions. A tag goes only when the correction names it by one of its names. |
+| persons | The model's additions and explicit removals, when the correction names a person or its writer ("only me", "Bart too"). Otherwise unchanged. |
 
-The card conversation holds these messages:
+`me`, `mine` and their German forms name the writer. A whole list of people in the answer only adds. A person that
+the person files do not hold is not added, and the reply names that person. An answer that is not a JSON object
+changes nothing. The reply then says that the answer could not be read.
 
-1. the original's words;
-2. the clean version before the first correction or edit, as the model's own answer;
-3. one message for each correction or edit, in time order.
+A note's rebuilt text is asked whole every time. The model writes the note as if it was right the first time. The
+text is checked by the first filing's rule, without the values that an event replaced
+(`stack.filing.clean_words.kept_rebuilt`). An answer without a text keeps the text that the card shows, with the
+edits of people.
 
-The rebuilt text is checked by the first filing's rule, less what an event replaced (`clean_words.kept_rebuilt`).
+A note in a topic with a list also gets the list in the request. The model then answers `action_items`: the to-dos
+that the events add. An item is kept only when a correction holds one of its words with four letters or more. The
+reason is that a wrong item on a list is worse than a missing item.
+
+The list's merge adds the items of a record once. It adds an item only when the list does not hold it, open or done.
+On a refile it adds none when the list already holds items from that record. A correction never removes an item
+from the list. `stack memory reprocess` asks for no to-dos, because `--apply` writes only the card.
 
 **How a note is written.** These surfaces write the card and the sidecar in one commit. They write through
 [the curator](#the-memory-has-one-writer-the-curator), the memory's one writer:

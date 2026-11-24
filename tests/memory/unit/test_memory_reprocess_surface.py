@@ -68,13 +68,16 @@ DRAWING_CARD, DRAWING_SIDECAR = _note(
 
 class _Model:
     """The model: the chat completions API, answering one JSON object per
-    request, the given ones in order and the last one again after that."""
+    request, the given ones in order and the last one again after that.
+    Each request's messages are kept as one text, so a test reads all a
+    conversation showed the model, its task included."""
 
     def __init__(self, httpserver, *answers: dict):
         self.prompts: list[str] = []
 
         def complete(request):
-            self.prompts.append(json.loads(request.data)["messages"][-1]["content"])
+            messages = json.loads(request.data)["messages"]
+            self.prompts.append("\n\n".join(m["content"] for m in messages))
             answer = answers[min(len(self.prompts), len(answers)) - 1]
             return Response(json.dumps({
                 "id": "c1", "object": "chat.completion", "created": 0, "model": "stand-in",
@@ -413,22 +416,22 @@ class TestACorrectionIsWorkedIntoTheCleanVersion:
         assert "Budget max 200." not in card.split("## Sources")[0]
 
 
-# ── A correction is written by a prompt of its own ────────────────────────
+# ── A correction is asked as the card conversation ────────────────────────
 
 def _interpretation(card: str) -> str:
     """What the card says above its sources: the title, then the clean version."""
     return card.split("## Sources")[0]
 
 
-class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:
-    """A note refiled with a correction is made in two steps. First the
-    model is given the note's original words and the corrections, each
-    with who wrote it, and asked for the note's clean version as
-    corrected. Then the capture prompt reads that text as if it were the
-    note, so the title, the tags and the persons are taken from the text
-    the card shows and cannot contradict it. The corrected text is checked
-    by the rule of the first filing, less what a correction replaced.
-    A note without a correction is one call, as before."""
+class TestACorrectedNoteIsAskedAsTheCardConversation:
+    """A note refiled with a correction is one call, the card conversation
+    (ADR-018 §7): the model is given the note's original words, the card as
+    filed with its clean version, and each correction with who wrote it,
+    and answers what they change. The capture prompt is not asked again,
+    so the title, the tags and the persons stay where no correction names
+    them. The corrected text is checked by the rule of the first filing,
+    less what a correction replaced. A note without a correction is one
+    call to the capture prompt, as before."""
 
     CORRECTED = ("For the trip: Homer calls the hotel about the late check-in. "
                  "Lisa wants the museum visit on Sunday. Budget: at most 250.")
@@ -442,38 +445,32 @@ class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:
         assert "error" not in result, result
         return result, model
 
-    def test_with_a_correction_the_capture_prompt_reads_the_corrected_text(self, stack, httpserver):
+    def test_with_a_correction_the_model_is_asked_once_with_the_words_and_the_correction(
+            self, stack, httpserver):
         """Given a note and Marge's correction, when it is refiled, then the
-        model is asked twice: first with the original words and her
-        correction, then with the corrected text alone. Why: asked for
-        everything at once, the model appended the correction as a point of
-        its own, and a title read from the original could contradict the
-        corrected text."""
-        _, model = self._refile(stack, httpserver, {"clean": self.CORRECTED}, self.CLASSIFIED)
+        model is asked once, shown the original words and her correction.
+        Why: a second call to the capture prompt answered a whole new
+        filing, and the 16 GB model changed a title and dropped people
+        nobody named."""
+        _, model = self._refile(stack, httpserver, {"clean": self.CORRECTED, **self.CLASSIFIED})
 
-        assert len(model.prompts) == 2
-        correcting, classifying = model.prompts
-        assert TRIP_WORDS in correcting and "Marge: budget is 250 now" in correcting
-        assert self.CORRECTED in classifying
-        assert TRIP_WORDS not in classifying
-        assert "budget is 250 now" not in classifying
+        [asked] = model.prompts
+        assert TRIP_WORDS in asked and "Marge: budget is 250 now" in asked
 
-    def test_the_card_shows_the_corrected_text(self, stack, httpserver):
-        result, _ = self._refile(stack, httpserver, {"clean": self.CORRECTED}, self.CLASSIFIED)
+    def test_the_card_shows_the_corrected_text_and_the_models_title(self, stack, httpserver):
+        result, _ = self._refile(stack, httpserver, {"clean": self.CORRECTED, **self.CLASSIFIED})
 
         assert result["clean_rejected"] == ""
         card = result["proposed"]["file"]
         assert self.CORRECTED in _interpretation(card)
         assert "title: Trip\n" in card
 
-    def test_the_sidecar_names_the_correction_prompt_and_the_capture_prompt(self, stack, httpserver):
-        """Why: a card says which prompts made it, so a card made by an old
-        correction prompt can be found and refiled."""
-        result, _ = self._refile(stack, httpserver, {"clean": self.CORRECTED}, self.CLASSIFIED)
+    def test_the_sidecar_names_the_conversation(self, stack, httpserver):
+        """Why: a card says which prompt made it, so a card made by an old
+        conversation can be found and refiled."""
+        result, _ = self._refile(stack, httpserver, {"clean": self.CORRECTED})
 
-        made = json.loads(result["proposed"]["sidecar"])["made"]
-        assert made["correction_template"] and made["prompt_template"]
-        assert made["correction_template"] != made["prompt_template"]
+        assert json.loads(result["proposed"]["sidecar"])["made"]["conversation_template"]
 
     def test_a_corrected_text_that_drops_an_amount_nobody_corrected_is_refused(self, stack, httpserver):
         """Given a correction about the museum only, when the corrected text
@@ -481,7 +478,7 @@ class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:
         the card shows the note's words alone, and the refusal says what was
         lost."""
         dropped = "For the trip: Homer calls the hotel. Lisa wants the science museum on Sunday."
-        result, _ = self._refile(stack, httpserver, {"clean": dropped}, self.CLASSIFIED,
+        result, _ = self._refile(stack, httpserver, {"clean": dropped},
                                  msg="lisa's museum is the science museum")
 
         assert "200" in result["clean_rejected"]
@@ -504,12 +501,12 @@ class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:
             json.loads(sidecar)["sources"][0], reply]}, indent=2) + "\n"
         stck, _ = stack({TRIP: card, TRIP_SIDE: sidecar})
         at_300 = self.CORRECTED.replace("250", "300")
-        model = _Model(httpserver, {"clean": at_300}, self.CLASSIFIED)
+        model = _Model(httpserver, {"clean": at_300})
 
         result = _reprocess(stck, "note-26933f6ef8", "--msg", "no, the budget is 300", "--by", "homer")
 
         assert "error" not in result, result
-        assert "Marge: budget is 250 now\nHomer: no, the budget is 300" in model.prompts[0]
+        assert "Marge: budget is 250 now\n\nHomer: no, the budget is 300" in model.prompts[0]
         assert result["clean_rejected"] == ""
         assert at_300 in _interpretation(result["proposed"]["file"])
 
@@ -520,7 +517,7 @@ class TestACorrectedNoteIsWrittenByAPromptOfItsOwn:
         assert len(model.prompts) == 1
         assert TRIP_WORDS in model.prompts[0]
         assert clean in _interpretation(result["proposed"]["file"])
-        assert "correction_template" not in json.loads(result["proposed"]["sidecar"])["made"]
+        assert "conversation_template" not in json.loads(result["proposed"]["sidecar"])["made"]
 
 
 # ── A hand edit of a quote is a correction ────────────────────────────────

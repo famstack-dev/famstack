@@ -220,11 +220,6 @@ async def test_marges_tag_survives_homers_reply_to_the_note(bdd, code, homer, op
     correction = f"Correction: we need four sleeping bags, Bart is coming too. [{marker}]"
     openai.correct("For the camping trip next weekend, bring four sleeping bags, the big tent "
                    f"and the camping stove. Ask Flanders for his lantern. [{marker}]")
-    stub_classify(openai, {
-        "title": "Camping trip packing",
-        "tags": ["camping-trip", "sleeping-bags", "tent"],
-        "persons": ["Homer"],
-    })
     await homer.room_send(room_id=room_id, message_type="m.room.message", content={
         "msgtype": "m.text", "body": correction,
         "m.relates_to": {"m.in_reply_to": {"event_id": filed.event_id}}})

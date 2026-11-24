@@ -191,11 +191,11 @@
           "type": "string"
         },
         "correction_template": {
-          "description": "The same hash for the prompt that worked corrections in, when there were any.",
+          "description": "The same hash for the correction prompt of earlier versions, on cards they refiled with corrections.",
           "type": "string"
         },
         "conversation_template": {
-          "description": "The same hash for the card conversation's prompt (ADR-018 §7), when the card was rebuilt with corrections or edits.",
+          "description": "The same hash for the card conversation (ADR-018 §7), when the card was rebuilt with corrections or edits.",
           "type": "string"
         },
         "requested_by": {

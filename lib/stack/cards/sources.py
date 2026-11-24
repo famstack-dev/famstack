@@ -1,10 +1,11 @@
 """A card's sources and its sidecar: what the card was made from, and where it came from.
 
-ADR-018. A card that is made from things people sent keeps what a reader
-reads: its fields, the interpretation (the clean version, or a summary),
-then `## Sources`, one blockquote per thing it was made from, in order.
-The sidecar `<stem>.json` beside it keeps where each came from and how
-the card was made. Quote n belongs to `sources[n]`.
+A card that is made from things that people sent holds what a reader
+reads (ADR-018). First come its fields and the interpretation: the clean
+version or a summary. Then `## Sources` follows, with one blockquote per
+source, in order. The sidecar `<stem>.json` next to the card holds where
+each source came from and how the card was made. Quote n belongs to
+`sources[n]`.
 
     family/itchy-scratchy-land/notes/2026/10/trip-7903f2.md
     family/itchy-scratchy-land/notes/2026/10/trip-7903f2.json
@@ -15,18 +16,19 @@ the card was made. Quote n belongs to `sources[n]`.
      "made": {"at": "…", "model": "…", "code_commit": "50efe696",
               "prompt_template": "7c2e91a4", "requested_by": "marge"}}
 
-`made.correction_template` joins `prompt_template` when the note was
-refiled with corrections: the hash of the prompt that worked them in.
-`made.conversation_template` takes its place when a person had edited the
-note by hand, and the card conversation rebuilt it (ADR-018 §7).
+`made.conversation_template` joins `prompt_template` when a refile worked
+in corrections or edits. It is the hash of the card conversation that did
+this (ADR-018 §7). A card that an earlier version refiled can hold
+`made.correction_template` instead.
 
-A refile reads the sources, never the summary (`sources_of`, `words_of`,
-`corrections_of`), and a card that shows a note's sources shows the same
-list. This module holds the part every card type reads alike. What reads
-a note in the format before this one, and the replies the chat holds, is
-the memory stacklet's (`stacklets/memory/note_card.py`).
+A refile reads the sources and never the summary (`sources_of`,
+`words_of`, `corrections_of`). A card that shows a note's sources shows
+the same list. This module holds the part that every card type reads in
+the same way. The memory stacklet reads a note in the earlier format and
+the replies in the chat (`stacklets/memory/note_card.py`).
 
-Stdlib only: the host CLI, the bot runner and the cards API import it.
+The module uses only the standard library, because three programs import
+it: the host CLI, the bot runner and the cards API.
 """
 
 from __future__ import annotations

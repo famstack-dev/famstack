@@ -331,7 +331,7 @@ person's edit is not stored a second time: it is read from git.
 
 | Event | Where it is read from | How a rebuild applies it |
 |---|---|---|
-| A correction (chat reply, `--msg`) | `## Sources` and the sidecar | the correction prompt, or a message in the card conversation once a person edited the clean version |
+| A correction (chat reply, `--msg`) | `## Sources` and the sidecar (a document: its thread in the chat) | a message in the card conversation |
 | A person's edit of the clean version | the card's history: the diff of its clean version before and after the person's commit | a message in the card conversation: "Marge edited the card: changed '…' to '…'" |
 | A person's field edit (tags, persons, title, date) | the card's history: its frontmatter before and after the person's commit | an operation applied in code after the model: `add`/`remove` for a list, `set`/`unset` for a value |
 
@@ -339,21 +339,64 @@ person's edit is not stored a second time: it is read from git.
   `stack memory history` use (§6, `stack.cards.commits.is_machine`): a
   person's change, not a bot's own rebuild, a migration or a plain
   reprocess.
-- **Two prompts, chosen by what the card has.** A note with chat
-  corrections and no person's text edit is rebuilt with the dedicated
-  correction prompt (24 of 24 on `tests/e2e/eval/correction_fold.py`,
-  where the conversation reached 21: it dropped the second point of a
-  correction that made two). A note whose clean version a person edited is
-  rebuilt as the card conversation. Field edits are applied as operations
-  either way.
-- **The card conversation:** a system message with the task (the card as it
-  should read now; later events win; nothing added, nothing dropped), the
-  original words, the previous clean version as the model's answer, then
-  one message per correction or edit in time order, then the request for
-  the card now. Measured on the instance's model: 24 of 24 edits kept,
-  against 15 to 21 for the same events as a list or as raw diffs, and 2 of
-  8 for a deterministic `git apply` after a rebuild
-  (`tests/e2e/eval/edit_replay.py`).
+- **One conversation for every card kind.** A note and a document are
+  corrected the same way. There is no separate correction prompt. The
+  capture prompt is not asked again after a correction, because a whole
+  new filing replaces values that nobody named.
+- **The card conversation** has these messages, in this order:
+  1. The task: change only what an event names, and later events win.
+     For a note's text, add nothing and drop nothing.
+  2. What was sent: a note's words or a document's text.
+  3. The card as filed, as the model's own answer: title, tags, persons,
+     date and a note's clean version.
+  4. One message for each correction or edit, in time order.
+  5. The request for what the events change.
+
+  The model answers only the keys that change.
+- **One guard for the fields.** Most corrections are about the content,
+  for example a fact that a transcript got wrong. The fields therefore
+  get one guard only (`stack.filing.correction.changes`):
+
+  | Field | After a correction |
+  |---|---|
+  | title, date | The model's answer. |
+  | tags | The model's new tags come in. A tag goes only when a correction names it by one of its names. |
+  | persons | The model's additions and explicit removals, when a correction names a person or its writer ("only me", "Marge and Bart were there"). Otherwise the card's people. |
+
+  A correction about people is the usual way to fix a card with too many
+  people. A person goes only by an explicit remove, because the request
+  asks the people as additions and removals. A whole list in the answer
+  only adds. An added person must be in the person files. The reply
+  names an unknown person. An answer that is not a JSON object changes
+  nothing.
+- **A note's text is always answered whole.** A correction's words
+  replace the old words where the note makes the point. Something new
+  goes where it belongs. A text answered only when it changes can leave
+  out a point of the correction. The conversation keeps the shape of the
+  card's text. A list item that the first filing wrote as a sentence
+  therefore stays a sentence.
+- **The text and the to-dos.** An answer without a text keeps the text
+  that the card shows, with the edits of people. A note in a topic with a
+  list gets the list in the request. The same call answers the new to-dos.
+  An item is kept only when one of its words is in a correction, because
+  the model also lists the note's own points.
+
+  The list's merge adds an item only when the list does not hold it. A
+  correction never removes an item.
+- **A refused text keeps the card's text.** The check can refuse the
+  rewritten text. The card then keeps the text that it shows, with the
+  edits of people. The reply gives the reason, because the words alone
+  would lose the edits.
+- **A document's card is written on the version read before the model
+  answers.** A correction that lands in the meantime refuses the write,
+  because the write must not overwrite it.
+- **Considered:** a whole new filing for each correction. It replaced
+  values that nobody named.
+- **Considered:** a guard that also checked the title and the date
+  against the correction's words. Its word rules needed exceptions, and
+  corrections are seldom about those fields.
+- **Considered:** the edits as a list or as raw diffs, and a `git apply`
+  of the edits after a rebuild. The model kept fewer edits that way.
 - **Field operations** are derived from the frontmatter difference (set
   difference for lists, so the model's other suggestions still come in) and
   applied in order; one that no longer fits the schema (a topic id a

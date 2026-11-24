@@ -355,7 +355,7 @@ class LLM:
 
         For a task that is a conversation rather than one prompt: a note's
         clean version rebuilt from the events after it
-        (`card_conversation`) starts from the model's own earlier answer.
+        (`stack.filing.correction.conversation`) starts from the model's own earlier answer.
         """
         model = model_override or self.model_for(role)
 
