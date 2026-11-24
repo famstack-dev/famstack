@@ -8,6 +8,8 @@ is blocked by the browser as mixed content, and the family sees a login
 page that cannot log in. `on_start` sets `base_url` to the rendered
 `SYNAPSE_PUBLIC_URL` on every start. Everything else in the file is left
 as the admin has it.
+
+The file also pins the header size of the nginx in Element's container.
 """
 
 from __future__ import annotations
@@ -69,3 +71,35 @@ def test_the_rest_of_the_config_stays_the_admins(tmp_path):
 def test_before_the_installer_has_written_it_nothing_is_created(tmp_path):
     _start(tmp_path, DOMAIN_URL)
     assert not (tmp_path / "messages" / "synapse" / "element-config.json").exists()
+
+
+# ── The nginx in Element's container ─────────────────────────────────────
+#
+# In port mode, every app on localhost shares one cookie jar. The browser
+# sends all of it to Element Web and to the chat port. Above 8 KB in one
+# header line, nginx answers 400 "Request Header Or Cookie Too Large".
+# tests/integration/test_messages_chat_port.py checks the running nginx.
+# This test keeps the setting in the file that the container loads.
+
+CHAT_PORT_CONF = _REPO_ROOT / "stacklets" / "messages" / "chat-port.nginx.conf"
+
+
+def _http_level_directives(conf: str) -> list[str]:
+    """The directives of `conf` outside every block, without comments.
+
+    The image's nginx.conf includes conf.d/*.conf inside its `http` block,
+    so a directive at the top of the file applies to every server in it,
+    Element Web's own server included.
+    """
+    depth, directives = 0, []
+    for line in conf.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if depth == 0 and line.endswith(";"):
+            directives.append(line)
+        depth += line.count("{") - line.count("}")
+    return directives
+
+
+def test_element_and_the_chat_port_take_a_32_kb_cookie_header():
+    directives = _http_level_directives(CHAT_PORT_CONF.read_text())
+    assert "large_client_header_buffers 4 32k;" in directives
