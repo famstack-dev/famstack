@@ -15,12 +15,17 @@ name: stack-docs
 services:
   stack-docs-paperless:
     container_name: stack-docs-paperless
-    # Pinned to the 3.0 line, never `:latest`. A watchtower pull of
+    # Pinned to a minor line, never `:latest`. A watchtower pull of
     # `:latest` once rolled 2.x straight to 3.0 and broke document filing.
-    # Paperless migrates its database on the first 3.x start and 2.x will
-    # not boot afterwards, so a major bump is one-way: do it deliberately,
-    # with a backup taken first. Watchtower delivers the 3.0.x patches.
-    image: ghcr.io/paperless-ngx/paperless-ngx:3.0
+    # Paperless migrates its database on the first start of a new version
+    # and the old one will not boot afterwards, so a bump is one-way: do it
+    # deliberately, with a backup taken first. Watchtower delivers the
+    # patches of this line only while upstream still rebuilds it; once a
+    # newer minor ships, the old tag stops getting OS security fixes. 3.5
+    # is the first line whose Ghostscript has the fix for CVE-2026-125396
+    # (Debian 10.05.1~dfsg-1+deb13u3), a font bug that let a crafted
+    # document run commands in this container.
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.5
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
       - "stack.commit=${STACK_COMMIT:-unknown}"

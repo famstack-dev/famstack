@@ -1949,7 +1949,7 @@ name: stack-docs
 services:
   stack-docs-paperless:
     container_name: stack-docs-paperless
-    image: ghcr.io/paperless-ngx/paperless-ngx:3.0
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.5
     labels:
       - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-true}"
     networks:
