@@ -189,6 +189,16 @@ WORDS = {
                 "transcribed": "wrote down what was said", "declared": "wrote it",
                 "moved": "moved it", "listed": "put its items on a list",
                 "migrated": "brought it up to date", "seeded": "set it up"},
+        # The quieter line under a filing and a correction (`history_lines.py`).
+        "history_said": {
+            "quote": "“{said}”", "sent": "{what}, {where}",
+            "what": {"text": ("a message", "{n} messages"), "voice": ("a voice message", "{n} voice messages"),
+                     "image": ("a photo", "{n} photos"), "video": ("a video", "{n} videos"),
+                     "link": ("a link", "{n} links"), "pdf": ("a PDF", "{n} PDFs"),
+                     "file": ("a file", "{n} files")},
+            "where": {"own_chat": "in {name}'s chat", "chat": "in a chat", "email": "by email",
+                      "cli": "from the command line", "agent": "through the agent",
+                      "cards": "on the memory pages", "paperless": "from Paperless"}},
     },
     "de": {
         "dashboard": "‹ Übersicht",
@@ -263,5 +273,15 @@ WORDS = {
                 "transcribed": "hat aufgeschrieben, was gesagt wurde", "declared": "hat es angelegt",
                 "moved": "hat es verschoben", "listed": "hat die Punkte auf eine Liste gesetzt",
                 "migrated": "hat es auf den neuen Stand gebracht", "seeded": "hat es angelegt"},
+        "history_said": {
+            "quote": "„{said}“", "sent": "{what}, {where}",
+            "what": {"text": ("eine Nachricht", "{n} Nachrichten"),
+                     "voice": ("eine Sprachnachricht", "{n} Sprachnachrichten"),
+                     "image": ("ein Foto", "{n} Fotos"), "video": ("ein Video", "{n} Videos"),
+                     "link": ("ein Link", "{n} Links"), "pdf": ("ein PDF", "{n} PDFs"),
+                     "file": ("eine Datei", "{n} Dateien")},
+            "where": {"own_chat": "im Chat von {name}", "chat": "in einem Chat", "email": "per E-Mail",
+                      "cli": "über die Kommandozeile", "agent": "über den Agenten",
+                      "cards": "auf den Seiten des Gedächtnisses", "paperless": "aus Paperless"}},
     },
 }

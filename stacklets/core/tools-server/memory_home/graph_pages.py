@@ -8,6 +8,7 @@ device's audience, drawn by its page module:
     /memory/sender/<card id>     open_sender    sender_page.sheet
     /memory/documents[/<kind>]   open_documents documents_page.sheet
     /memory/kind/<type>          open_kind      kind_page.sheet
+    /memory/kind/<type>/<id>     open_kind      the same, narrowed to one person's cards
     ...?part=2                   the part of the page's long list of cards
     /memory/senders              open_senders   senders_page.sheet
 
@@ -110,15 +111,20 @@ async def open_documents(kind: str, reads: Reads, looking: Looking, *, language:
 
 
 async def open_kind(card_type: str, reads: Reads, looking: Looking, *, language: str,
-                    never_set_up: NeverSetUp, part: int = 1) -> Answer:
+                    never_set_up: NeverSetUp, part: int = 1, person: str = "") -> Answer:
     """`/memory/kind/<type>`: every card of one kind the device may read,
     newest first, part `part` of them; "not found" for a kind it has no
-    card of. The kind "document" goes on to the documents page, the same
-    part: one page lists the documents, so the two never disagree."""
-    if card_type == "document":
+    card of. `/memory/kind/<type>/<person>` (`person`) narrows it to the
+    cards of that kind the person's page counts, which its type chip
+    opens. The kind "document" goes on to the documents page, the same
+    part: one page lists the documents, so the two never disagree. A
+    person's documents stay here, as their other kinds do."""
+    if card_type == "document" and not person:
         return Answer(302, location=addresses.in_part(addresses.documents(), part))
-    return await _open(f"kind/{card_type}", addresses.kind(card_type),
-                       lambda answer, context, mine: kind_page.sheet(answer, context, card_type=card_type),
+    view = f"kind/{card_type}/{person}" if person else f"kind/{card_type}"
+    return await _open(view, addresses.kind(card_type, person=person),
+                       lambda answer, context, mine: kind_page.sheet(answer, context, card_type=card_type,
+                                                                     person=person),
                        reads, looking, language=language, never_set_up=never_set_up, part=part)
 
 

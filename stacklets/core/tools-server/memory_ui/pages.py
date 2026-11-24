@@ -142,10 +142,14 @@ async def open_history(card_id: str, reads: Reads, *, now: datetime, language: s
         await open_history("note-0b6e2d91aa", reads, now=now, language="en")
         Answer(200, '<ol class="timeline">...')
     """
-    versions, names = await asyncio.gather(reads.versions(card_id), reads.names())
+    versions, names, (_, card) = await asyncio.gather(reads.versions(card_id), reads.names(),
+                                                      reads.card(card_id))
     if versions is None:
         return Answer(404, _empty(words(language)["no_history"]))
-    return Answer(200, history.fragment(versions, names=names, now=now, language=language))
+    # SAFETY: the card as the memory answers it for this device's audience
+    # is where the history's quotes come from, so it says no more than the
+    # card page does.
+    return Answer(200, history.fragment(versions, card, names=names, now=now, language=language))
 
 
 async def open_text(card_id: str, reads: Reads, *, language: str) -> Answer:

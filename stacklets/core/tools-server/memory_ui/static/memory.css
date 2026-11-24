@@ -354,6 +354,8 @@ blockquote.caption { margin-top: 0; }
 .timeline li.machine { color: var(--gray); font-size: 0.86rem; }
 .timeline li.machine::before { left: -15px; width: 5px; height: 5px; top: calc(0.3rem + 0.645rem - 2.5px); background: var(--gray); }
 .timeline .when { color: var(--gray); }
+/* What a filing or a correction brought, under its line, quieter. */
+.timeline .said { display: block; color: var(--gray); font-size: 0.86rem; line-height: 1.4; overflow-wrap: anywhere; }
 .showall { margin: 0 0 0.9rem 18px; font-size: 0.85rem; color: var(--secondary); }
 
 /* The creation date in the sheet's top right corner; the place where the

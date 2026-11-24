@@ -6,7 +6,8 @@
 
 A view is the address of a page: its kind (`me`, `family`, `person`,
 `topic`, `sender`, `documents`, `kind`, `senders`, `everything`) and, for
-some, what it is about (`person/bart`, `kind/note`). Each kind is one function here that picks the page's
+some, what it is about (`person/bart`, `kind/note`, `kind/note/bart`: the
+notes Bart's page counts). Each kind is one function here that picks the page's
 cards and calls the sections its page shows (`sections.py`), the links and
 counts (`tally.py`). The table of views and their sections is in the
 package's docstring, which is the contract the pages read.
@@ -41,7 +42,7 @@ from ..graph import Card, Graph
 from .items import item, listed
 from .scope import (KINDS, Person, document_kind, entries, in_topic, is_about, own_folder, person_of,
                     sender_of, sent_by, topic_of)
-from .sections import (changed, documents, lists_of, open_lists, people, senders, topics,
+from .sections import (ListCard, changed, documents, lists_of, open_lists, people, senders, topics,
                        up_next)
 from .tally import counts, links
 from .topic_view import topic_view
@@ -126,15 +127,28 @@ def _personal(graph: Graph, person: Person, theirs: list[Card], everything: list
     lists' own rule (`ListCard.is_theirs`), with an open item. The
     groceries name no one and are everyone's; a list with every item
     ticked is in neither, only in the menu's count of every list."""
-    lists = [lst for lst in lists_of(everything) if lst.is_theirs(person)]
-    shown = [lst.card for lst in lists if lst.parsed.open_items]
-    counted = [c for c in theirs if c.type != "list"] + shown
+    lists = _their_lists(person, everything)
     return {"up_next": up_next(graph, theirs, lists, today, person=person),
             "lists": open_lists(lists),
             "changed": changed(theirs, today, limit=SHORT),
             "documents": documents(theirs, limit=SHORT),
             "links": links(graph, theirs, leave_out=person.id),
-            "counts": counts(counted)}
+            "counts": counts(_counted(person, theirs, everything))}
+
+
+def _their_lists(person: Person, everything: list[Card]) -> list[ListCard]:
+    """The lists that are `person`'s, by the lists' own rule (`ListCard.is_theirs`)."""
+    return [lst for lst in lists_of(everything) if lst.is_theirs(person)]
+
+
+def _counted(person: Person, theirs: list[Card], everything: list[Card]) -> list[Card]:
+    """The cards a person's page counts by type, newest first: the cards
+    about them (`theirs`) but their lists, then their lists with an open
+    item, as the lists section shows them. The person's kind pages
+    (`kind/<type>/<person>`) list the same cards, so a type chip and the
+    page it opens agree."""
+    shown = [lst.card for lst in _their_lists(person, everything) if lst.parsed.open_items]
+    return [c for c in theirs if c.type != "list"] + shown
 
 
 def _family(graph: Graph, about: str, audience: frozenset[str] | None, today: date) -> dict:
@@ -197,15 +211,33 @@ def _documents(graph: Graph, kind: str, audience: frozenset[str] | None, today: 
             "counts": counts(shown)}
 
 
-def _kind(graph: Graph, card_type: str, audience: frozenset[str] | None, today: date, part: int) -> dict:
+def _kind(graph: Graph, about: str, audience: frozenset[str] | None, today: date, part: int) -> dict:
     """The page of one kind of card (`kind/note`): its cards, newest first,
-    part `part` of them.
+    part `part` of them. `kind/note/marge` narrows it to the cards a
+    person's page counts as notes (`_counted`), the page a type chip on
+    My memory or a person's page opens.
     A kind the audience has no card of is no page, as a document kind
-    with no document is not."""
-    cards = [c for c in entries(graph) if c.type == card_type] if card_type in KINDS else []
+    with no document is not; nor is a person the graph does not hold."""
+    card_type, _, whose = about.partition("/")
+    everything = entries(graph)
+    if whose:
+        everything = _about_person(graph, whose, audience, everything)
+    cards = [c for c in everything if c.type == card_type] if card_type in KINDS else []
     if not cards:
         raise NoSuchPage(f"no cards of the kind {card_type!r}")
     return {"cards": _part(cards, part), "links": links(graph, cards), "counts": counts(cards)}
+
+
+def _about_person(graph: Graph, ref: str, audience: frozenset[str] | None,
+                  everything: list[Card]) -> list[Card]:
+    """The cards the page of the person `ref` counts, newest first. The
+    one person of the audience is a person also without a card of their
+    own, as on `me`; any other `ref` the graph has no person for is no
+    page."""
+    person = person_of(graph, ref) or (Person(ref) if audience == frozenset({ref}) else None)
+    if person is None:
+        raise NoSuchPage(f"no person {ref!r}")
+    return _counted(person, [c for c in everything if is_about(c, person)], everything)
 
 
 def _senders(graph: Graph, about: str, audience: frozenset[str] | None, today: date) -> dict:

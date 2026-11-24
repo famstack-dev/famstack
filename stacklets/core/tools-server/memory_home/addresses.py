@@ -14,7 +14,9 @@ call this module: the routes in `server.py`, and the preview's script (`static/p
     sender("correspondent-kwik-e-mart")      '/memory/sender/correspondent-kwik-e-mart'
     documents("Receipt")                     '/memory/documents/Receipt'
     kind("note")                             '/memory/kind/note'
+    kind("note", person="bart")              '/memory/kind/note/bart'
     kind("document")                         '/memory/documents'
+    kind("document", person="bart")          '/memory/kind/document/bart'
     senders()                                '/memory/senders'
     in_part("/memory/kind/note", 2)          '/memory/kind/note?part=2'
     in_part("/memory/kind/note", 1)          '/memory/kind/note'
@@ -33,6 +35,8 @@ Pure: strings in, strings out.
 """
 
 from __future__ import annotations
+
+from urllib.parse import quote
 
 from memory_ui.addresses import memory_page, memory_search
 
@@ -70,10 +74,14 @@ def documents(kind: str = "") -> str:
     return memory_page("documents", kind)
 
 
-def kind(card_type: str) -> str:
-    """The page of one kind of card (`note`, `diary`). The documents keep
+def kind(card_type: str, *, person: str = "") -> str:
+    """The page of one kind of card (`note`, `diary`), or of the cards of
+    that kind the page of `person` counts (`bart`). The documents keep
     their own page, which shows them by kind of document, so `document`
-    leads there."""
+    leads there; a person's documents are a kind page like the others,
+    so a chip's count is its page's."""
+    if person:
+        return f"{memory_page('kind', card_type)}/{quote(person, safe='')}"
     return documents() if card_type == "document" else memory_page("kind", card_type)
 
 

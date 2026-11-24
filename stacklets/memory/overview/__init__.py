@@ -14,6 +14,7 @@ answers. The cards API serves it:
     GET /overview/documents?audience=marge
     GET /overview/documents/<kind>?audience=marge    Receipt
     GET /overview/kind/<type>?audience=marge         note, diary, email, ...
+    GET /overview/kind/<type>/<person>?audience=marge  that kind among the person's cards
     GET /overview/senders?audience=marge
     GET /overview/everything?audience=marge          the menu's counts
 
@@ -51,7 +52,7 @@ about, its `counts` together) and the sections the view's page shows.
 | `topic/<id>` | topic, up_next, cards, links, counts, bookmarks, documents, lists, changed, entries |
 | `sender/<id>` | sender, cards, links, counts |
 | `documents`, `documents/<kind>` | documents, senders, links, counts |
-| `kind/<type>` | cards, links, counts |
+| `kind/<type>`, `kind/<type>/<person>` | cards, links, counts |
 | `senders` | senders, counts |
 | `everything` | kinds, senders, counts |
 
@@ -157,7 +158,9 @@ cards, for a sender its documents, for `family` every card. Person, topic
 and sender cards and a list's archive months are not among them: they are
 what a page links to, not lines on it. For `kind/<type>` they are the
 cards of that type, for `senders` the documents that have a sender card,
-and for `everything` every card.
+and for `everything` every card. `kind/<type>/<person>` narrows a kind
+to the cards the person's page counts as that type, its lists as its
+`counts` takes them, so a type chip and the page it opens agree.
 
 An empty memory, or a view with nothing in it, answers every section empty.
 """

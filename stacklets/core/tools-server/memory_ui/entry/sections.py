@@ -46,7 +46,7 @@ SOURCE_TYPES = ("diary", "note")
 SECTION_KINDS = ("text", "voice", "image", "images", "video", "file")
 
 __all__ = ["Medium", "Section", "SOURCE_TYPES", "SECTION_KINDS", "MOSAIC_MAX", "sections_of",
-           "media_paths", "date_basis", "sources_of_card"]
+           "media_paths", "date_basis", "sources_of_card", "medium_and_words"]
 
 
 @dataclass(frozen=True)
@@ -105,7 +105,7 @@ def sections_of(card: Mapping) -> list[Section]:
         role = source.get("role")
         if role == "note":
             continue
-        medium, said = _medium_and_words(source)
+        medium, said = medium_and_words(source)
         if medium is None and not said:
             continue
         if role == "reply":
@@ -169,9 +169,10 @@ def sources_of_card(card: Mapping) -> list[Mapping]:
     return [s for s in card.get("sources") or [] if isinstance(s, Mapping)]
 
 
-def _medium_and_words(source: Mapping) -> tuple[Medium | None, str]:
+def medium_and_words(source: Mapping) -> tuple[Medium | None, str]:
     """A source's file (None for none, or a path that leaves the store) and
-    its words: the quote after the embed."""
+    its words: the quote after the embed. A card's history reads a source
+    the same way (`history_lines`)."""
     lines = str(source.get("quote") or "").strip().split("\n")
     found = _MEDIA_LINE.match(lines[0].strip()) if lines else None
     if found is None:
