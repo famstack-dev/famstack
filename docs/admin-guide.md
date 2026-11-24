@@ -230,6 +230,17 @@ ls -l stack
 ./stack
 ```
 
+**On a fresh clone of `main`, the installer first offers a release.** `main` is the work in progress. A release is a tested git tag. The installer offers the newest pre-release and the newest final release. Enter picks the first one. When a final release is newer than every pre-release, the installer offers only that final release.
+
+The installer then checks out the picked tag and runs the installer of that release. After that, `./stack update` moves the install from release to release. To install the work in progress, pick **main**.
+
+The installer does not offer a release in these cases:
+
+- The checkout is on a tag or on a branch other than `main`.
+- The clone has local edits. The installer names the changed files.
+- `stack.toml` exists, because then only `./stack update` changes the release.
+- The install is a script install with `--yes`, because it installs the checkout as it is.
+
 What it does, in order:
 
 1. **Asks to start.** It says what it will do and waits for Enter. If you answer `n`, it stops before it writes or starts anything.
