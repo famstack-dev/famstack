@@ -27,7 +27,10 @@ to the wiki in the chat would break. ADR-023 D11.
 
 What it does not do: decide who the browser is (the gate does, and this
 module only asks `devices.who`), or give rights per person inside the
-wiki. Core keeps the dashboard's paths on this listener, because the
+wiki. Every paired device reads the same site, so the wiki holds only the
+family's shared part of the memory (the memory stacklet's
+`bot/wiki_input.py`); a person's own cards are on the memory pages, which
+check who asks. Core keeps the dashboard's paths on this listener, because the
 unknown page loads its styles and its join state from there.
 """
 

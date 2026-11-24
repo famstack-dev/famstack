@@ -107,7 +107,9 @@ by another id opens the card's page at its id, in one redirect. These links are 
 - `/go/docs/<paperless_id>`, when a document card has that number;
 - `/go/list/<slug>`.
 
-Topic and person links open the wiki.
+A shared topic's link opens the wiki. A person's link (`/go/person/<slug>`) opens their memory page. A link to a
+person's own topic (`/go/topic/<member>/<slug>`) opens the topic's memory page, and its `todo` link opens the list
+named after it. The wiki holds only what the family shares, because every paired device reads the same wiki.
 
 **Lists.** A list's name with `*`, `?` or `[` in it names no list. A list's page shows these things:
 
@@ -166,7 +168,7 @@ through the memory's cards API. Opening a link writes nothing.
 The lookups scan the frontmatter of a copy of the vault, with no index that can go stale. For an id that no card
 carries, they answer None and do not guess. Each reader runs them over the copy that it reads from:
 
-- Core's tools server uses the wiki's copy. Thus a `/go/` link names a card that is there, and 404 otherwise.
+- Core's tools server uses the brain, the copy that the wiki's input is made from. Thus a `/go/` link names a card that is there, and 404 otherwise.
 - The archivist uses its own mount, before it applies a correction to a capture. While that copy has not caught up, it
   falls back to the path that the filing message recorded.
 

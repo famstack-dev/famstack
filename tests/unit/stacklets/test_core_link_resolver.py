@@ -1,11 +1,13 @@
-"""The logical link resolver — first-class entity paths to a current wiki path.
+"""The logical link resolver: first-class entity paths to where they live now.
 
 Pins the pure mapping that keeps Matrix-frozen links from rotting. Entities are
-explicit nouns: `/person/homer` resolves to that member's home, `/topic/camping`
-to a shared topic under the bucket, `/topic/homer/gravel` to a personal topic,
-and a `todo`/`todos` leaf to the entity's task list. Because the kind is named,
-there is no member-vs-topic guessing. Unknown shapes return None so the HTTP
-layer 404s instead of pointing at a page that 404s anyway.
+explicit nouns: `/topic/camping` resolves to a shared topic's wiki page, and a
+`todo`/`todos` leaf to the entity's task list. A person's page and a person's
+own topic are not in the family wiki, which shows only what the family shares:
+`/person/homer` and `/topic/homer/gravel` land on the memory pages, which check
+who asks. Because the kind is named, there is no member-vs-topic guessing.
+Unknown shapes return None so the HTTP layer 404s instead of pointing at a page
+that 404s anyway.
 """
 
 from __future__ import annotations
@@ -16,17 +18,13 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "stacklets" / "core" / "tools-server"))
 
-from resolver import resolve_person_target, resolve_topic_target  # noqa: E402
+from resolver import resolve_topic_target  # noqa: E402
 
 _SHARED = "family"
 
 
 def _topic(*segments: str) -> str | None:
     return resolve_topic_target(list(segments), shared_bucket=_SHARED)
-
-
-def _person(*segments: str) -> str | None:
-    return resolve_person_target(list(segments))
 
 
 class TestTopicResolution:
@@ -64,34 +62,20 @@ class TestTopicResolution:
         assert _topic("random", "x", "y") is None
 
 
-class TestPersonResolution:
-
-    def test_person_home(self):
-        assert _person("homer") == "homer/about"
-
-    def test_person_todos(self):
-        assert _person("homer", "todo") == "homer/todos"
-
-    def test_person_todos_plural(self):
-        assert _person("marge", "todos") == "marge/todos"
-
-    def test_empty(self):
-        assert _person() is None
-
-    def test_too_many_segments(self):
-        # A person is a single top-level bucket, not a nested path.
-        assert _person("homer", "gravel") is None
-
-
 # ── build_redirect — the full target URL ────────────────────────────────
 
 
 from resolver import build_redirect  # noqa: E402
 
 
+# The cards a device may read, by their path in the brain, and their ids.
+_CARD_IDS = {"homer/gravel/topic.md": "topic-gravel", "homer/lists/gravel.md": "list-gravel"}
+
+
 def _b(kind, *rest, docs="https://docs.home.tld", wiki="https://wiki.home.tld"):
     return build_redirect(
         kind, list(rest), docs_base=docs, wiki_base=wiki, shared_bucket=_SHARED,
+        find_card_id=_CARD_IDS.get,
     )
 
 
@@ -106,17 +90,37 @@ class TestBuildRedirect:
     def test_docs_extra_segments(self):
         assert _b("docs", "1", "2") is None
 
-    def test_person_home(self):
-        assert _b("person", "homer") == "https://wiki.home.tld/homer/about"
-
     def test_topic_shared(self):
         assert _b("topic", "camping") == "https://wiki.home.tld/family/camping/about"
+
+    def test_topic_shared_by_its_bucket_stays_on_the_wiki(self):
+        assert _b("topic", "family", "camping") == "https://wiki.home.tld/family/camping/about"
 
     def test_topic_todos(self):
         assert _b("topic", "camping", "todo") == "https://wiki.home.tld/family/lists/camping"
 
-    def test_person_todos(self):
-        assert _b("person", "homer", "todo") == "https://wiki.home.tld/homer/todos"
+
+class TestAPersonsOwnPartLandsOnTheMemoryPages:
+    """The wiki shows only what the family shares. A person's page and their
+    own topics are on the memory pages, which check who asks."""
+
+    def test_a_persons_page(self):
+        assert _b("person", "homer") == "/memory/person/homer"
+
+    def test_a_persons_todos_open_their_page(self):
+        assert _b("person", "homer", "todo") == "/memory/person/homer"
+
+    def test_a_person_link_names_one_person(self):
+        assert _b("person", "homer", "gravel") is None
+
+    def test_a_persons_own_topic(self):
+        assert _b("topic", "homer", "gravel") == "/memory/topic/topic-gravel"
+
+    def test_a_persons_own_topic_todos_open_its_list(self):
+        assert _b("topic", "homer", "gravel", "todo") == "/card/list-gravel"
+
+    def test_a_persons_topic_the_device_may_not_read_is_a_404(self):
+        assert _b("topic", "marge", "geschenke") is None
 
     def test_unknown_kind(self):
         assert _b("photos", "1") is None
@@ -159,7 +163,7 @@ def _click(logical: str) -> str | None:
     kind, *rest = [s for s in logical.split("/") if s]
     return build_redirect(
         kind, rest, docs_base=_DOCS_BASE, wiki_base=_WIKI_BASE,
-        shared_bucket=_SHARED,
+        shared_bucket=_SHARED, find_card_id=_CARD_IDS.get,
     )
 
 
@@ -180,8 +184,11 @@ class TestEmittedLinksResolveWhereTheyUsedTo:
         assert _click(go_topic("family/camping", "todo")) == \
             f"{_WIKI_BASE}/family/lists/camping"
 
-    def test_person_link_resolves_to_the_member_page(self):
-        assert _click(go_person("homer")) == f"{_WIKI_BASE}/homer/about"
+    def test_person_link_resolves_to_the_memory_page(self):
+        assert _click(go_person("homer")) == "/memory/person/homer"
+
+    def test_a_persons_topic_link_resolves_to_the_memory_page(self):
+        assert _click(go_topic("homer/gravel")) == "/memory/topic/topic-gravel"
 
     def test_public_form_is_what_goes_into_the_message(self):
         # The base carries the `/go` prefix (core's LINK_BASE_URL), so

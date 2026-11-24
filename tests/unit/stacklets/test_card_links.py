@@ -204,9 +204,9 @@ class TestResolvingACardLink:
         assert build_redirect("topic", ["camping"], **LINKS) == (
             "http://wiki.example/family/camping/about"
         )
-        assert build_redirect("person", ["homer", "todo"], **LINKS) == (
-            "http://wiki.example/homer/todos"
-        )
+        # A person's part is read on the memory pages, which have no to-do
+        # page of a person's own: the leaf lands on the person's page.
+        assert build_redirect("person", ["homer", "todo"], **LINKS) == "/memory/person/homer"
         assert build_redirect("list", ["einkaufsliste"], **LINKS,
                               find_list=lambda slug: f"family/lists/{slug}.md") == (
             "/card/family/lists/einkaufsliste.md"

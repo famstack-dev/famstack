@@ -6,6 +6,11 @@
  * faster builds. Everything not touched here intentionally tracks
  * upstream defaults so a Quartz bump only needs eyes on the diff.
  *
+ * Its content (`/vault`) is the family's shared part of the memory, which
+ * the curator publishes (`bot/wiki_input.py`): the top level, the shared
+ * bucket and the media their cards show. No person's own bucket is in it,
+ * so no page, index or plugin here can show one.
+ *
  * The container runs `npx quartz build --serve` on every start, so
  * `process.env.*` reads here happen at startup — env changes in
  * `stacklet.toml` take effect on the next `stack up memory`.
@@ -50,8 +55,7 @@ const config: QuartzConfig = {
     // own labels match the navigation's.
     locale: (process.env.WIKI_LANGUAGE ?? "").toLowerCase().startsWith("de") ? "de-DE" : "en-US",
     baseUrl,
-    // Skip git internals and Obsidian config dirs. The vault is a
-    // real git clone, not a stripped checkout, so `.git` matters.
+    // Skip Obsidian config dirs and, should one ever appear, git's.
     // `**/*.json` keeps every sidecar record out of the published site:
     // the media archive's, each naming the room, the sender's full mxid and
     // the original filename, and a card's (ADR-018), which says where its
@@ -59,11 +63,6 @@ const config: QuartzConfig = {
     // and no page. The media itself is copied by the Assets emitter as usual.
     // SourceSenders reads a card's sidecar while the page builds and shows
     // only each source's first name and time.
-    // `media/**/.tmp-*` hides the archive's in-progress writes, which are
-    // renamed into place when complete. The watcher otherwise reports
-    // them, the Assets emitter copies or unlinks a path that is already
-    // gone, and Quartz 4.5.2 keeps the failed change and replays it on
-    // every rebuild, so no later asset reaches the site.
     // `**/diary/entries/**` keeps the diary's records off the site. They
     // are the raw source the diary pages are compiled from, and stay in
     // the brain for search and the agent; the family reads the pages.
@@ -73,7 +72,7 @@ const config: QuartzConfig = {
     // (`*/correspondents/*.md`) from its card. VaultLinks sends a link to
     // any of these cards to its page.
     ignorePatterns: [".git", ".obsidian", "private", "templates", "README.md", "**/README.md",
-                     "**/*.json", "media/**/.tmp-*",
+                     "**/*.json",
                      "**/diary/entries/**", "*/people/*.md", "*/*/topic.md",
                      "*/correspondents/*.md"],
     defaultDateType: "modified",
@@ -142,10 +141,12 @@ const config: QuartzConfig = {
       SourceSenders(),
       // A calendar's page ends with its last seven days, from the archive.
       CalendarLookBack(),
-      // The vault is a git repo — let git timestamps win over
-      // filesystem mtime so a fresh clone shows real commit dates.
+      // The content is the curator's copy of the shared part, not a git
+      // repository. The copy keeps each file's modification time from the
+      // brain, which is when the curator wrote it there, so a page without
+      // a date of its own shows that.
       Plugin.CreatedModifiedDate({
-        priority: ["frontmatter", "git", "filesystem"],
+        priority: ["frontmatter", "filesystem"],
       }),
       // github-dark in light mode is not a typo. custom.scss puts code
       // blocks on slate, the way famstack.dev does, and a light token

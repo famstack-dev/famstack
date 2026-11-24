@@ -651,13 +651,23 @@ def links_of(card: Card) -> list[tuple[str, str]]:
 def media_of(card: Card) -> set[str]:
     """The files of the media archive `card` embeds or links, as paths inside
     the archive (`2026/10/x.png`)."""
+    return media_in(card.text, card.path)
+
+
+def media_in(text: str, path: str) -> set[str]:
+    """The files of the media archive the card `text` at `path` embeds or
+    links, as paths inside the archive.
+
+        >>> media_in("![[/media/2026/10/x.png]]", "family/notes/n.md")
+        {'2026/10/x.png'}
+    """
     found = set()
-    for link in _EMBED.findall(card.text) + _FILE_LINK.findall(card.text):
+    for link in _EMBED.findall(text) + _FILE_LINK.findall(text):
         link = link.strip()
-        path = link.lstrip("/") if link.startswith("/") else \
-            posixpath.normpath(posixpath.join(posixpath.dirname(card.path), link))
-        if path.startswith(_MEDIA) and ".." not in path.split("/"):
-            found.add(path.removeprefix(_MEDIA))
+        target = link.lstrip("/") if link.startswith("/") else \
+            posixpath.normpath(posixpath.join(posixpath.dirname(path), link))
+        if target.startswith(_MEDIA) and ".." not in target.split("/"):
+            found.add(target.removeprefix(_MEDIA))
     return found
 
 

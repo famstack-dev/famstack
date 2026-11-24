@@ -83,9 +83,6 @@
 "stacklets/memory/hooks/on_install_success.py" = [
     "stacklets/memory/lib.py",
 ]
-"stacklets/memory/hooks/on_start.py" = [
-    "stacklets/memory/lib.py",
-]
 "stacklets/memory/hooks/on_start_ready.py" = [
     "lib/stack/vault.py",
     "stacklets/memory/lib.py",
