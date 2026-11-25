@@ -68,10 +68,11 @@ the image. The finish then starts on another image. Trigger: the first
 report of a finish on another image, or a pull that keeps a local tag.
 
 Debt: the plan reads the `[[backup.archive]]` sources from the checkout
-before it moves, not from the snapshot. The two are the same today,
-because each restart that applies a release takes its own snapshot.
-Trigger: the manifest records the sources, or a checkout moves without a
-restart.
+before it moves, not from the snapshot. The two differ when a release
+that changed the sources was applied without a snapshot: the snapshot is
+opt-in, so the newest one can predate several releases. Trigger: the
+manifest records the sources, or a release changes a stacklet's
+`[[backup.archive]]` sources.
 """
 
 from __future__ import annotations

@@ -739,7 +739,7 @@ the rendered `.env`.
 | `secrets.toml` | Auto-generated credentials (passwords, API tokens). |
 | `*.setup-done` | Marker files. They gate the once-only hooks (`on_install`, `on_install_success`). |
 | `*.up` | A stacklet without containers that is up, and the commit it started from. See [States](stack-reference.md#states). |
-| `snapshot-pending/<id>/MANIFEST.json` | The record of a restart whose snapshot failed. It says what the stacklet ran before the stop. While it is there, `stack up <id>` refuses the stacklet. A whole snapshot, `stack restart <id> --no-snapshot`, `stack destroy <id>` or `stack rollback` deletes it. See [What is in `.snapshots/`?](#what-is-in-snapshots) |
+| `snapshot-pending/<id>/MANIFEST.json` | The record of a restart whose snapshot failed. It says what the stacklet ran before the stop. While it is there, `stack up <id>` refuses the stacklet. A whole snapshot, `stack restart <id>` without `--with-snapshot`, `stack destroy <id>` or `stack rollback` deletes it. See [What is in `.snapshots/`?](#what-is-in-snapshots) |
 
 There is no `enabled` file. The state of a stacklet is derived from its Docker containers and the filesystem. See
 [States](stack-reference.md#states).
@@ -760,7 +760,7 @@ stack reads it as a stacklet's data folder. The stack tells Time Machine to skip
 
 | Entry | What it is | Who writes it | Who deletes it |
 |---|---|---|---|
-| `<time>/` | A snapshot, named for its time in UTC (`2026-11-24T2114Z`, then `-2` in the same minute). | `stack snapshot create`, and `stack restart` before it applies a release | `stack snapshot remove <time>`, and the restart, which keeps the newest 3 |
+| `<time>/` | A snapshot, named for its time in UTC (`2026-11-24T2114Z`, then `-2` in the same minute). | `stack snapshot create`, and `stack restart --with-snapshot` before it applies a release | `stack snapshot remove <time>`, and the restart, which keeps the newest 3 |
 | `<time>/MANIFEST.json` | The record of the snapshot: the release, the commit, and for each stacklet whether it was up, its commit, its migrations and its images. | the snapshot, as its last file | with the snapshot |
 | `<time>/stack/` | `stack.toml`, `users.toml` and `.stack/` at the time of the snapshot. | the snapshot | with the snapshot |
 | `<time>/<id>/` | The stacklet's data folder, without its `[[backup.archive]]` sources. | the snapshot | with the snapshot |

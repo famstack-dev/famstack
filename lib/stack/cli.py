@@ -55,6 +55,7 @@ from .removal import handle_destroy, handle_uninstall
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .devices import cli as devices_cli
 from .snapshot import cli as snapshot_cli, guard as snapshot_guard, lifecycle, restart_cli, rollback_cli
+from . import update_restart
 from .config_file import StackTomlUnreadable, configured_data_dir, read_stack_toml
 from .stack import Stack
 
@@ -625,8 +626,8 @@ class CLI:
         A requirement not set up that asks nothing is started first
         (`_start_requirements`); `Stack.up` refuses for any other.
         `stack.snapshot.guard` refuses a start that would lose the way
-        back: a running stacklet on an older release, which only `stack
-        restart` applies, with a snapshot first.
+        back: a stacklet whose last snapshot failed, or whose rollback
+        stopped halfway.
         """
         failed = (snapshot_guard.starting(self.stack, stacklet_id)
                   or self._start_requirements(stacklet_id))
@@ -1330,7 +1331,7 @@ def print_list(result: dict, stck=None) -> None:
     print(f"  {result.get('online', 0)}/{result.get('total', 0)} online{version_info}")
     stale = result.get("stale", [])
     if stale:
-        print_restart_call_to_action(stale)
+        update_restart.print_restart_call_to_action(stale)
         print()
     else:
         print(f"  {DIM}stack up <id> to start a stacklet{RESET}\n")
@@ -2283,9 +2284,9 @@ def handle_restart(stck, args):
 
     # No argument: restart exactly what is running code the checkout has
     # moved past. `all` stays the sledgehammer for when you want the lot.
-    no_snapshot = getattr(args, "no_snapshot", False)
+    with_snapshot = getattr(args, "with_snapshot", False)
     if not args.stacklet:
-        _restart_stale(stck, cli, yes=getattr(args, "yes", False), no_snapshot=no_snapshot)
+        _restart_stale(stck, cli, yes=getattr(args, "yes", False), with_snapshot=with_snapshot)
         return
 
     ids = _many_ids(args)
@@ -2294,7 +2295,7 @@ def handle_restart(stck, args):
         # back up against a dependency that is about to go down.
         with _restart_run(stck, cli._known(ids), cli._known(ids)) as unprepared:
             ids = _left(ids, unprepared)
-            before = restart_cli.record_or_exit(stck, ids, no_snapshot)
+            before = restart_cli.record_or_exit(stck, ids, with_snapshot)
             down_result = cli.down_many(ids)
             taken = restart_cli.take_or_exit(stck, before)
             restart_cli.stopped_or_exit(stck, cli._known(ids), down_result)
@@ -2326,7 +2327,7 @@ def handle_restart(stck, args):
         resting = [st["id"] for st in stck.discover() if st["id"] not in touched]
         with runs.reserve(stck.instance_dir, resting), \
                 _restart_run(stck, touched, []) as unprepared:
-            before = restart_cli.record_or_exit(stck, _left(installed, unprepared), no_snapshot)
+            before = restart_cli.record_or_exit(stck, _left(installed, unprepared), with_snapshot)
             down_result = cli.down_many(_left(sorted(stck.running_ids()), unprepared))
             taken = restart_cli.take_or_exit(stck, before)
             restart_cli.stopped_or_exit(stck, touched, down_result)
@@ -2343,7 +2344,7 @@ def handle_restart(stck, args):
         return
 
     with _restart_run(stck, [args.stacklet], cli._known([args.stacklet])):
-        before = restart_cli.record_or_exit(stck, [args.stacklet], no_snapshot)
+        before = restart_cli.record_or_exit(stck, [args.stacklet], with_snapshot)
         down_result = cli.down(args.stacklet)
         taken = restart_cli.take_or_exit(stck, before)
         restart_cli.stopped_or_exit(stck, [args.stacklet], down_result)
@@ -2356,7 +2357,7 @@ def handle_restart(stck, args):
         _tell_how_to_pair(stck, [args.stacklet])
 
 
-def _restart_stale(stck, cli, yes=False, no_snapshot=False):
+def _restart_stale(stck, cli, yes=False, with_snapshot=False):
     """Restart the stacklets whose containers predate the code on disk.
 
     Only the ones it can prove: a container stamped with the commit it
@@ -2396,7 +2397,7 @@ def _restart_stale(stck, cli, yes=False, no_snapshot=False):
     # dependency order.
     with _restart_run(stck, stale, stale) as unprepared:
         ids = _left(stale, unprepared)
-        before = restart_cli.record_or_exit(stck, ids, no_snapshot)
+        before = restart_cli.record_or_exit(stck, ids, with_snapshot)
         down_result = cli.down_many(ids)
         taken = restart_cli.take_or_exit(stck, before)
         restart_cli.stopped_or_exit(stck, stale, down_result)
@@ -2639,12 +2640,12 @@ def handle_install(stck, args):
 
 
 def handle_update(stck, args):
-    """Move the checkout to a release. Restarting stays the admin's call.
+    """Move the checkout to a release, then restart what it changes.
 
-    Sources only: nothing here stops or starts a service. A family is
-    using these, so when they go down is a decision for the person at the
-    keyboard, not a side effect of updating. The command works out which
-    restarts the release actually earns and prints them.
+    The plan names the restarts the release earns, and the admin's
+    confirmation covers them, because a family loses those services for
+    the restart. `--no-restart` only moves; `--with-snapshot` passes on
+    to the restart (`stack.update_restart`).
 
     The move is a transaction. Local edits are set aside and put back,
     and if they collide with the release the whole thing winds back to
@@ -2654,9 +2655,11 @@ def handle_update(stck, args):
     from .prompt import TEAL, confirm
     from .updater import (
         Checkout, latest_tag, migrations_in, migrations_left_behind, offered_tag,
-        restart_targets, touches_framework, touched_stacklets, version_key,
+        restart_targets, version_key,
     )
 
+    if refused := update_restart.refused(args):
+        print_error({"error": refused}); sys.exit(1)
     checkout = Checkout(stck.root)
     if not checkout.is_git():
         print_error({"error": "This is not a git checkout, so there is no release to move to",
@@ -2761,8 +2764,7 @@ def handle_update(stck, args):
     if branch:
         print(f"\n  {DIM}This leaves {branch} for the tag, which detaches HEAD. "
               f"Your work stays on {branch}; git switch {branch} goes back.{RESET}")
-    if targets:
-        _print_restart_plan(targets, changed)
+    update_restart.print_plan(targets, changed, args)
     if arriving:
         # Never run from here: a migration needs the new code running.
         print(f"  Data migrations that run when their stacklet next starts: "
@@ -2771,7 +2773,6 @@ def handle_update(stck, args):
           f"https://github.com/famstack-dev/famstack/releases/tag/{target}{RESET}")
 
     if getattr(args, "dry_run", False):
-        _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
         return
     if not getattr(args, "yes", False):
         if not sys.stdin.isatty():
@@ -2801,13 +2802,15 @@ def handle_update(stck, args):
     if targets != planned:
         # The plan above was printed before the wait; say what it is now.
         print(f"  {DIM}What runs changed while this waited.{RESET}")
-        _print_restart_plan(targets, changed)
-    _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets)
+        update_restart.print_plan(targets, changed, args)
+    code = update_restart.apply(stck, targets, changed, running, args)
     # The app is built from the checkout, so moving the checkout leaves the
     # installed one behind until it is built again.
     if menubar_app.installed():
         print(f"  {DIM}The menu bar app is built from the checkout:{RESET} "
               f"{TEAL}./stack app install{RESET} {DIM}updates it.{RESET}\n")
+    if code:
+        sys.exit(code)
 
 
 def _move_to(stck, checkout, target: str, dirty: list[str], collisions: list[str]) -> None:
@@ -2838,54 +2841,6 @@ def _applied_migrations(stck, stacklet_id) -> set[str]:
     """The migration numbers recorded as applied in a stacklet's data."""
     migrations = stck.migrations(stacklet_id)
     return set(migrations.record().applied) if migrations else set()
-
-
-def print_restart_call_to_action(targets, framework=False) -> None:
-    """The one loud line that says the code moved and nothing applied it.
-
-    Printed wherever the gap is visible: after an update, under a list
-    that shows stale stacklets. Same wording every time, because an
-    operator should recognise it rather than read it twice.
-    """
-    from .prompt import TEAL
-
-    print(f"\n  {ORANGE}{BOLD}\u26a0  Code updated. A RESTART is required "
-          f"to apply it.{RESET}")
-    if framework:
-        print(f"     {DIM}The framework changed, so this is everything running.{RESET}")
-        print(f"     {TEAL}./stack restart{RESET}")
-        return
-    print(f"     {TEAL}./stack restart{RESET}  "
-          f"{DIM}or: {', '.join('./stack restart ' + t for t in targets[:3])}{RESET}")
-
-
-def _print_restart_plan(targets: list[str], changed: list[str]) -> None:
-    """The plan's line that names what needs a restart after the move."""
-    from .updater import touches_framework
-    scope = "every running stacklet" if touches_framework(changed) else ", ".join(targets)
-    print(f"\n  Needs a restart afterwards: {scope or 'nothing'}")
-    if targets:
-        print(restart_cli.plan_line())
-
-
-def _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets):
-    """What the admin has to run for the new code to be the running code.
-
-    Deliberately advice and not action: a stacklet only picks up a
-    release when its containers are recreated, and that is a decision
-    about when the family loses the service.
-    """
-    if not targets:
-        idle = sorted(touched_stacklets(changed) - set(running))
-        if idle:
-            print(f"\n  {DIM}Nothing to restart. {', '.join(idle)} changed but "
-                  f"is not running, and will pick this up on the next stack up.{RESET}\n")
-        else:
-            print(f"\n  {DIM}Nothing running was changed by this release.{RESET}\n")
-        return
-
-    print_restart_call_to_action(targets, framework=touches_framework(changed))
-    print(f"     {TEAL}./stack doctor{RESET}\n")
 
 
 def _restore_edits(checkout, was, target, collisions) -> bool:
@@ -3460,7 +3415,7 @@ def _main():
                    help="Stacklets to restart (space or comma separated), "
                         "'all', or nothing for whatever is running stale code")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
-    p.add_argument("--no-snapshot", action="store_true", help="Start without a snapshot first")
+    p.add_argument("--with-snapshot", action="store_true", help="Take a snapshot before a new release starts")
     p = sub.add_parser("update")
     p.add_argument("tag", nargs="?", default=None,
                    help="Release to move to (default: the newest release; a pre-release "
@@ -3469,6 +3424,8 @@ def _main():
                    help="Show the plan and stop. Still fetches tags, "
                         "or the answer would be as stale as your last fetch")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
+    p.add_argument("--with-snapshot", action="store_true", help="Take a snapshot before each restart")
+    p.add_argument("--no-restart", action="store_true", help="Only move the checkout")
     p = sub.add_parser("extensions")
     ext_sub = p.add_subparsers(dest="extensions_action")
     ext_sub.add_parser("list")

@@ -13,6 +13,9 @@ that `v0.4.0` took. The layout of a snapshot and its record are thus a contract 
 
 ## Decision
 
+A snapshot is opt-in. The stack takes one only on request: `stack update --with-snapshot`, `stack restart
+--with-snapshot` or `stack snapshot create`.
+
 ### The layout
 
 The snapshots are in `.snapshots/` in the data folder. Each snapshot is one folder, named for its time in UTC:

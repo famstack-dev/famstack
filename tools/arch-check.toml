@@ -68,6 +68,7 @@ units = [
     "snapshot",
     "stack",
     "stacklet_code",
+    "update_restart",
     "updater",
     "users",
     "web",

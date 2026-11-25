@@ -200,7 +200,7 @@ def check_migrations(stacklet: str, pending: list[tuple[str, str]],
     here that this checkout does not ship: older code is reading data a
     newer release changed. `stale` says the stacklet runs code from before
     the last update: its migrations then run at `stack restart`, which
-    takes a snapshot first, and `stack up` refuses it.
+    applies the release (with `--with-snapshot`, after a snapshot).
     """
     start = f"stack restart {stacklet}" if stale else f"stack up {stacklet}"
     findings = [Finding(

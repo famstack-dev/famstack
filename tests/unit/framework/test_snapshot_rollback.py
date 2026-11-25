@@ -642,7 +642,7 @@ def test_the_rollback_ends_the_wait_of_a_failed_take(updated):
     unreadable = updated.data / "docs" / "postgres" / "base.dat"
     unreadable.chmod(0)
     try:
-        assert updated.stack("restart", "docs").code == 1
+        assert updated.stack("restart", "docs", "--with-snapshot").code == 1
     finally:
         unreadable.chmod(0o644)
     assert (updated.instance / ".stack" / "snapshot-pending" / "docs").is_dir()

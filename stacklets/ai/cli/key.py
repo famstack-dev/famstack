@@ -104,9 +104,9 @@ def _new(config: dict, ai: dict, *, wait: bool) -> dict:
     While the oMLX app runs, a restart would load famstack's model beside
     the app's: it returns the error `omlx_app.QUIT_FIRST` and changes
     nothing. So does a running stacklet that uses the key and whose start
-    `stack up` would refuse (`stack.snapshot.guard`), such as one on
-    another release after `stack update`: it would keep the old key while
-    oMLX takes only the new one."""
+    `stack up` would refuse (`stack.snapshot.guard`), such as one that
+    waits for its snapshot: it would keep the old key while oMLX takes
+    only the new one."""
     from stack.ai.probe import probe
 
     if refused := _refused_consumers(config):

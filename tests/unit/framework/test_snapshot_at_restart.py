@@ -1,10 +1,11 @@
 # ruff: noqa: F811  (the imported fixtures are the tests' parameters)
-"""The snapshot that `stack restart` takes when it applies a release, as the admin runs it.
+"""The snapshot that `stack restart --with-snapshot` takes when it applies a release, as the admin runs it.
 
-`stack update` moves the checkout to a release and starts nothing. The
-restart after it stops each stacklet that runs older code, takes a
-snapshot of its state while it is stopped anyway, and only then starts
-it on the new release. These tests run `./stack` as the admin does, as a
+The snapshot is opt-in. A restart with `--with-snapshot` stops each
+stacklet that runs older code, takes a snapshot of its state while it
+is stopped anyway, and only then starts it on the new release. A
+restart without the flag takes none. The tests below name a restart as
+the admin types it; each one that is about the snapshot passes the flag. These tests run `./stack` as the admin does, as a
 process of its own (`python -m stack`), from a fabricated git checkout
 with two stacklets, `docs` and `photos`, and two releases: `v0.4.0-rc.1`,
 which both run, and `v0.4.0-rc.2`, which changes both compose files. The
@@ -54,7 +55,7 @@ def test_the_restart_stops_docs_takes_its_snapshot_then_starts_it(checkout):
     takes the snapshot of its state, and starts docs on rc.2."""
     checkout.docker.forget()
 
-    ran = checkout.stack("restart")
+    ran = checkout.stack("restart", "--with-snapshot")
 
     assert ran.code == 0, ran.err
     [name] = checkout.snapshot_folders()
@@ -73,7 +74,7 @@ def test_the_snapshot_names_the_commit_before_the_release_after_and_the_running_
     names the commit docs ran before (rc.1), the release the restart
     applied (rc.2), and the image the container ran, not the tag that the
     new compose file names. A rollback starts exactly that image again."""
-    ran = checkout.stack("restart")
+    ran = checkout.stack("restart", "--with-snapshot")
 
     assert ran.code == 0, ran.err
     manifest = checkout.manifest(checkout.snapshot_folders()[0])
@@ -88,20 +89,6 @@ def test_the_snapshot_names_the_commit_before_the_release_after_and_the_running_
                                            "digest": OLD_DIGEST}
 
 
-def test_the_update_plan_says_the_restart_takes_a_snapshot_first(checkout):
-    """Given a checkout on rc.1 with docs running it, when the admin asks
-    `stack update` for its plan, then the plan names the snapshot the
-    restart takes first, where it goes, and how to skip it."""
-    checkout.git("checkout", "-q", "v0.4.0-rc.1")
-
-    ran = checkout.stack("update", "v0.4.0-rc.2", "--dry-run")
-
-    assert ran.code == 0, ran.err
-    assert ".snapshots" in ran.out
-    assert "stack restart --no-snapshot" in ran.out
-    assert checkout.snapshot_folders() == []
-
-
 # ── No release, no snapshot ──────────────────────────────────────────────
 
 def test_a_restart_on_the_current_code_takes_no_snapshot(checkout):
@@ -110,7 +97,7 @@ def test_a_restart_on_the_current_code_takes_no_snapshot(checkout):
     nothing new starts, so there is nothing to go back from."""
     checkout.docker.commits(docs=checkout.rc2, photos=checkout.rc2)
 
-    ran = checkout.stack("restart", "docs")
+    ran = checkout.stack("restart", "--with-snapshot", "docs")
 
     assert ran.code == 0, ran.err
     assert checkout.snapshot_folders() == []
@@ -126,7 +113,7 @@ def test_the_resting_restart_changes_nothing_in_the_snapshots(checkout):
     before = sorted(p.relative_to(checkout.data) for p in (checkout.data / ".snapshots").rglob("*"))
     checkout.docker.forget()
 
-    ran = checkout.stack("restart")
+    ran = checkout.stack("restart", "--with-snapshot")
 
     assert ran.code == 0, ran.err
     assert sorted(p.relative_to(checkout.data)
@@ -134,10 +121,11 @@ def test_the_resting_restart_changes_nothing_in_the_snapshots(checkout):
     assert checkout.docker.compose_steps() == []
 
 
-def test_no_snapshot_restarts_without_one(checkout):
-    """Given the update to rc.2, when the admin runs `stack restart
-    --no-snapshot`, then docs starts on rc.2 and no snapshot is taken."""
-    ran = checkout.stack("restart", "--no-snapshot")
+def test_a_restart_takes_no_snapshot_unless_asked(checkout):
+    """Given the update to rc.2, when the admin runs `stack restart`
+    without `--with-snapshot`, then docs starts on rc.2 and no snapshot
+    is taken: the snapshot is opt-in."""
+    ran = checkout.stack("restart")
 
     assert ran.code == 0, ran.err
     assert checkout.snapshot_folders() == []
@@ -154,7 +142,7 @@ def test_the_restart_keeps_the_newest_three_and_names_the_one_it_removed(checkou
         checkout.older_snapshot(name)
     before = checkout.snapshot_folders()
 
-    ran = checkout.stack("restart")
+    ran = checkout.stack("restart", "--with-snapshot")
 
     assert ran.code == 0, ran.err
     new = the_new_snapshot(checkout, before)
@@ -174,7 +162,7 @@ def test_an_unreadable_snapshot_is_never_removed_and_never_counted(checkout):
     (broken / "MANIFEST.json").write_text("{not json")
     before = checkout.snapshot_folders()
 
-    ran = checkout.stack("restart")
+    ran = checkout.stack("restart", "--with-snapshot")
 
     assert ran.code == 0, ran.err
     new = the_new_snapshot(checkout, before)
@@ -186,7 +174,8 @@ def test_an_unreadable_snapshot_is_never_removed_and_never_counted(checkout):
 
 # The four ways `stack restart` names what it restarts. Each one records
 # before its stop and starts nothing on the new release without a snapshot.
-RESTARTS = [("restart",), ("restart", "docs"), ("restart", "docs", "photos"), ("restart", "all")]
+RESTARTS = [("restart", "--with-snapshot"), ("restart", "docs", "--with-snapshot"),
+            ("restart", "docs", "photos", "--with-snapshot"), ("restart", "all", "--with-snapshot")]
 
 
 @pytest.mark.parametrize("command", RESTARTS, ids=" ".join)
@@ -217,7 +206,7 @@ def test_a_failed_snapshot_keeps_docs_from_starting_on_the_new_release(checkout,
     assert checkout.docker.state_of("docs") == "stopped"
     assert ".snapshots" in ran.err
     assert "stack restart docs" in ran.err
-    assert "--no-snapshot" in ran.err
+    assert "--with-snapshot" in ran.err
 
 
 def test_a_record_that_fails_stops_nothing(checkout):
@@ -227,13 +216,13 @@ def test_a_record_that_fails_stops_nothing(checkout):
     (checkout.data / "docs" / ".migrations.json").write_text("{not json")
     checkout.docker.forget()
 
-    ran = checkout.stack("restart")
+    ran = checkout.stack("restart", "--with-snapshot")
 
     assert ran.code == 1
     assert checkout.docker.compose_steps() == []
     assert checkout.docker.state_of("docs") == "running"
     assert ".migrations.json" in ran.err
-    assert "--no-snapshot" in ran.err
+    assert "--with-snapshot" in ran.err
 
 
 def test_after_a_failed_snapshot_docs_does_not_start_with_stack_up(checkout):
@@ -241,7 +230,7 @@ def test_after_a_failed_snapshot_docs_does_not_start_with_stack_up(checkout):
     admin runs `stack up docs`, then docs stays stopped and the stack
     names the restart that takes the snapshot: `up` takes none."""
     (checkout.data / ".snapshots").write_text("not a folder")
-    assert checkout.stack("restart").code == 1
+    assert checkout.stack("restart", "--with-snapshot").code == 1
     (checkout.data / ".snapshots").unlink()
     checkout.docker.forget()
 
@@ -258,10 +247,10 @@ def test_after_a_failed_snapshot_the_restart_of_docs_takes_it(checkout):
     admin fixes the cause and runs `stack restart docs`, as the stack
     said, then the snapshot is taken and docs starts on rc.2."""
     (checkout.data / ".snapshots").write_text("not a folder")
-    assert checkout.stack("restart").code == 1
+    assert checkout.stack("restart", "--with-snapshot").code == 1
     (checkout.data / ".snapshots").unlink()
 
-    ran = checkout.stack("restart", "docs")
+    ran = checkout.stack("restart", "--with-snapshot", "docs")
 
     assert ran.code == 0, ran.err
     [name] = checkout.snapshot_folders()
@@ -269,14 +258,14 @@ def test_after_a_failed_snapshot_the_restart_of_docs_takes_it(checkout):
     assert checkout.docker.state_of("docs") == "running"
 
 
-def test_after_a_failed_snapshot_no_snapshot_starts_docs(checkout):
+def test_after_a_failed_snapshot_a_plain_restart_starts_docs(checkout):
     """Given docs stopped by a restart whose snapshot failed, when the
-    admin runs `stack restart docs --no-snapshot`, then docs starts on
-    rc.2 without a snapshot."""
+    admin runs `stack restart docs` without `--with-snapshot`, then docs
+    starts on rc.2 without a snapshot."""
     (checkout.data / ".snapshots").write_text("not a folder")
-    assert checkout.stack("restart").code == 1
+    assert checkout.stack("restart", "--with-snapshot").code == 1
 
-    ran = checkout.stack("restart", "docs", "--no-snapshot")
+    ran = checkout.stack("restart", "docs")
 
     assert ran.code == 0, ran.err
     assert checkout.docker.state_of("docs") == "running"
@@ -287,7 +276,7 @@ def test_the_restart_of_all_takes_the_snapshot_of_a_stacklet_on_an_older_release
     """Given that `stack update` moved the checkout and docs runs rc.1,
     when the admin runs `stack restart all`, then docs gets its snapshot
     before it starts on rc.2, as with the bare restart."""
-    ran = checkout.stack("restart", "all")
+    ran = checkout.stack("restart", "--with-snapshot", "all")
 
     assert ran.code == 0, ran.err
     [name] = checkout.snapshot_folders()
@@ -306,12 +295,12 @@ def test_a_stacklet_without_containers_waits_for_its_snapshot_too(host_checkout)
     knows."""
     checkout = host_checkout
     (checkout.data / ".snapshots").write_text("not a folder")
-    assert checkout.stack("restart").code == 1
+    assert checkout.stack("restart", "--with-snapshot").code == 1
     assert not (checkout.instance / ".stack" / "speech.up").exists()
     (checkout.data / ".snapshots").unlink()
 
     refused = checkout.stack("up", "speech")
-    ran = checkout.stack("restart", "speech")
+    ran = checkout.stack("restart", "--with-snapshot", "speech")
 
     assert refused.code != 0
     assert ran.code == 0, ran.err
@@ -330,7 +319,7 @@ def test_a_commit_git_does_not_know_is_named_and_takes_no_snapshot(checkout):
     as a stacklet whose commit is unknown instead of saying nothing."""
     checkout.docker.commits(docs="0123456789abcdef", photos=checkout.rc2)
 
-    ran = checkout.stack("restart", "docs")
+    ran = checkout.stack("restart", "--with-snapshot", "docs")
 
     assert ran.code == 0, ran.err
     assert checkout.snapshot_folders() == []
@@ -370,7 +359,7 @@ def test_a_record_that_cannot_be_kept_stops_nothing(checkout):
     locked.chmod(0o500)
     checkout.docker.forget()
     try:
-        ran = checkout.stack("restart")
+        ran = checkout.stack("restart", "--with-snapshot")
     finally:
         locked.chmod(0o700)
 
@@ -404,18 +393,18 @@ def test_an_unreadable_record_names_its_file_and_the_two_ways_on(checkout):
     cut off, when the admin runs `stack restart docs`, then docs does not
     start, and the stack names the file and the two ways on."""
     (checkout.data / ".snapshots").write_text("not a folder")
-    assert checkout.stack("restart").code == 1
+    assert checkout.stack("restart", "--with-snapshot").code == 1
     (checkout.data / ".snapshots").unlink()
     pending_record(checkout, "docs").write_text("{cut off")
     checkout.docker.forget()
 
-    ran = checkout.stack("restart", "docs")
+    ran = checkout.stack("restart", "--with-snapshot", "docs")
 
     assert ran.code == 1
     assert checkout.docker.compose_steps() == []
     assert str(pending_record(checkout, "docs")) in ran.err
+    assert "stack restart docs --with-snapshot" in ran.err
     assert "stack restart docs\n" in ran.err
-    assert "stack restart docs --no-snapshot" in ran.err
     assert "still runs" not in ran.err
 
 
@@ -424,7 +413,7 @@ def test_destroy_ends_the_wait_and_a_new_install_starts(checkout):
     docs and then runs `stack up docs`, then docs starts as a new install,
     no record waits, and no snapshot claims that the new install ran rc.1."""
     (checkout.data / ".snapshots").write_text("not a folder")
-    assert checkout.stack("restart").code == 1
+    assert checkout.stack("restart", "--with-snapshot").code == 1
     (checkout.data / ".snapshots").unlink()
 
     destroyed = checkout.stack("destroy", "docs", "--yes")

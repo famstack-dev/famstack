@@ -196,7 +196,7 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     A refusal names the run that holds the AI's lock. A settings file of famstack's oMLX
     that cannot be read stops it before anything is written. So does an ai
     stacklet that `stack up ai` would refuse (`stack.snapshot.guard`), such
-    as one that runs on another release after `stack update`: the error
+    as one that waits for its snapshot: the error
     says what to run first. Returns an error, or None when the engine is up.
     """
     if refused := _refused_start(config):

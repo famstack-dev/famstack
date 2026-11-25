@@ -1,11 +1,12 @@
 """The snapshot before a release: what a restart takes before it applies one.
 
-`stack update` moves the checkout to a release and starts nothing. The
-data changes at the restart that follows. At that restart a stacklet
-starts on the new code and its migrations run, some of them one way.
+`stack update` moves the checkout to a release and then restarts what it
+changes (`stack.update_restart`). At that restart a stacklet starts on
+the new code and its migrations run, some of them one way.
 
-For this reason the restart takes a snapshot of each stacklet that it
-moves to a new release. It takes the snapshot while the containers are
+For this reason a restart with `--with-snapshot` takes a snapshot of
+each stacklet that it moves to a new release. Without the flag it takes
+none: the snapshot is opt-in. It takes the snapshot while the containers are
 stopped anyway. It starts the stacklet only after the snapshot is whole.
 A restart that applies no release takes none.
 
@@ -20,19 +21,19 @@ A restart that applies no release takes none.
 
 One restart, in time:
 
-    stack restart
+    stack restart --with-snapshot
       record   docs runs rc.1: its commit, its images, its migrations
       stop     docs
       take     .snapshots/2026-11-25T2114Z/
       start    docs on rc.2, its migrations run
       prune    the newest 3 snapshots stay
 
-    stack restart, when the take fails
+    stack restart --with-snapshot, when the take fails
       record   docs runs rc.1
       stop     docs
       take     refused: the disk is full
       keep     .stack/snapshot-pending/docs/   docs starts on no command
-    stack restart docs                         after the admin freed space
+    stack restart docs --with-snapshot         after the admin freed space
       record   the kept record
       take     .snapshots/2026-11-25T2131Z/
       start    docs on rc.2
@@ -53,14 +54,14 @@ Why it works this way:
 - **No snapshot, no start.** When the snapshot cannot be recorded or
   taken, the restart starts nothing on the new release. A one-way
   migration with no way back is worse than a page that is down. The page
-  stays down until the admin chooses: free space and restart again, or
-  `--no-snapshot`.
+  stays down until the admin chooses: free space and restart again with
+  `--with-snapshot`, or restart without it.
 - **A failed take keeps its record** (`stack.snapshot.pending`), because
   the stacklet is stopped by then. Docker no longer lists its commit. A
   stacklet without containers has lost its `.up` stamp. While the record
-  waits, `stack up` and every restart refuse to start the stacklet. The
-  next restart of it takes the snapshot from the record. `--no-snapshot`
-  drops the record.
+  waits, `stack up` and every restart with `--with-snapshot` refuse to
+  start the stacklet without its snapshot. The next such restart takes
+  the snapshot from the record. A restart without the flag drops it.
 - **An unknown commit is said, not guessed.** A stacklet that runs with
   no commit label, or a commit git does not know (a shallow clone), may
   or may not apply a release. The restart takes no snapshot of it and
@@ -193,8 +194,8 @@ def before_stop(stck, ids: list[str], *, skip: bool = False) -> Before:
     """Record what the stacklets among `ids` run while they still run.
     Only the stacklets that apply a release are recorded. The kept record
     of each one whose last snapshot failed joins them
-    (`stack.snapshot.pending`). `skip` is `stack restart --no-snapshot`:
-    it drops the kept records of `ids`.
+    (`stack.snapshot.pending`). `skip` is a restart without
+    `--with-snapshot`: it drops the kept records of `ids`.
 
     Keeps the new record in `.stack/` before anything stops, because a
     stacklet whose take fails must wait for its snapshot. Returns an empty

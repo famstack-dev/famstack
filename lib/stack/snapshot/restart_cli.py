@@ -1,7 +1,8 @@
 """The snapshot of a restart, as `stack restart` and `stack up` call it.
 
-The restart that applies a release (`stack restart` in `stack.cli`) takes
-its snapshot in three calls around its own stop and start. They print
+The restart with `--with-snapshot` (`stack restart` in `stack.cli`, also
+as `stack update --with-snapshot` runs it) takes its snapshot in three
+calls around its own stop and start. They print
 what the restart says and exit 1 when no snapshot was taken. The
 decisions are in `stack.snapshot.release`. This module holds the text.
 A stacklet whose take failed waits for its snapshot, and
@@ -9,13 +10,11 @@ A stacklet whose take failed waits for its snapshot, and
 
     from stack.snapshot import restart_cli
 
-    before = restart_cli.record_or_exit(stck, ["docs"], no_snapshot=False)   # while docs runs
+    before = restart_cli.record_or_exit(stck, ["docs"], with_snapshot=True)  # while docs runs
     cli.down_many(["docs"])
     taken = restart_cli.take_or_exit(stck, before)        # nothing starts without it
     cli.up_many(["docs"])
     restart_cli.keep_and_say(stck, taken)                 # the newest 3 stay
-
-`plan_line` is the line of `stack update`'s plan that names the snapshot.
 """
 
 from __future__ import annotations
@@ -25,26 +24,27 @@ from typing import NoReturn
 
 from .. import run_log
 from ..prompt import DIM, GREEN, ORANGE, RED, RESET
-from . import pending, release, store
+from . import pending, release
 from .errors import SnapshotError
 from .release import Before
 from .store import Taken
 
-__all__ = ["keep_and_say", "plan_line", "problem_line", "record_or_exit", "stopped_or_exit",
-           "take_or_exit"]
+__all__ = ["keep_and_say", "problem_line", "record_or_exit", "stopped_or_exit", "take_or_exit"]
 
 
-def record_or_exit(stck, ids: list[str], no_snapshot: bool) -> Before:
+def record_or_exit(stck, ids: list[str], with_snapshot: bool) -> Before:
     """`release.before_stop` for a restart of `ids`, before it stops them.
-    `no_snapshot` is `stack restart --no-snapshot`. Exits 1 with the cause
+    `with_snapshot` is `stack restart --with-snapshot`; without it the
+    restart takes no snapshot and drops the kept record of a failed one.
+    Exits 1 with the cause
     and the two ways on when the record fails. In that case nothing has
     stopped.
     Names each stacklet whose commit is unknown, which gets no snapshot.
 
-        record_or_exit(stck, ["docs"], no_snapshot=False)   # Before(stacklets={"docs": …}, …)
+        record_or_exit(stck, ["docs"], with_snapshot=True)   # Before(stacklets={"docs": …}, …)
     """
     try:
-        before = release.before_stop(stck, ids, skip=no_snapshot)
+        before = release.before_stop(stck, ids, skip=not with_snapshot)
     except pending.Unreadable as error:
         _exit(stck, [error.stacklet], str(error), _unreadable_lines(error))
     except SnapshotError as error:
@@ -126,18 +126,6 @@ def keep_and_say(stck, taken: Taken | None) -> None:
         print("\n".join(_taken_lines(taken, release.prune(stck.data, taken.snapshot.name))))
 
 
-def plan_line() -> str:
-    """The line of `stack update`'s plan that names the snapshot, under
-    "Needs a restart afterwards: docs".
-
-        The restart takes a snapshot of each first, in .snapshots/ of the data folder.
-        To restart without one: stack restart --no-snapshot
-    """
-    return (f"  The restart takes a snapshot of each first, in {store.SNAPSHOTS_FOLDER}/ "
-            f"of the data folder.\n  {DIM}To restart without one: "
-            f"stack restart --no-snapshot{RESET}")
-
-
 # ── What the restart says ────────────────────────────────────────────────
 
 def _refused_lines(cause: str, waiting: list[str], running: list[str]) -> list[str]:
@@ -149,8 +137,8 @@ def _refused_lines(cause: str, waiting: list[str], running: list[str]) -> list[s
         _refused_lines("the disk is full", ["docs"], [])
         #   ✗  No snapshot: the disk is full
         #      docs did not start on the new release, because …
-        #      Free space or fix the cause, then: stack restart docs
-        #      Or restart without a snapshot:    stack restart docs --no-snapshot
+        #      Free space or fix the cause, then: stack restart docs --with-snapshot
+        #      Or restart without a snapshot:    stack restart docs
     """
     held = " ".join([*waiting, *running])
     states = []
@@ -160,8 +148,8 @@ def _refused_lines(cause: str, waiting: list[str], running: list[str]) -> list[s
         states.append(f"{', '.join(running)} still runs the release it ran")
     return [f"\n  {RED}✗{RESET}  No snapshot: {cause}",
             f"     {'; '.join(states)}, because a migration of a release cannot be undone without one.",
-            f"     Free space or fix the cause, then: stack restart {held}",
-            f"     Or restart without a snapshot:    stack restart {held} --no-snapshot\n"]
+            f"     Free space or fix the cause, then: stack restart {held} --with-snapshot",
+            f"     Or restart without a snapshot:    stack restart {held}\n"]
 
 
 def _unreadable_lines(error: pending.Unreadable) -> list[str]:
@@ -170,13 +158,13 @@ def _unreadable_lines(error: pending.Unreadable) -> list[str]:
 
         _unreadable_lines(Unreadable("docs", Path(".stack/snapshot-pending/docs/MANIFEST.json"), …))
         #   ✗  No snapshot: the record of the failed snapshot of docs cannot be read: …
-        #      Restore the file, then:            stack restart docs
-        #      Or restart without a snapshot:     stack restart docs --no-snapshot
+        #      Restore the file, then:            stack restart docs --with-snapshot
+        #      Or restart without a snapshot:     stack restart docs
     """
     return [f"\n  {RED}✗{RESET}  No snapshot: {error}",
             f"     {error.stacklet} waits for that snapshot and did not start.",
-            f"     Restore the file from a backup, then: stack restart {error.stacklet}",
-            f"     Or restart without a snapshot:        stack restart {error.stacklet} --no-snapshot\n"]
+            f"     Restore the file from a backup, then: stack restart {error.stacklet} --with-snapshot",
+            f"     Or restart without a snapshot:        stack restart {error.stacklet}\n"]
 
 
 def _unknown_lines(ids: list[str]) -> list[str]:

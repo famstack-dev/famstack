@@ -28,7 +28,7 @@ The run, in order:
    (`drill_release`): a real old release, the build, a broken build.
 3. Install the old release with the family, start messages and docs,
    file two letters through the chat.
-4. Update to the build and restart: the snapshot of a release without
+4. Update to the build and restart with `--with-snapshot`: the snapshot of a release without
    `stack rollback`, before Paperless migrates its database one way.
 5. Kill the rollback back to the old release after each step that it
    records, until it passed the checkout; `stack up` must refuse in
@@ -37,8 +37,9 @@ The run, in order:
 6. On the build, `stack rollback` refuses the open record and names
    the old release; the guide's way out goes back to it, finishes the
    record there, and updates to the build again.
-7. Update to the broken build. `stack up docs` must refuse. `stack
-   restart` takes the snapshot, the migration empties the docs page.
+7. Update to the broken build with `--no-restart`. `stack restart
+   --with-snapshot` takes the snapshot, the migration empties the docs
+   page.
 8. One letter filed after the snapshot; one image tag moved by hand.
 9. `stack rollback --yes`: the letters back, the release from before,
    the replaced state kept, the late letter named and still on disk,
@@ -442,7 +443,7 @@ def update_from_old(report: Report, filed: list[dict]) -> None:
     names = snapshot_names()
     free_before = audit.free_kb(DATA)
     since = time.time()
-    restart = stack(report, "restart", timeout=2400)
+    restart = stack(report, "restart", "--with-snapshot", timeout=2400)
     free_after = audit.free_kb(DATA)
     newest = new_snapshot(names)
     documents = documents_once_up()
@@ -583,7 +584,7 @@ def finish_on_the_build(report: Report) -> None:
     stack(report, "update", releases.BUILD, "--yes")
     names = snapshot_names()
     free_before = audit.free_kb(DATA)
-    restart = stack(report, "restart", timeout=2400)
+    restart = stack(report, "restart", "--with-snapshot", timeout=2400)
     measure(report, "restart after the open record", new_snapshot(names), free_before, audit.free_kb(DATA),
             restart.seconds)
     stack(report, "version")
@@ -609,17 +610,14 @@ def end_the_record_by_hand(report: Report) -> None:
 
 
 def update_to_broken(report: Report, before: list[dict]) -> dict:
-    """Update to the broken build; `stack up` refuses; the restart takes the snapshot and breaks the page."""
+    """Update to the broken build without a restart; the restart takes the snapshot and breaks the page."""
     report.section("7. Update to the broken build, restart")
-    stack(report, "update", releases.BROKEN, "--yes")
-    up = stack(report, "up", "docs")
-    report.verdict("7", up.code != 0 and "stack restart docs" in up.out,
-                   f"`stack up docs` after the update: exit {up.code}, names `stack restart docs`")
+    stack(report, "update", releases.BROKEN, "--no-restart", "--yes")
     images_before = container_images()
     names = snapshot_names()
     free_before = audit.free_kb(DATA)
     since = time.time()
-    restart = stack(report, "restart", timeout=2400)
+    restart = stack(report, "restart", "--with-snapshot", timeout=2400)
     free_after = audit.free_kb(DATA)
     snapshot = new_snapshot(names)
     gap = stop_and_start_gap(since)
@@ -712,12 +710,12 @@ def kill_inside_the_checkout(report: Report, wrapper_dir: Path) -> None:
     """Update to the broken release again, restart, and stop git inside the rollback's checkout; the guide's steps."""
     report.section("11. A kill inside the checkout")
     before = documents_once_up() or []   # the build's page; the broken release's restart empties it
-    stack(report, "update", releases.BROKEN, "--yes")
+    stack(report, "update", releases.BROKEN, "--no-restart", "--yes")
     stack(report, "snapshot", "list")
     stack(report, "doctor", tail=20)
     names = snapshot_names()
     free_before = audit.free_kb(DATA)
-    restart = stack(report, "restart", timeout=2400)
+    restart = stack(report, "restart", "--with-snapshot", timeout=2400)
     measure(report, "restart before the kill inside the checkout", new_snapshot(names), free_before,
             audit.free_kb(DATA), restart.seconds)
     newest = new_snapshot(names)

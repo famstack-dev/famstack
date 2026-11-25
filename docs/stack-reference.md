@@ -955,10 +955,8 @@ effect.
 ```
  1. Refuse a start that loses the way back to a snapshot
     (`stack.snapshot.guard`), before any setup question,
-    preparation or download:
-    a running stacklet on another release than the checkout
-    (`stack restart <id>` applies it), one whose last snapshot failed,
-    one a stopped rollback holds
+    preparation or download: one whose last snapshot failed, one a
+    stopped rollback holds
  2. Check requires: start a requirement that is not set up and asks
     nothing first (its own steps, inside this run, waiting for another
     run of it); fail for one that asks questions or has `attended_setup`
@@ -983,12 +981,12 @@ effect.
 17. Show welcome screen with URL, login, hints
 ```
 
-**A release is applied by `stack restart`:** step 1 refuses a running
-stacklet on another release than the checkout. The reason is that the
-start would run the release's migrations without a snapshot. The error
-names `stack restart <id>` and `stack restart <id> --no-snapshot`, and the
-Server room gets no notice: nothing started and nothing failed. A stopped
-stacklet starts on the checkout's release as before.
+**A snapshot is opt-in:** `stack up` starts a running stacklet on another
+release than the checkout on the checkout's code, without a snapshot.
+`stack restart <id> --with-snapshot` applies a release with one. Step 1
+refuses only a stacklet that waits: its error names `stack restart <id>
+--with-snapshot` and `stack restart <id>`, and the Server room gets no
+notice, because nothing started and nothing failed.
 
 **First run detection:** `.stack/{id}.setup-done` marker. Absent
 means first run. Created after `on_install` completes. Deleted by

@@ -1,13 +1,13 @@
 # ruff: noqa: F811  (the imported fixtures are the tests' parameters)
-"""The guards that keep a release and a snapshot from losing the way back, as the admin meets them.
+"""The guards that keep a snapshot from losing the way back, as the admin meets them.
 
-Only `stack restart` applies a release with a snapshot first. A `stack
-up` of a stacklet that runs an older release than the checkout would
-recreate it on the new code with no snapshot, so it refuses and names the
-restart. A stopped stacklet starts as before. A snapshot of a stacklet
-whose state a stopped rollback holds, or whose last snapshot failed, would
-become the newest snapshot of a state that is not whole, so `stack
-snapshot create` refuses it with the text `stack up` gives.
+The snapshot is opt-in (`stack restart --with-snapshot`). A `stack up`
+of a stacklet that runs an older release than the checkout starts it on
+the checkout's code, as a restart without the flag does. A stacklet
+whose last snapshot failed, or whose state a stopped rollback holds,
+waits: `stack up` refuses it and names the restart. A snapshot of it
+would become the newest snapshot of a state that is not whole, so
+`stack snapshot create` refuses it with the text `stack up` gives.
 
 The tests run `./stack` as a process of its own against the fabricated
 checkout of `snapshot_instance`: `docs` and `photos` run rc.1, the
@@ -56,54 +56,56 @@ def failed_restart(checkout: Checkout) -> None:
     """A restart whose snapshot failed: docs and photos stopped, each with
     the record of its failed take."""
     (checkout.data / ".snapshots").write_text("not a folder")
-    assert checkout.stack("restart").code == 1
+    assert checkout.stack("restart", "--with-snapshot").code == 1
     (checkout.data / ".snapshots").unlink()
     checkout.docker.forget()
 
 
+def waits_for_its_snapshot(instance: Path, sid: str) -> None:
+    """The record of a failed snapshot of `sid`, as a failed restart
+    keeps it: `stack up <sid>` refuses while it is there."""
+    record = instance / ".stack" / "snapshot-pending" / sid / "MANIFEST.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text("{}")
+
+
 # ── `stack up` of a running stacklet on an older release ─────────────────
 
-def test_up_of_a_running_stacklet_on_an_older_release_refuses_and_changes_nothing(checkout):
-    """Given that `stack update` moved the checkout to rc.2 and docs runs
-    rc.1, when the admin runs `stack up docs`, then docs keeps running on
-    rc.1, nothing reaches compose, no snapshot exists, and the answer names
-    the restart with and without a snapshot. A start here would apply the
-    release, and its migration, with no way back."""
+def test_up_of_a_running_stacklet_on_an_older_release_starts_it_on_the_checkout(checkout):
+    """Given that `stack update --no-restart` moved the checkout to rc.2
+    and docs runs rc.1, when the admin runs `stack up docs`, then docs is
+    recreated on rc.2 without a refusal and without a snapshot: the
+    snapshot is opt-in, so `up` applies the checkout's code as before."""
     checkout.docker.forget()
 
     ran = checkout.stack("up", "docs")
 
-    assert ran.code != 0
-    assert checkout.docker.compose_steps() == []
+    assert ran.code == 0, ran.err
+    assert "up" in checkout.docker.compose_steps()
     assert checkout.docker.state_of("docs") == "running"
     assert checkout.snapshot_folders() == []
-    said = ran.out + ran.err
-    assert "stack restart docs" in said
-    assert "stack restart docs --no-snapshot" in said
 
 
-def test_up_of_several_refuses_each_one_on_an_older_release(checkout):
+def test_up_of_several_on_an_older_release_starts_each_one(checkout):
     """Given docs and photos both on rc.1, when the admin runs `stack up
-    docs photos`, then neither is recreated and both are named."""
+    docs photos`, then both are recreated on rc.2."""
     checkout.docker.forget()
 
-    ran = checkout.stack("up", "docs", "photos", "--json")
+    ran = checkout.stack("up", "docs", "photos")
 
-    assert ran.code != 0
-    assert checkout.docker.compose_steps() == []
-    said = ran.out + ran.err
-    assert "stack restart docs" in said and "stack restart photos" in said
+    assert ran.code == 0, ran.err
+    assert checkout.docker.compose_steps().count("up") == 2
 
 
-def test_up_of_a_stacklet_without_containers_on_an_older_release_refuses(host_checkout):
+def test_up_of_a_stacklet_without_containers_on_an_older_release_starts_it(host_checkout):
     """Given speech, up without containers from rc.1, when the admin runs
-    `stack up speech`, then it refuses: its stamp still names rc.1, and
-    its hook would start the host service on rc.2's code."""
+    `stack up speech`, then it starts on rc.2: its stamp no longer names
+    rc.1."""
     ran = host_checkout.stack("up", "speech")
 
-    assert ran.code != 0
-    assert (host_checkout.instance / ".stack" / "speech.up").read_text() == host_checkout.rc1
-    assert "stack restart speech" in ran.out + ran.err
+    assert ran.code == 0, ran.err
+    stamp = (host_checkout.instance / ".stack" / "speech.up").read_text()
+    assert not stamp.startswith(host_checkout.rc1)
 
 
 def test_up_of_a_stopped_stacklet_on_an_older_release_starts_it(checkout):
@@ -132,18 +134,6 @@ def test_up_of_a_running_stacklet_on_the_current_release_recreates_it(checkout):
 
     assert ran.code == 0, ran.err
     assert "up" in checkout.docker.compose_steps()
-
-
-def test_the_restart_still_applies_the_release_that_up_refuses(checkout):
-    """Given docs on rc.1 that `stack up docs` refused, when the admin runs
-    the restart it names, then docs starts on rc.2 with its snapshot."""
-    assert checkout.stack("up", "docs").code != 0
-
-    ran = checkout.stack("restart", "docs")
-
-    assert ran.code == 0, ran.err
-    assert checkout.docker.state_of("docs") == "running"
-    assert len(checkout.snapshot_folders()) == 1
 
 
 # ── `stack snapshot create` of a stacklet that waits ─────────────────────
@@ -201,10 +191,11 @@ def notices(log: Path) -> list[str]:
 
 
 def test_a_refused_up_posts_no_notice_into_the_server_room(checkout):
-    """Given docs on rc.1 and the checkout on rc.2, when the admin runs
-    `stack up docs` and it is refused, then the Server room gets no
-    "failed to start" notice: docs runs as it did, nothing failed. The
-    `stack down docs` after it shows that a notice does reach the log."""
+    """Given docs that waits for its snapshot, when the admin runs `stack
+    up docs` and it is refused, then the Server room gets no "failed to
+    start" notice: docs is as it was, nothing failed. The `stack down
+    docs` after it shows that a notice does reach the log."""
+    waits_for_its_snapshot(checkout.instance, "docs")
     log = chat_log(checkout)
 
     assert checkout.stack("up", "docs").code != 0
@@ -214,31 +205,15 @@ def test_a_refused_up_posts_no_notice_into_the_server_room(checkout):
     assert notices(log) != []
 
 
-def test_up_of_a_stacklet_on_a_newer_release_than_the_checkout_refuses(checkout):
-    """Given docs started from rc.2 while the checkout is back on rc.1 (a
-    rollback of the other stacklets), when the admin runs `stack up docs`,
-    then it refuses too: a start on rc.1's code is a release change with
-    no snapshot, in this direction as well."""
-    checkout.docker.commits(docs=checkout.rc2, photos=checkout.rc1)
-    checkout.git("checkout", "-q", "v0.4.0-rc.1")
-    checkout.docker.forget()
-
-    ran = checkout.stack("up", "docs")
-
-    assert ran.code != 0
-    assert checkout.docker.compose_steps() == []
-    assert "stack restart docs" in ran.out + ran.err
-
-
 def test_a_restart_whose_stop_fails_says_so_and_starts_nothing(checkout):
     """Given docs on rc.1 whose stop fails, when the admin runs `stack
-    restart docs --no-snapshot`, then the restart ends with the stop's
+    restart docs`, then the restart ends with the stop's
     error and does not try the start: a start of a stacklet that still
     runs would only be refused, naming the command just run."""
     checkout.docker.fail("stop", "container is busy", stacklet="docs")
     checkout.docker.forget()
 
-    ran = checkout.stack("restart", "docs", "--no-snapshot")
+    ran = checkout.stack("restart", "docs")
 
     assert ran.code == 1
     assert "up" not in checkout.docker.compose_steps()
@@ -259,29 +234,6 @@ services:
 """
 
 
-def test_up_of_core_on_an_older_release_refuses_as_any_stacklet(checkout):
-    """Given core running rc.2 and a release rc.3 that changes core, when
-    the admin runs `stack up core`, then core is not recreated and the
-    answer names `stack restart core`, as for any other stacklet."""
-    core = checkout.root / "stacklets" / "core"
-    core.mkdir()
-    (core / "stacklet.toml").write_text(CORE_TOML)
-    (core / "docker-compose.yml").write_text(CORE_COMPOSE.format(tag="1"))
-    checkout.release("v0.4.0-rc.3")
-    (core / "docker-compose.yml").write_text(CORE_COMPOSE.format(tag="2"))
-    checkout.release("v0.4.0-rc.4")
-    rc3 = checkout.git("rev-parse", "--short", "v0.4.0-rc.3^{commit}")
-    (checkout.instance / ".stack" / "core.setup-done").touch()
-    checkout.docker.commits(core=rc3, docs=checkout.rc1, photos=checkout.rc1)
-    checkout.docker.forget()
-
-    ran = checkout.stack("up", "core")
-
-    assert ran.code != 0
-    assert checkout.docker.compose_steps() == []
-    assert "stack restart core" in ran.out + ran.err
-
-
 # ── Doctor ───────────────────────────────────────────────────────────────
 
 MIGRATION = '''
@@ -296,8 +248,7 @@ def run(ctx):
 def test_doctor_names_the_restart_for_migrations_that_wait_after_an_update(checkout):
     """Given a release rc.3 that ships a migration of docs, and docs still
     running rc.1, when the admin runs `stack doctor`, then its fix for the
-    waiting migration is `stack restart docs`, which takes the snapshot
-    first. `stack up docs` would be refused."""
+    waiting migration is `stack restart docs`."""
     migrations = checkout.root / "stacklets" / "docs" / "migrations"
     migrations.mkdir()
     (migrations / "0001_move_tags.py").write_text(MIGRATION)
@@ -346,11 +297,11 @@ def stack_in(root: Path, *args: str, env: dict[str, str]) -> Ran:
     return Ran(done.returncode, done.stdout, done.stderr)
 
 
-def test_the_installer_on_a_core_of_another_release_names_the_restart(
+def test_the_installer_on_a_core_that_waits_for_its_snapshot_names_the_restart(
         tmp_path, monkeypatch, docker_with_projects):
-    """Given core running rc.1 and the checkout on rc.2, when the admin runs
-    the install again (`stack install --family <file> --yes`), then it
-    stops with the refusal, which names `stack restart core`, and does not
+    """Given core that waits for its snapshot, when the admin runs the
+    install again (`stack install --family <file> --yes`), then it stops
+    with the refusal, which names `stack restart core`, and does not
     advise `stack up core`, which would be refused again."""
     root = tmp_path / "checkout"
     before, _ = git_checkout(root, {"core": {
@@ -358,6 +309,7 @@ def test_the_installer_on_a_core_of_another_release_names_the_restart(
     (root / "simpsons.toml").write_text('name = "Simpson"\n\n[[people]]\nname = "Homer Simpson"\n')
     (root / ".stack").mkdir()
     (root / ".stack" / "core.setup-done").touch()
+    waits_for_its_snapshot(root, "core")
     brew = tmp_path / "brew"
     brew.mkdir()
     (brew / "brew").write_text("#!/bin/sh\nexit 0\n")
@@ -388,10 +340,10 @@ default = "mlx-community/Qwen3.5-9B-MLX-8bit"
 """
 
 
-def test_the_switch_to_the_managed_ai_on_another_release_says_to_restart_it_first(
+def test_the_switch_to_the_managed_ai_that_waits_says_to_restart_it_first(
         tmp_path, monkeypatch, docker_with_projects):
-    """Given ai up from rc.1 (a stacklet without containers) and the
-    checkout on rc.2, when the admin runs `stack ai switch managed`, then
+    """Given ai up from rc.1 (a stacklet without containers) that waits
+    for its snapshot, when the admin runs `stack ai switch managed`, then
     the switch fails in its own error, which names `stack restart ai`, and
     `[ai]` stays as it was: the stack keeps the server it used."""
     root = tmp_path / "checkout"
@@ -403,6 +355,7 @@ def test_the_switch_to_the_managed_ai_on_another_release_says_to_restart_it_firs
     (instance / "stack.toml").write_text(AI_TOML.format(data=tmp_path / "data"))
     (instance / ".stack" / "ai.setup-done").touch()
     (instance / ".stack" / "ai.up").write_text(before + "\n")
+    waits_for_its_snapshot(instance, "ai")
     toml_before = (instance / "stack.toml").read_text()
     docker_with_projects()
 
@@ -428,21 +381,23 @@ def run(ctx):
 
 def test_a_refused_up_runs_no_preparation(checkout):
     """Given a release rc.3 whose docs has a preparation (`on_prepare`,
-    the hook of long downloads) and docs running rc.1, when the admin runs
-    `stack up docs`, then it is refused before the preparation: nothing is
-    downloaded. Once docs is stopped, the same `stack up docs` prepares it,
-    so the hook does run where a start is allowed."""
+    the hook of long downloads) and docs that waits for its snapshot, when
+    the admin runs `stack up docs`, then it is refused before the
+    preparation: nothing is downloaded. Once the wait ends, the same
+    `stack up docs` prepares it, so the hook does run where a start is
+    allowed."""
     mark = checkout.root.parent / "prepared"
     hooks = checkout.root / "stacklets" / "docs" / "hooks"
     hooks.mkdir(exist_ok=True)
     (hooks / "on_prepare.py").write_text(ON_PREPARE.format(mark=str(mark)))
     checkout.release("v0.4.0-rc.3")
+    waits_for_its_snapshot(checkout.instance, "docs")
     checkout.docker.forget()
 
     assert checkout.stack("up", "docs").code != 0
     assert not mark.exists()
 
-    assert checkout.stack("down", "docs").code == 0
+    (checkout.instance / ".stack" / "snapshot-pending" / "docs" / "MANIFEST.json").unlink()
     assert checkout.stack("up", "docs").code == 0
     assert mark.exists()
 
@@ -473,10 +428,11 @@ def test_a_refusal_in_the_turn_posts_no_notice_either(checkout):
 
 
 def test_up_of_a_refused_and_a_stopped_stacklet_starts_the_stopped_one(checkout):
-    """Given docs running rc.1, photos stopped, and the checkout on rc.2,
-    when the admin runs `stack up docs photos`, then photos starts, docs
-    is named with `stack restart docs`, and the command fails: one refusal
-    does not hold up the other start."""
+    """Given docs that waits for its snapshot and photos stopped, when the
+    admin runs `stack up docs photos`, then photos starts, docs is named
+    with `stack restart docs`, and the command fails: one refusal does
+    not hold up the other start."""
+    waits_for_its_snapshot(checkout.instance, "docs")
     assert checkout.stack("down", "photos").code == 0
     checkout.docker.forget()
 
@@ -489,12 +445,12 @@ def test_up_of_a_refused_and_a_stopped_stacklet_starts_the_stopped_one(checkout)
 
 def test_a_bare_restart_whose_stop_fails_says_so_and_starts_nothing(checkout):
     """Given docs and photos on rc.1 and docs' stop failing, when the
-    admin runs `stack restart --no-snapshot` (the restart of what runs
+    admin runs `stack restart` (the restart of what runs
     stale code), then it ends with the stop's error and starts nothing."""
     checkout.docker.fail("stop", "container is busy", stacklet="docs")
     checkout.docker.forget()
 
-    ran = checkout.stack("restart", "--no-snapshot")
+    ran = checkout.stack("restart")
 
     assert ran.code == 1
     assert "up" not in checkout.docker.compose_steps()
@@ -522,10 +478,10 @@ MEMORY_AI_URL = "{ai_openai_url}"
 """
 
 
-def test_a_new_ai_key_waits_for_the_restart_of_a_consumer_on_another_release(
+def test_a_new_ai_key_waits_for_the_restart_of_a_consumer_that_waits(
         tmp_path, docker_with_projects):
-    """Given memory, which renders the AI's key, running rc.1 and the
-    checkout on rc.2, when the admin runs `stack ai key new`, then it
+    """Given memory, which renders the AI's key, running and waiting for
+    its snapshot, when the admin runs `stack ai key new`, then it
     refuses before it makes a key and names `stack restart memory`: the
     start that hands memory the key would be refused, and memory would
     keep the old key while oMLX takes only the new one. `[ai] openai_key`
@@ -540,6 +496,7 @@ def test_a_new_ai_key_waits_for_the_restart_of_a_consumer_on_another_release(
     (instance / ".stack").mkdir(parents=True)
     (instance / "stack.toml").write_text(KEY_TOML.format(data=data, port=a_closed_port()))
     (instance / ".stack" / "ai.setup-done").touch()
+    waits_for_its_snapshot(instance, "memory")
     settings = data / "ai" / "omlx" / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({"auth": {"api_key": "local"}}))
@@ -559,13 +516,13 @@ def test_a_new_ai_key_waits_for_the_restart_of_a_consumer_on_another_release(
 @pytest.mark.parametrize("named", [["docs", "photos"], ["all"]])
 def test_a_restart_of_several_whose_stop_fails_says_so_and_starts_nothing(checkout, named):
     """Given docs and photos on rc.1 and docs' stop failing, when the
-    admin runs `stack restart docs photos --no-snapshot` or `stack restart
-    all --no-snapshot`, then it ends with docs' stop error and starts
+    admin runs `stack restart docs photos` or `stack restart all`, then
+    it ends with docs' stop error and starts
     nothing: a start of docs, still running, would only be refused."""
     checkout.docker.fail("stop", "container is busy", stacklet="docs")
     checkout.docker.forget()
 
-    ran = checkout.stack("restart", *named, "--no-snapshot")
+    ran = checkout.stack("restart", *named)
 
     assert ran.code == 1
     assert "up" not in checkout.docker.compose_steps()

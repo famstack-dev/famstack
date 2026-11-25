@@ -498,7 +498,7 @@ def _start_core(stck) -> tuple[str, list[str]] | None:
     stck.data.mkdir(parents=True, exist_ok=True)
     started = CLI(stck).up("core")
     if started.get("refused"):
-        # Core runs, on another release or waiting for its snapshot: the
+        # Core waits for its snapshot or for a rollback to finish: the
         # refusal names the command that goes on, and `stack up core`
         # would only be refused again.
         return f"Core did not start: {started['error']}", []

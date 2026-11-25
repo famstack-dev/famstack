@@ -1707,7 +1707,7 @@ Stash the tarball on a USB stick or in 1Password.
 
 ## Updating
 
-Container images update themselves nightly at 3am via Watchtower. You do nothing for that. Each famstack release pins every service to a version line, so Watchtower brings in bug-fix releases, and a new minor or major version of Immich, Paperless or Synapse arrives with a famstack update, not overnight.
+Container images update themselves nightly at 3am via Watchtower. You do nothing for that. Each famstack release pins every service to a version line. Watchtower brings in the bug-fix releases of that line. A new minor or major version of Immich, Paperless or Synapse arrives with a famstack update, not overnight.
 
 The famstack code is a git checkout, and a release is a tag. Updating means moving your checkout to a newer tag.
 
@@ -1715,25 +1715,36 @@ The famstack code is a git checkout, and a release is a tag. Updating means movi
 ./stack update
 ```
 
-That is the whole thing from v0.4.0-rc.1 onward. It fetches the releases, shows what the jump changes, moves the checkout, and sets your local edits aside and puts them back.
+That is the whole thing from v0.4.0-rc.1 onward. It fetches the releases and shows what the jump changes. Then it moves the checkout. It sets your local edits aside for the move and puts them back.
 
-It does not restart anything. New code on disk is not new code running: a stacklet picks up a release when its containers are recreated, and when your family loses a service for thirty seconds is your call, not a side effect of updating. So the command works out which restarts the release actually earns and prints them:
+Then it restarts the stacklets that the release changes, because a stacklet runs a release only after its containers are recreated. The plan names them before you confirm, because your family loses those services for the restart:
+
+```
+  Update  v0.4.0-rc.1 → v0.4.0-rc.2
+
+  Restarts after the move: docs
+  No snapshot first. To take one: stack update --with-snapshot
+```
+
+After the move, the update restarts exactly the stacklets that the plan names. The restart reports each one:
 
 ```
   ✓  Updated to v0.4.0-rc.2
-
-  Restart to pick it up
-    ./stack restart docs
-    ./stack doctor
+  ────────────────────────────────────────────────────────────
+  ✓  Documents is running
 ```
 
 ```bash
 ./stack update --dry-run         # show the plan, change nothing
 ./stack update v0.4.0-rc.2       # a specific release instead of the one offered
 ./stack update --yes             # skip the confirmation
+./stack update --with-snapshot   # take a snapshot before each restart
+./stack update --no-restart      # only move the checkout
 ```
 
-Pre-releases (`v0.5.0-beta.1`) are for testing the next release. On a final release you are never offered one: `./stack update` and `./stack doctor` look at final releases only, so with `v0.5.0-beta.1` tagged an instance on `v0.4.1` is up to date, and a `v0.4.2` would be offered. To test a pre-release, name it: `./stack update v0.5.0-beta.1`. From then on you are offered the newest release of all, each beta and then the final, which puts you back on final releases only.
+Pre-releases (`v0.5.0-beta.1`) are for testing the next release. On a final release you are never offered one, because `./stack update` and `./stack doctor` look at final releases only. For example, with `v0.5.0-beta.1` tagged, an instance on `v0.4.1` is up to date. A `v0.4.2` would be offered.
+
+To test a pre-release, name it: `./stack update v0.5.0-beta.1`. From then on you are offered the newest release of all: each beta, then the final. The final puts you back on final releases only.
 
 Every form fetches tags first, including `--dry-run`: without it the answer
 would only be as fresh as your last fetch. It opens with the version and,
@@ -1746,15 +1757,23 @@ once it knows, the move it is proposing:
   Update  v0.4.0-rc.1 → v0.4.0-rc.2
 ```
 
-A stacklet is named only if the release changed files inside it and it is running, so a documentation release asks for nothing. If the release changed anything under `lib/`, every running stacklet is named, because that is the code they all share.
+A stacklet is named only if it is running and the release changed files inside it. Thus a documentation release restarts nothing. A change under `lib/` names every running stacklet, because that is the code they all share.
 
-The restart that applies a release takes a [snapshot](#snapshots-and-rollback) of each stacklet first. If the release
-breaks a page, `./stack rollback` goes back to it.
+The stack takes a [snapshot](#snapshots-and-rollback) only when you ask for one. With `--with-snapshot`, the restart takes
+a snapshot of each stacklet before it starts on the new release. If the release then breaks a page, `./stack rollback`
+goes back to it.
 
-Apply a release with `./stack restart`, not with `./stack up`. `./stack up <id>` refuses a running stacklet on a
-different release than the checkout, because it would take no snapshot.
+To apply the release later, add `--no-restart`. The update then only moves the checkout and names the restart.
+To apply it, run one of these commands:
 
-> ⚠️ **Run `./stack update` while the stacklets run, then `./stack restart`.** A stacklet that is stopped at the update
+```bash
+./stack restart
+./stack restart --with-snapshot
+```
+
+`./stack up <id>` also starts a running stacklet on the checkout's release, without a snapshot.
+
+> ⚠️ **To take a snapshot, keep the stacklets running until the restart.** A stacklet that is stopped at the restart
 > gets no snapshot. `./stack up <id>` starts it on the new release, and a rollback cannot take it back. To update a
 > stopped stacklet, take a snapshot first, before `./stack update`:
 >
@@ -1764,7 +1783,7 @@ different release than the checkout, because it would take no snapshot.
 >
 > The stacklet stays stopped after the snapshot.
 
-Run `./stack restart` before you start other stacklets. Until then, `./stack up <id>` does not recreate core. The reason is that core's new containers can need a port that an old container still holds. It prints this line instead:
+After `--no-restart`, run `./stack restart` before you start other stacklets. Until then, `./stack up <id>` does not recreate core. The reason is that core's new containers can need a port that an old container still holds. It prints this line instead:
 
 ```
   ⚠  The update is not applied yet. Run: ./stack restart
@@ -1772,7 +1791,7 @@ Run `./stack restart` before you start other stacklets. Until then, `./stack up 
 
 ### Updating by hand
 
-`stack update` ships in v0.4.0-rc.1. Moving *to* that release, or moving between older ones, is the same steps typed out:
+`stack update` ships in v0.4.0-rc.1. To move *to* that release or between older ones, type the same steps by hand:
 
 Take a snapshot of each stacklet first, because the steps below take none. A stacklet that you stop before the update
 gets none either:
@@ -1803,13 +1822,13 @@ Restart any of those you run. If the same command against `lib/` prints anything
 ./stack down all && ./stack up all
 ```
 
-Nothing in the update touches your instance. `stack.toml`, `users.toml`, `.stack/`, `~/famstack-data/` and `~/famstack-extensions/` are all outside git's reach, so your config, secrets, data and your own stacklets come through a tag switch untouched.
+Nothing in the update touches your instance. `stack.toml`, `users.toml`, `.stack/`, `~/famstack-data/` and `~/famstack-extensions/` are all outside git's reach. Your config, secrets, data and your own stacklets come through a tag switch untouched.
 
 ### If you have edited files in the checkout
 
-`stack update` handles this for you. It lists the files it is about to set aside, warns in advance when one of them is a file the release also changes, and puts them back afterwards.
+`stack update` handles this for you. It lists the files that it sets aside. It warns in advance when the release also changes one of them. After the move it puts them back.
 
-If they collide, it winds the whole update back: you end up on the release you started from, with your edits exactly where they were and nothing left in the stash. Then it tells you how to go ahead deliberately:
+If they collide, it winds the whole update back. You are on the release that you started from, with your edits where they were. Nothing is left in the stash. Then it tells you how to go ahead deliberately:
 
 ```
   ⚠  Your edits collide with v0.4.0-rc.2. Nothing changed.
@@ -1822,7 +1841,7 @@ If they collide, it winds the whole update back: you end up on the release you s
       then run ./stack update again.
 ```
 
-A half-applied update is worse than no update: a compose file with conflict markers in it does not parse, so the services you restart next fail for a reason that has nothing to do with the release. What follows is the same work done by hand, which is what an older release needs.
+A half-applied update is worse than no update. A compose file with conflict markers in it does not parse. The services that you restart next then fail for a reason that has nothing to do with the release. What follows is the same work done by hand, for an older release.
 
 git refuses to move while one of your edits is in the way:
 
@@ -1843,7 +1862,7 @@ git stash pop
 
 If the release did not touch the same file, `git stash pop` re-applies your edit and you are done.
 
-If the release changed the same lines, it reports a conflict and **keeps your stash**, so nothing is lost:
+If the release changed the same lines, git reports a conflict and **keeps your stash**. Nothing is lost:
 
 ```
 CONFLICT (content): Merge conflict in stacklets/docs/docker-compose.yml
@@ -1880,9 +1899,11 @@ Please specify which branch you want to merge with.
 
 Do not take git's suggestion to run `git pull origin main`. It succeeds, and it quietly moves you off releases onto unreleased development code while `./stack version` carries on reporting the last release number. Use `git fetch --tags` and `git checkout <tag>`.
 
-If you cloned and never checked out a tag, you are on `main`, which is development. `git pull` there gives you unreleased work rather than the next release. `./stack update` moves you onto the newest release and says so before it does: your branch is left where it is, and `git switch main` goes back to it. If `main` already contains the newest release, which it will if you pulled recently, it tells you that instead of moving you backwards.
+If you cloned and never checked out a tag, you are on `main`. That branch is development. `git pull` there gives you unreleased work rather than the next release.
 
-**On a fork**, `origin` is your copy and has none of the project's releases in it. `./stack update` fetches tags from every remote, so add the project as one:
+`./stack update` moves you onto the newest release and says so before it does. Your branch stays where it is, and `git switch main` goes back to it. A `main` that you pulled recently already contains the newest release. Then the update tells you that and does not move you backwards.
+
+**On a fork**, `origin` is your copy and has none of the project's releases in it. `./stack update` fetches tags from every remote. Add the project as one:
 
 ```bash
 git remote add upstream https://github.com/famstack-dev/famstack.git
@@ -1906,11 +1927,13 @@ git fetch --tags && git checkout v0.3.0-beta.3
 ./stack up docs
 ```
 
-The backup stacklet does not cover this yet. It archives Paperless's files but not its Postgres database, so a `stack backup sync` alone will not get you back to 2.x. (Database dumps exist and are wired up for the chat server; Paperless is next.)
+The backup stacklet does not cover this yet. It archives Paperless's files but not its Postgres database. A `stack backup sync` alone does not get you back to 2.x. Database dumps exist for the chat server. Paperless is next.
 
-**If Watchtower already moved you to 3.x.** Older famstack releases tracked the `:latest` Paperless tag, and Watchtower's nightly pull rolled some instances from 2.x straight to 3.0 without asking. If that happened to you, your database is already migrated and pinning the image back to 2.20.15 will not start. You need a backup taken before the 3.x boot. Without one, staying on 3.x is the only option, which this release makes the supported path. Paperless is now pinned to an exact tag, so Watchtower can still deliver 3.0.x patches but can no longer jump a major version on its own.
+**If Watchtower already moved you to 3.x.** Older famstack releases tracked the `:latest` Paperless tag, and Watchtower's nightly pull rolled some instances from 2.x straight to 3.0 without asking. If that happened to you, your database is already migrated and pinning the image back to 2.20.15 will not start. You need a backup taken before the 3.x boot.
 
-**One behaviour change worth knowing.** 3.0 stopped rejecting a re-uploaded identical file by default and would have filed a second copy instead. famstack sets `PAPERLESS_CONSUMER_DELETE_DUPLICATES` to keep the old behaviour: send the same receipt twice and the archivist replies "already filed", with a link to the document you sent the first time.
+Without one, staying on 3.x is the only option, and this release supports it. Paperless is now pinned to an exact tag. Watchtower can still deliver 3.0.x patches. It can no longer jump a major version on its own.
+
+**One behaviour change worth knowing.** 3.0 stopped rejecting a re-uploaded identical file by default and would have filed a second copy instead. famstack sets `PAPERLESS_CONSUMER_DELETE_DUPLICATES` to keep the old behaviour. When you send the same receipt twice, the archivist replies "already filed". The reply links to the document that you sent the first time.
 
 ---
 
@@ -1953,12 +1976,12 @@ Time Machine skips `.snapshots/`, because the folder holds clones of data that T
 
 ### When does the stack take a snapshot?
 
-The stack takes a snapshot in two cases:
+The stack takes a snapshot only when you ask for one. Nothing takes one on its own. You ask in two ways:
 
-- **At the restart that applies a release.** After `./stack update`, `./stack restart` takes a snapshot of each
-  stacklet that starts on the new release. The restart stops the stacklets anyway, and the take adds its time to
-  that stop. The newest 3 snapshots stay. The restart removes older ones.
-- **When you ask for one.** To take a snapshot before a change of your own, run:
+- **At the restart that applies a release.** `./stack update --with-snapshot` and `./stack restart --with-snapshot`
+  take a snapshot of each stacklet that starts on the new release. The restart stops the stacklets anyway, and the
+  take adds its time to that stop. The newest 3 snapshots stay. The restart removes older ones.
+- **Before a change of your own.** To take a snapshot now, run:
 
 ```bash
 ./stack snapshot create docs
@@ -1968,13 +1991,14 @@ The stack stops `docs`, takes the snapshot and starts `docs` again. A stacklet t
 
 The stack takes no snapshot in these cases:
 
-- **A stacklet that is stopped at the update.** See [Updating](#updating).
+- **An update or a restart without `--with-snapshot`.**
+- **A stacklet that is stopped at the restart.** See [Updating](#updating).
 - **The nightly image updates of Watchtower.** Watchtower changes the images of the services, not the release of the
   stack. A rollback goes back to the images of the snapshot, but no snapshot holds the state from before a nightly
   image update.
 
 When the snapshot of a restart fails, the stacklet does not start on the new release. `./stack up` refuses it. To take
-the snapshot again, run `./stack restart <id>`. To start without a snapshot, run `./stack restart <id> --no-snapshot`.
+the snapshot again, run `./stack restart <id> --with-snapshot`. To start without a snapshot, run `./stack restart <id>`.
 
 ### When does `./stack up` refuse a stacklet?
 
@@ -1983,17 +2007,19 @@ run:
 
 | The stacklet | What to run |
 |---|---|
-| It runs a different release than the checkout, for example after `./stack update` | `./stack restart <id>`, which takes the snapshot first. To skip the snapshot, add `--no-snapshot`. |
-| Its snapshot failed at the last restart | `./stack restart <id>`, or `./stack restart <id> --no-snapshot` |
+| Its snapshot failed at the last restart | `./stack restart <id> --with-snapshot`, or `./stack restart <id>` without a snapshot |
 | A rollback of it stopped halfway | `./stack rollback` |
 
-For a running stacklet after an update, the answer looks like this:
+For a stacklet whose snapshot failed, the answer looks like this:
 
 ```
-  ✗  docs runs a different release than the checkout. A start would apply the checkout's release without a snapshot. Apply it with: stack restart docs, which takes a snapshot first. Or without one: stack restart docs --no-snapshot
+  ✗  docs waits for its snapshot, which failed at the last restart. Take it with: stack restart docs --with-snapshot. Or start without one: stack restart docs
 ```
 
-`./stack snapshot create <id>` refuses the last two cases with the same text. Their state is not whole, and the next
+A running stacklet on another release than the checkout is not refused. `./stack up <id>` starts it on the checkout's
+release, without a snapshot.
+
+`./stack snapshot create <id>` refuses both cases with the same text. Their state is not whole, and the next
 rollback would go to the newest snapshot.
 
 ### How to see the snapshots

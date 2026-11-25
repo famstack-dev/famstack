@@ -9,7 +9,7 @@
 `checkout` is a git checkout on `v0.4.0-rc.2` with two stacklets, `docs`
 and `photos`, set up and running `v0.4.0-rc.1`; `host_checkout` adds
 `speech`, a stacklet without containers. `updated` is the checkout after
-`stack restart` took a snapshot and started rc.2, with the family's
+`stack restart --with-snapshot` took a snapshot and started rc.2, with the family's
 changes since: a letter in docs' database, a new bill in its
 `[[backup.archive]]` source, a new album in photos.
 
@@ -283,7 +283,8 @@ PHOTOS_IMAGE_ID = "sha256:" + "5" * 64
 
 @pytest.fixture
 def updated(tmp_path, monkeypatch, docker_with_projects) -> Checkout:
-    """The checkout after `stack update` to rc.2 and the restart: one
+    """The checkout after `stack update` to rc.2 and the restart with
+    `--with-snapshot`: one
     snapshot, docs on rc.2, and the family's changes since."""
     return _updated(new_checkout(tmp_path, monkeypatch, docker_with_projects, host=False))
 
@@ -297,12 +298,12 @@ def updated_with_a_quoted_name(tmp_path, monkeypatch, docker_with_projects) -> C
 
 
 def _updated(checkout: Checkout) -> Checkout:
-    """Run `stack update`'s restart on `checkout` and make the family's
+    """Run `stack restart --with-snapshot` on `checkout` and make the family's
     changes since."""
     (checkout.data / "photos" / "albums.json").write_text(ALBUMS)
     # Each tag names the image that runs, as after the pull that started it.
     checkout.docker.tags(**{OLD_IMAGE: OLD_IMAGE_ID, PHOTOS_IMAGE: PHOTOS_IMAGE_ID})
-    ran = checkout.stack("restart")
+    ran = checkout.stack("restart", "--with-snapshot")
     assert ran.code == 0, ran.err
     (checkout.data / "docs" / "postgres" / "base.dat").write_text(LETTER)
     (checkout.data / "docs" / "paperless" / "media" / "new-bill.pdf").write_text("%PDF new")

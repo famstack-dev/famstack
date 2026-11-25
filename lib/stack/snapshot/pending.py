@@ -15,7 +15,7 @@ the stacklet does not start on the new release:
     pending.waiting(instance_dir, "docs")       # True: `stack up docs` refuses
     pending.read(instance_dir, ["docs"])        # the record, for the next take
     pending.clear(instance_dir, ["docs"])       # the snapshot is whole, the admin
-                                                # said --no-snapshot, or a rollback
+                                                # restarted without one, or a rollback
                                                 # restored the stacklet
 
 Why it works this way:
@@ -30,8 +30,8 @@ Why it works this way:
   record, in the format of `stack.manifest`.
 - **Kept before the stop.** A record that cannot be kept (a full disk)
   stops nothing, because no stacklet may be left stopped without one.
-- **A whole snapshot, `--no-snapshot`, `stack destroy` or a rollback
-  ends the wait.** The record of a stacklet that did not stop goes too,
+- **A whole snapshot, a restart without `--with-snapshot`, `stack
+  destroy` or a rollback ends the wait.** The record of a stacklet that did not stop goes too,
   because the stacklet still runs what it ran. A rollback restores the
   state of a snapshot. The record of the newer release then no longer
   applies, because it describes a state that is gone. Nothing else

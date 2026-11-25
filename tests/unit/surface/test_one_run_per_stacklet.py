@@ -543,7 +543,7 @@ def test_up_all_claims_what_it_starts_before_it_waits_its_turn(checkout, capfd, 
 
 def test_an_update_gives_restart_advice_from_after_its_turn(checkout):
     """Given app runs no containers, its first start goes on and a release
-    changes app, when `stack update` waited for that start and then moved,
+    changes app, when `stack update --no-restart` waited for that start and then moved,
     then its advice names app to restart, and it names app again as what
     needs a restart, correcting the plan it showed before it waited: app is
     running by then, though it was not when the update began to wait."""
@@ -559,7 +559,7 @@ def test_an_update_gives_restart_advice_from_after_its_turn(checkout):
     _git(checkout, "checkout", "-q", "v0.0.1")
 
     with FirstRun(checkout) as first:
-        update = Queued(checkout, ["update", "v0.0.3", "--yes"])
+        update = Queued(checkout, ["update", "v0.0.3", "--no-restart", "--yes"])
         _until_it_waits(update)
         assert first.finish() == 0
     out, _ = update.process.communicate(timeout=60)
