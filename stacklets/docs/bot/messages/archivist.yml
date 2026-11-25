@@ -249,8 +249,8 @@ en:
     **Pro tip:** create a `Thema: <name>` room (e.g. `Thema: Camping`) and invite me — everything you drop there will be organised under that topic automatically.
 
   # Diary, in the memories room (diary_room.py)
-  diary_card: "\U0001F4D4 **{title}** · {date}"
-  diary_card_corrected: "\u270F\uFE0F **{title}** · {date} (corrected)"
+  diary_card: "\U0001F4D4 {title} · {date}"
+  diary_card_corrected: "\u270F\uFE0F {title} · {date} (corrected)"
   diary_card_hint: "_Reply here to fix a name, a date or a fact._"
   diary_intro: "\u2764\uFE0F {count} new memories are in the family diary. Each has a card in the thread under its message: reply there to fix a name, a date or a fact."
   diary_intro_one: "\u2764\uFE0F 1 new memory is in the family diary. It has a card in the thread under its message: reply there to fix a name, a date or a fact."
@@ -502,8 +502,8 @@ de:
     **Profi-Tipp:** Erstellt einen Raum mit dem Präfix `Thema:` (z.B. `Thema: Camping`) und ladet mich ein — alles dort wird automatisch unter diesem Thema organisiert.
 
   # Tagebuch, im Erinnerungen-Raum (diary_room.py)
-  diary_card: "\U0001F4D4 **{title}** · {date}"
-  diary_card_corrected: "\u270F\uFE0F **{title}** · {date} (korrigiert)"
+  diary_card: "\U0001F4D4 {title} · {date}"
+  diary_card_corrected: "\u270F\uFE0F {title} · {date} (korrigiert)"
   diary_card_hint: "_Antworte hier, um einen Namen, ein Datum oder eine Angabe zu korrigieren._"
   diary_intro: "\u2764\uFE0F {count} neue Erinnerungen stehen im Familientagebuch. Jede hat eine Karte im Thread unter ihrer Nachricht: Antworte dort, um einen Namen, ein Datum oder eine Angabe zu korrigieren."
   diary_intro_one: "\u2764\uFE0F 1 neue Erinnerung steht im Familientagebuch. Sie hat eine Karte im Thread unter ihrer Nachricht: Antworte dort, um einen Namen, ein Datum oder eine Angabe zu korrigieren."
