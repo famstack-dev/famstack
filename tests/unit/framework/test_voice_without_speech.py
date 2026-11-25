@@ -27,13 +27,15 @@ from stacklets.docs.bot.archivist import ArchivistBot  # noqa: E402
 ROOM_ID = "!kitchen:simpson"
 
 
-def _voice():
+def _voice(thread_root=None):
+    content = {"msgtype": "m.audio", "body": "Voice message",
+               "url": "mxc://simpson/abc",
+               "info": {"mimetype": "audio/ogg", "duration": 4200}}
+    if thread_root:
+        content["m.relates_to"] = {"rel_type": "m.thread", "event_id": thread_root}
     return RoomMessage.parse_event({
         "type": "m.room.message", "event_id": "$voice1", "sender": "@homer:simpson",
-        "origin_server_ts": 1700000000000,
-        "content": {"msgtype": "m.audio", "body": "Voice message",
-                    "url": "mxc://simpson/abc",
-                    "info": {"mimetype": "audio/ogg", "duration": 4200}},
+        "origin_server_ts": 1700000000000, "content": content,
     })
 
 
@@ -101,6 +103,28 @@ async def test_speech_off_another_bot_in_the_room_stays_silent(tmp_path):
     await other._dispatch(ROOM_ID, _voice())
 
     assert other.sent == []
+
+
+@pytest.mark.asyncio
+async def test_speech_off_a_voice_reply_in_another_bots_thread_gets_no_answer(tmp_path):
+    bot = _archivist(tmp_path)
+
+    async def _owner(room_id, root):
+        return "@mail-bot:simpson"
+
+    bot.thread_owner = _owner
+    await bot._dispatch(ROOM_ID, _voice(thread_root="$mailcard"))
+
+    assert bot.sent == []
+
+
+@pytest.mark.asyncio
+async def test_speech_off_the_memories_room_gets_no_answer(tmp_path):
+    bot = _archivist(tmp_path)
+    bot._diary.is_room = lambda ctx: True
+    await bot._dispatch(ROOM_ID, _voice(thread_root="$diarycard"))
+
+    assert bot.sent == []
 
 
 @pytest.mark.asyncio

@@ -690,10 +690,6 @@ class MicroBot:
         if voice.is_voice(event) and not self._wants_voice(room, event):
             return
         if voice.is_voice(event) and self._transcriber is None:
-            logger.debug(
-                "[{}] voice from {} left as audio (no whisper)",
-                self.name, event.sender,
-            )
             await self._on_voice_unheard(room, event)
             return
         decoding = voice.is_voice(event)
@@ -728,14 +724,7 @@ class MicroBot:
         return True
 
     async def _on_voice_unheard(self, room, event) -> None:
-        """Called once per voice message this bot would decode when no
-        transcriber is configured (speech off).
-
-        Does nothing by default: every bot in a room hears the message,
-        and an answer from each would be noise. The one bot that owns
-        captures in its rooms overrides this to tell the sender that the
-        words cannot be read, so the sender does not assume a filing.
-        """
+        """Speech is off: a voice message stays audio. Silent unless one bot says so."""
 
     async def _decode_voice(self, room_id: str, event):
         """Return the text event this voice message decodes to, or None.
