@@ -1739,7 +1739,17 @@ The restart that applies a release takes a [snapshot](#snapshots-and-rollback) o
 breaks a page, `./stack rollback` goes back to it.
 
 Apply a release with `./stack restart`, not with `./stack up`. `./stack up <id>` refuses a running stacklet on a
-different release than the checkout, because it would take no snapshot. A stopped stacklet starts on the new release as before.
+different release than the checkout, because it would take no snapshot.
+
+> ⚠️ **Run `./stack update` while the stacklets run, then `./stack restart`.** A stacklet that is stopped at the update
+> gets no snapshot. `./stack up <id>` starts it on the new release, and a rollback cannot take it back. To update a
+> stopped stacklet, take a snapshot first, before `./stack update`:
+>
+> ```bash
+> ./stack snapshot create docs
+> ```
+>
+> The stacklet stays stopped after the snapshot.
 
 Run `./stack restart` before you start other stacklets. Until then, `./stack up <id>` does not recreate core. The reason is that core's new containers can need a port that an old container still holds. It prints this line instead:
 
@@ -1750,6 +1760,15 @@ Run `./stack restart` before you start other stacklets. Until then, `./stack up 
 ### Updating by hand
 
 `stack update` ships in v0.4.0-rc.1. Moving *to* that release, or moving between older ones, is the same steps typed out:
+
+Take a snapshot of each stacklet first, because the steps below take none. A stacklet that you stop before the update
+gets none either:
+
+```bash
+./stack snapshot create docs photos
+```
+
+Then move the checkout:
 
 ```bash
 cd ~/famstack
@@ -1908,8 +1927,11 @@ The snapshots are in `~/famstack-data/.snapshots/`. Each snapshot is one folder,
 ```
 
 The stack takes a snapshot while the stacklets are stopped, because a database that writes during the copy gives a
-broken copy. On APFS each file is a clone. A clone takes seconds and no space until the live file changes. On other
-file systems the stack copies the files, and refuses when the disk has too little free space.
+broken copy. On APFS each file is a clone. A clone takes no space until the live file changes. On other file systems
+the stack copies the files, and refuses when the disk has too little free space.
+
+The take adds seconds to minutes to the time that the stacklet is down. The time grows with the number of files. On a
+disk without APFS the take is a copy of each file, and the stacklet stays down while the copy runs.
 
 A snapshot does not hold the large files that a stacklet declares for the backup: the photo library and the document
 originals. A rollback does not replace them.
@@ -1921,15 +1943,22 @@ Time Machine skips `.snapshots/`, because the folder holds clones of data that T
 The stack takes a snapshot in two cases:
 
 - **At the restart that applies a release.** After `./stack update`, `./stack restart` takes a snapshot of each
-  stacklet that starts on the new release. The snapshot adds no downtime, because the restart stops the stacklets
-  anyway. The newest 3 snapshots stay. The restart removes older ones.
+  stacklet that starts on the new release. The restart stops the stacklets anyway, and the take adds its time to
+  that stop. The newest 3 snapshots stay. The restart removes older ones.
 - **When you ask for one.** To take a snapshot before a change of your own, run:
 
 ```bash
 ./stack snapshot create docs
 ```
 
-The stack stops `docs`, takes the snapshot and starts `docs` again.
+The stack stops `docs`, takes the snapshot and starts `docs` again. A stacklet that was stopped stays stopped.
+
+The stack takes no snapshot in these cases:
+
+- **A stacklet that is stopped at the update.** See [Updating](#updating).
+- **The nightly image updates of Watchtower.** Watchtower changes the images of the services, not the release of the
+  stack. A rollback goes back to the images of the snapshot, but no snapshot holds the state from before a nightly
+  image update.
 
 When the snapshot of a restart fails, the stacklet does not start on the new release. `./stack up` refuses it. To take
 the snapshot again, run `./stack restart <id>`. To start without a snapshot, run `./stack restart <id> --no-snapshot`.
@@ -2016,9 +2045,30 @@ To go back to an older snapshot, name it: `./stack rollback 2026-11-01T0900Z`. T
 The rollback does not restore the configuration. A password, a paired phone or a person added since the snapshot
 stays.
 
+A host stacklet, such as `ai`, gets its data folder back. Its Homebrew packages and its LaunchAgents stay as they are,
+because they are outside the data folder.
+
+After a rollback, the checkout is on the old release. Thus `./stack update` offers the release that you left again.
+Do not take it until a newer release fixes the fault.
+
 Files that came in after the snapshot, such as a new scan, stay too. The restored database does not know them. The
 plan and the end of the rollback name the data folder and each file by its path under it, newest first. They name the
 first 20 and then how many more. `--json` gives every path in `newer_files`, and the folder in `data_folder`.
+
+A rollback does not restore a file in an archive folder that was renamed or deleted after the snapshot. An archive
+folder is a folder of large files that the snapshot leaves out, for example `paperless/media` of `docs`. Paperless
+renames the file of a document when you change its title or its correspondent. After the rollback, the restored
+database names the old file name. The download of that document then fails. The plan does not name such a file,
+because the rename does not change its time.
+
+To find the documents with a missing file, run:
+
+```bash
+docker exec stack-docs-paperless document_sanity_checker
+```
+
+It lists each document whose original file is missing. The renamed file is in
+`~/famstack-data/docs/paperless/media/`, under its new name. A deleted document comes back without its file.
 
 The rollback refuses before it stops anything in these cases:
 
