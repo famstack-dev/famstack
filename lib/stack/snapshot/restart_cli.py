@@ -3,9 +3,9 @@
 The restart that applies a release (`stack restart` in `stack.cli`) takes
 its snapshot in three calls around its own stop and start. They print
 what the restart says and exit 1 when no snapshot was taken; the
-decisions are in `stack.snapshot.release`. A fourth call, `waiting`,
-refuses the start of a stacklet whose last snapshot failed, or whose
-rollback stopped halfway:
+decisions are in `stack.snapshot.release`. A stacklet whose take
+failed waits for its snapshot, and `stack.snapshot.guard` refuses its
+start until a restart takes it:
 
     from stack.snapshot import restart_cli
 
@@ -14,7 +14,6 @@ rollback stopped halfway:
     taken = restart_cli.take_or_exit(stck, before)        # nothing starts without it
     cli.up_many(["docs"])
     restart_cli.keep_and_say(stck, taken)                 # the newest 3 stay
-    restart_cli.waiting(stck, "docs")                     # None, or the refusal
 """
 
 from __future__ import annotations
@@ -22,11 +21,12 @@ from __future__ import annotations
 import sys
 
 from .. import run_log
-from . import pending, release, rollback
+from ..prompt import RED, RESET
+from . import pending, release
 from .release import Before
 from .store import SnapshotError, Taken
 
-__all__ = ["keep_and_say", "record_or_exit", "take_or_exit", "waiting"]
+__all__ = ["keep_and_say", "problem_line", "record_or_exit", "stopped_or_exit", "take_or_exit"]
 
 
 def record_or_exit(stck, ids: list[str], no_snapshot: bool) -> Before:
@@ -53,7 +53,7 @@ def take_or_exit(stck, before: Before) -> Taken | None:
     stacklets `before` recorded: the snapshot, or None when `before` is
     empty. Exits 1 with the cause and the two ways on when the take
     fails; then they stay stopped and wait for their snapshot
-    (`waiting`).
+    (`stack.snapshot.guard.waiting`).
 
         take_or_exit(stck, before).snapshot.name   # "2026-11-25T2114Z"
     """
@@ -67,25 +67,43 @@ def take_or_exit(stck, before: Before) -> Taken | None:
         _exit(stck, stacklets, str(error), release.refused_lines(str(error), stacklets, []))
 
 
-def waiting(stck, stacklet_id: str) -> dict | None:
-    """The answer of a start refused because the stacklet's last snapshot
-    failed (`stack.snapshot.pending`), with the two ways on, or because a
-    rollback of it stopped halfway (`stack.snapshot.rollback`). None when
-    the stacklet waits for nothing. `stack up` and every restart ask it
-    before they start a stacklet.
+def stopped_or_exit(stck, held: list[str], down_result: dict) -> None:
+    """Return when the stop of a restart stopped every stacklet; else
+    record the stop's errors as the result of each run of `held`, print
+    them, and exit 1. A stacklet that did not stop still runs its release,
+    so a start would only be refused (`stack.snapshot.guard`), with the
+    restart just run as its way on.
 
-        waiting(stck, "docs")
-        # {"error": "docs waits for its snapshot: … stack restart docs …"}
+        stopped_or_exit(stck, ["docs"], {"ok": False, "errors": [
+            {"stacklet": "docs", "result": {"error": "container is busy"}}]})
+        #   ✗  Some stacklets failed to stop
+        #
+        #       docs: container is busy
     """
-    held = rollback.holding(stck.data, stacklet_id)
-    if held is not None:
-        return rollback.why_held(held, stacklet_id)
-    if not pending.waiting(stck.instance_dir, stacklet_id):
-        return None
-    return {"error": (f"{stacklet_id} waits for its snapshot, which failed at the last restart. "
-                      f"Take it with: stack restart {stacklet_id}. Or start without one: "
-                      f"stack restart {stacklet_id} --no-snapshot"),
-            "stacklet": stacklet_id}
+    if down_result.get("ok"):
+        return
+    error = down_result.get("error") or "Some stacklets failed to stop"
+    problems = [problem_line(e) for e in down_result.get("errors", [])]
+    for sid in held:
+        run_log.record_result(stck.instance_dir, sid,
+                              {"error": error, "problems": problems, "stacklet": sid})
+    # The layout of `stack.cli.print_error`: the error, a blank line, then
+    # one indented line per stacklet.
+    print(f"\n  {RED}✗{RESET}  {error}\n", file=sys.stderr)
+    for problem in problems:
+        print(f"      {problem}", file=sys.stderr)
+    sys.exit(1)
+
+
+def problem_line(failed: dict) -> str:
+    """One stacklet's line of a failed stop or start: its id, and its
+    error if any. `stack up` of several stacklets prints the same lines.
+
+        problem_line({"stacklet": "docs", "result": {"error": "container is busy"}})
+        # "docs: container is busy"
+    """
+    error = failed.get("result", {}).get("error")
+    return f"{failed['stacklet']}: {error}" if error else failed["stacklet"]
 
 
 def keep_and_say(stck, taken: Taken | None) -> None:

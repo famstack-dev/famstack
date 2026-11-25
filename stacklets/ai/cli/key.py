@@ -11,7 +11,9 @@ stack installed it with `local`, which every device at home can send
 `[ai] openai_key` holds the same key as oMLX: when not, every stacklet
 that uses the AI gets 401. The AI's service card on the Mac asks it
 through the host API and offers "Make a new key" while the key is
-`local`; `stack doctor` asks it too. `new` makes a key, writes it into oMLX's settings
+`local`; `stack doctor` asks it too. `new` first asks `stack.snapshot.guard`
+whether each running stacklet that uses the key may start, and refuses,
+naming `stack restart`, when one may not. Then it makes a key, writes it into oMLX's settings
 and `[ai] openai_key`, restarts oMLX when it runs (it reads its key only
 when it starts), asks it one short question once it answers again and
 keeps the answer for the setup page (`answer.py`), and then starts every
@@ -101,9 +103,14 @@ def _new(config: dict, ai: dict, *, wait: bool) -> dict:
     running stacklets that use it. Returns the key and those stacklets.
     While the oMLX app runs, a restart would load famstack's model beside
     the app's: it returns the error `omlx_app.QUIT_FIRST` and changes
-    nothing."""
+    nothing. So does a running stacklet that uses the key and whose start
+    `stack up` would refuse (`stack.snapshot.guard`), such as one on
+    another release after `stack update`: it would keep the old key while
+    oMLX takes only the new one."""
     from stack.ai.probe import probe
 
+    if refused := _refused_consumers(config):
+        return refused
     answered = probe(ai.get("openai_url", ""), ai.get("openai_key", ""))
     omlx_runs = answered.reachable or answered.needs_auth
     if omlx_runs and omlx_app.running():
@@ -117,6 +124,24 @@ def _new(config: dict, ai: dict, *, wait: bool) -> dict:
     applied = _apply(config, wait=wait)
     _report(key, applied)
     return {"key": key, "applied": applied}
+
+
+def _refused_consumers(config: dict) -> dict | None:
+    """The error that names the restart of each running stacklet that uses
+    the key and that `stack up` refuses, or None when every one may start."""
+    from stack.snapshot import guard
+    from stack.stack import Stack
+
+    stck = Stack(Path(config["repo_root"]), Path(config["data_dir"]),
+                 instance_dir=Path(config["instance_dir"]))
+    running = sorted(ai_consumers(Path(config["repo_root"])) & running_stacklets())
+    refused = guard.refusals(stck, running)
+    if not refused:
+        return None
+    return {"error": f"The key stays as it is, because {', '.join(refused)} cannot start "
+                     f"again with a new one now. Run first: stack restart {' '.join(refused)}. "
+                     f"Then run './stack ai key new' again.",
+            "refusals": list(refused.values())}
 
 
 def _restart_omlx() -> str:

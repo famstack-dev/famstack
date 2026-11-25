@@ -21,6 +21,11 @@ runs. A stacklet that was stopped stays stopped. A take that fails still
 starts the stacklets again, because the family must not lose a page
 because of a snapshot.
 
+`create` refuses, before the record, a stacklet whose state is not whole:
+its last snapshot failed, or a rollback of it stopped halfway
+(`stack.snapshot.guard.waiting`, the refusal `stack up` gives). That
+state would become the newest snapshot, where the next rollback goes.
+
     $ stack snapshot create docs
       ✓  Snapshot 2026-11-24T2114Z: docs
     $ stack snapshot list
@@ -46,7 +51,7 @@ from .. import runs
 from ..images import DockerImages
 from ..manifest import Manifest, ManifestError
 from ..prompt import DIM, GREEN, ORANGE, RED, RESET
-from . import remove_cli, removal, store
+from . import guard, remove_cli, removal, store
 from .answer import print_answer
 from .release import anything_up
 from .store import SnapshotError
@@ -89,7 +94,8 @@ def run(stck, args, volume: Volume | None = None) -> None:
 
 def _create(stck, ids: list[str], volume: Volume | None) -> dict:
     """Take a snapshot of the stacklets `ids`: record, stop, take, start
-    again. The answer, with `error` when it refused or a step failed."""
+    again. The answer, with `error` when it refused or a step failed.
+    Refuses, changing nothing, when one of `ids` waits (`guard.waiting`)."""
     if not ids:
         return {"error": "Name the stacklets: stack snapshot create <id> [<id> ...]"}
     known = {s["id"]: Path(s["path"]) for s in stck.discover()}
@@ -97,6 +103,9 @@ def _create(stck, ids: list[str], volume: Volume | None) -> dict:
     if unknown:
         return {"error": f"Unknown stacklet: {', '.join(unknown)}"}
     with runs.hold(stck.instance_dir, ids):
+        for sid in ids:
+            if refused := guard.waiting(stck, sid):
+                return refused
         try:
             record = _record(stck, {sid: known[sid] for sid in ids}, anything_up(stck))
         except ManifestError as error:

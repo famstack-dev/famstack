@@ -129,8 +129,9 @@ class Docker:
         self._write(images=images)
 
     def follows_compose(self, follows: bool = True) -> None:
-        """Make `compose up` start the stacklet of its compose file and
-        `compose stop` or `down` stop it, as a real daemon does. Without
+        """Make `compose up` start the stacklet of its compose file, with
+        the commit it started from (`STACK_COMMIT`), and `compose stop` or
+        `down` stop it, as a real daemon does. Without
         it, or with `follows=False`, the states stay as the test set them:
         a stop that exits 0 and leaves a container up."""
         self._write(follows_compose=follows)

@@ -109,10 +109,14 @@ def _create(folder: Path, state: dict, argv: list[str]) -> None:
 
 def _follow(folder: Path, state: dict, step: str, argv: list[str]) -> None:
     """With `follows_compose` set, a `compose up` makes the stacklet of the
-    compose file run, and a `compose stop` or `down` stops it."""
+    compose file run, and a `compose stop` or `down` stops it. A `compose
+    up` with `STACK_COMMIT` in its environment stamps that commit, as the
+    `stack.commit` label of a stacklet's compose file does on a real daemon."""
     stacklet = _compose_file(argv).parent.name
     if step in ("up", "stop", "down"):
         state["projects"] = {**state["projects"], stacklet: "running" if step == "up" else "stopped"}
+        if step == "up" and os.environ.get("STACK_COMMIT"):
+            state["commits"] = {**state.get("commits", {}), stacklet: os.environ["STACK_COMMIT"]}
         (folder / "state.json").write_text(json.dumps(state))
 
 

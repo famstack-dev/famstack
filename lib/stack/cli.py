@@ -16,6 +16,14 @@ Stacklet commands (`stacklets/<id>/cli/<cmd>.py`) follow the command
 rules in docs/stack-reference.md § CLI Commands: named for what the
 admin wants, nouns with verbs, one meaning per flag, apply by default,
 wait with progress, return a dict.
+
+Debt (epic review): this module is past 800 code lines. It holds the
+argument parsing, the lifecycle commands and their output, and it grows
+with each command. The restart's snapshot is wired the same way at four
+sites in `handle_restart` and `_restart_stale` (record, take, keep and
+say), which one context manager in `stack.snapshot.restart_cli` would
+replace. Trigger: the next change that adds more than wiring here; it
+moves its part, and the lifecycle commands, into modules of their own.
 """
 from __future__ import annotations
 
@@ -46,7 +54,8 @@ from . import run_log
 from .removal import handle_destroy, handle_uninstall
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .devices import cli as devices_cli
-from .snapshot import cli as snapshot_cli, release as snapshot_release, restart_cli, rollback_cli
+from .snapshot import (cli as snapshot_cli, guard as snapshot_guard, release as snapshot_release,
+                       restart_cli, rollback_cli)
 from .config_file import StackTomlUnreadable, configured_data_dir, read_stack_toml
 from .stack import Stack
 
@@ -616,8 +625,11 @@ class CLI:
 
         A requirement not set up that asks nothing is started first
         (`_start_requirements`); `Stack.up` refuses for any other.
+        `stack.snapshot.guard` refuses a start that would lose the way
+        back: a running stacklet on an older release, which only `stack
+        restart` applies, with a snapshot first.
         """
-        failed = (restart_cli.waiting(self.stack, stacklet_id)
+        failed = (snapshot_guard.starting(self.stack, stacklet_id)
                   or self._start_requirements(stacklet_id))
         if failed:
             return failed
@@ -1453,12 +1465,23 @@ def _up(stck, args) -> tuple[dict, int]:
     everything = not ids and args.stacklet == "all"
     targets = (cli.installed() if everything
                else cli._known(ids or [args.stacklet]))
+    # A refused start (`stack.snapshot.guard`) ends before the setup
+    # questions and the preparation, so it asks nothing and downloads
+    # nothing. The others go on; the refused ones fail the command as a
+    # failed preparation does.
+    refused, targets = snapshot_guard.split(stck, targets)
+    if refused and not targets:
+        if ids or everything:
+            return _failed_to_start(_counting({"ok": False, "started": [], "errors": []}, refused))
+        print_error(refused[args.stacklet])
+        return refused[args.stacklet], 1
     # `up all` starts what is set up, which has nothing to ask: it only
     # claims its list before its turn.
     with _its_run(stck, targets, [] if everything else targets, answers) as turn:
         if turn.ended:
             return turn.ended
-        return _up_in_its_run(stck, cli, args, ids, answers, targets, turn.unprepared)
+        return _up_in_its_run(stck, cli, args, ids, answers, targets,
+                              {**refused, **turn.unprepared})
 
 
 class BeforeTheTurn(NamedTuple):
@@ -1545,19 +1568,22 @@ def _counting(result: dict, unprepared: dict[str, dict]) -> dict:
 
 
 def _failed_to_start(result: dict) -> tuple[dict, int]:
-    """Say which stacklets of a multi-stacklet start failed; `(result, 1)`."""
+    """Say which stacklets of a multi-stacklet start failed, each with its
+    error, because a refusal names the command that goes on; `(result, 1)`."""
     print_error({"error": result.get("error") or "Some stacklets failed to start",
-                 "problems": [e["stacklet"] for e in result.get("errors", [])]})
+                 "problems": [restart_cli.problem_line(e) for e in result.get("errors", [])]})
     return result, 1
 
 
 def _ended_with(result: dict, unprepared: dict[str, dict]) -> tuple[dict, int]:
     """The end of a start whose stacklets all started: `(result, 0)`, or
-    `(result, 1)` with each failed preparation counted (`_counting`) and
-    named once more after the lines of what started."""
+    `(result, 1)` with each failed preparation or refused start counted
+    (`_counting`) and named once more after the lines of what started."""
     if not unprepared:
         return result, 0
-    print_error({"error": "Some stacklets could not be prepared", "problems": list(unprepared)})
+    print_error({"error": "Some stacklets did not start",
+                 "problems": [restart_cli.problem_line({"stacklet": sid, "result": r})
+                              for sid, r in unprepared.items()]})
     return _counting(result, unprepared), 1
 
 
@@ -1698,8 +1724,10 @@ def _up_in_its_run(stck, cli, args, ids, answers, targets,
     print_error(result)
     # A failed migration leaves the stacklet running, so it did not
     # fail to start. A setup question left open is not a failure either:
-    # nothing started, and the answer is what is missing.
-    if args.stacklet != "messages" and "migrations" not in result and "form" not in result:
+    # nothing started, and the answer is what is missing. A refusal of
+    # `stack.snapshot.guard` neither: the stacklet runs as it did.
+    if (args.stacklet != "messages" and "migrations" not in result and "form" not in result
+            and not result.get("refused")):
         _notify(stck, _server_room_lines(stck)["failed"].format(name=name))
     return result, 1
 
@@ -2270,12 +2298,7 @@ def handle_restart(stck, args):
             before = restart_cli.record_or_exit(stck, ids, no_snapshot)
             down_result = cli.down_many(ids)
             taken = restart_cli.take_or_exit(stck, before)
-            if not down_result.get("ok"):
-                failed = {"error": down_result.get("error") or "Some stacklets failed to stop",
-                          "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
-                _restart_failed(stck, cli._known(ids), failed)
-                print_error(failed)
-                sys.exit(1)
+            restart_cli.stopped_or_exit(stck, cli._known(ids), down_result)
             up_result = cli.up_many(ids)
         restart_cli.keep_and_say(stck, taken)
         if not up_result.get("ok"):
@@ -2307,12 +2330,7 @@ def handle_restart(stck, args):
             before = restart_cli.record_or_exit(stck, _left(installed, unprepared), no_snapshot)
             down_result = cli.down_many(_left(sorted(stck.running_ids()), unprepared))
             taken = restart_cli.take_or_exit(stck, before)
-            if not down_result.get("ok"):
-                failed = {"error": "Some stacklets failed to stop",
-                          "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
-                _restart_failed(stck, touched, failed)
-                print_error(failed)
-                sys.exit(1)
+            restart_cli.stopped_or_exit(stck, touched, down_result)
             up_result = cli.up_many(_left(installed, unprepared))
         restart_cli.keep_and_say(stck, taken)
         if not up_result.get("ok"):
@@ -2327,8 +2345,9 @@ def handle_restart(stck, args):
 
     with _restart_run(stck, [args.stacklet], cli._known([args.stacklet])):
         before = restart_cli.record_or_exit(stck, [args.stacklet], no_snapshot)
-        cli.down(args.stacklet)
+        down_result = cli.down(args.stacklet)
         taken = restart_cli.take_or_exit(stck, before)
+        restart_cli.stopped_or_exit(stck, [args.stacklet], down_result)
         result = cli.up(args.stacklet)
     restart_cli.keep_and_say(stck, taken)
     if "error" in result:
@@ -2336,14 +2355,6 @@ def handle_restart(stck, args):
     else:
         print_up_success(result, stck)
         _tell_how_to_pair(stck, [args.stacklet])
-
-
-def _restart_failed(stck, stacklet_ids: list[str], failed: dict) -> None:
-    """Record a restart that stopped short as the result of each of its
-    stacklets' runs: a stacklet whose own stop succeeded was not restarted
-    either, and its run log would otherwise end with that stop's success."""
-    for sid in stacklet_ids:
-        run_log.record_result(stck.instance_dir, sid, {**failed, "stacklet": sid})
 
 
 def _restart_stale(stck, cli, yes=False, no_snapshot=False):
@@ -2387,8 +2398,9 @@ def _restart_stale(stck, cli, yes=False, no_snapshot=False):
     with _restart_run(stck, stale, stale) as unprepared:
         ids = _left(stale, unprepared)
         before = restart_cli.record_or_exit(stck, ids, no_snapshot)
-        cli.down_many(ids)
+        down_result = cli.down_many(ids)
         taken = restart_cli.take_or_exit(stck, before)
+        restart_cli.stopped_or_exit(stck, stale, down_result)
         result = _counting(cli.up_many(ids), unprepared)
     failed = {e["stacklet"]: e["result"].get("error", "") for e in result["errors"]}
     for sid in stale:

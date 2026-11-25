@@ -943,29 +943,42 @@ repeatedly. Every run refreshes config so changes in stack.toml take
 effect.
 
 ```
- 1. Check requires: start a requirement that is not set up and asks
+ 1. Refuse a start that loses the way back to a snapshot
+    (`stack.snapshot.guard`), before any setup question,
+    preparation or download:
+    a running stacklet on another release than the checkout
+    (`stack restart <id>` applies it), one whose last snapshot failed,
+    one a stopped rollback holds
+ 2. Check requires: start a requirement that is not set up and asks
     nothing first (its own steps, inside this run, waiting for another
     run of it); fail for one that asks questions or has `attended_setup`
- 2. Render .env from templates + generate missing secrets
- 3. hooks/on_configure.py (first run only): setup questions, as forms
- 4. hooks/on_prepare.py: long installs and downloads, every run,
+ 3. Render .env from templates + generate missing secrets
+ 4. hooks/on_configure.py (first run only): setup questions, as forms
+ 5. hooks/on_prepare.py: long installs and downloads, every run,
     holding only this stacklet's run lock; the queue of runs is
     entered after it
- 5. hooks/on_install.sh (first run only): create dirs, install deps, build
- 6. Write .env to stacklet directory; a first run renders it again
+ 6. hooks/on_install.sh (first run only): create dirs, install deps, build
+ 7. Write .env to stacklet directory; a first run renders it again
     first, so a secret `on_install` wrote reaches the container
- 7. Bot runner discovers bots (if stacklet has bot/bot.toml)
- 8. hooks/on_start.sh: start native services (host stacklets); without
+ 8. Bot runner discovers bots (if stacklet has bot/bot.toml)
+ 9. hooks/on_start.sh: start native services (host stacklets); without
     a compose file, write `.stack/<id>.up`
- 9. Write the Caddyfile, counting this stacklet as up (domain mode)
-10. Build or pull Docker images
-11. Start containers (docker compose up -d)
-12. Reload Caddy (domain mode)
-13. Wait for health check, with containers or without
-14. hooks/on_install_success.py (first run only): obtain tokens, seed data
-15. hooks/on_start_ready.py: service is healthy, seed data, sync accounts
-16. Show welcome screen with URL, login, hints
+10. Write the Caddyfile, counting this stacklet as up (domain mode)
+11. Build or pull Docker images
+12. Start containers (docker compose up -d)
+13. Reload Caddy (domain mode)
+14. Wait for health check, with containers or without
+15. hooks/on_install_success.py (first run only): obtain tokens, seed data
+16. hooks/on_start_ready.py: service is healthy, seed data, sync accounts
+17. Show welcome screen with URL, login, hints
 ```
+
+**A release is applied by `stack restart`:** step 1 refuses a running
+stacklet on another release than the checkout. The reason is that the
+start would run the release's migrations without a snapshot. The error
+names `stack restart <id>` and `stack restart <id> --no-snapshot`, and the
+Server room gets no notice: nothing started and nothing failed. A stopped
+stacklet starts on the checkout's release as before.
 
 **First run detection:** `.stack/{id}.setup-done` marker. Absent
 means first run. Created after `on_install` completes. Deleted by

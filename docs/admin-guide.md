@@ -1738,6 +1738,9 @@ A stacklet is named only if the release changed files inside it and it is runnin
 The restart that applies a release takes a [snapshot](#snapshots-and-rollback) of each stacklet first. If the release
 breaks a page, `./stack rollback` goes back to it.
 
+Apply a release with `./stack restart`, not with `./stack up`. `./stack up <id>` refuses a running stacklet on a
+different release than the checkout, because it would take no snapshot. A stopped stacklet starts on the new release as before.
+
 Run `./stack restart` before you start other stacklets. Until then, `./stack up <id>` does not recreate core. The reason is that core's new containers can need a port that an old container still holds. It prints this line instead:
 
 ```
@@ -1930,6 +1933,26 @@ The stack stops `docs`, takes the snapshot and starts `docs` again.
 
 When the snapshot of a restart fails, the stacklet does not start on the new release. `./stack up` refuses it. To take
 the snapshot again, run `./stack restart <id>`. To start without a snapshot, run `./stack restart <id> --no-snapshot`.
+
+### When does `./stack up` refuse a stacklet?
+
+`./stack up <id>` refuses a start that loses the way back to a snapshot. It changes nothing and names the command to
+run:
+
+| The stacklet | What to run |
+|---|---|
+| It runs a different release than the checkout, for example after `./stack update` | `./stack restart <id>`, which takes the snapshot first. To skip the snapshot, add `--no-snapshot`. |
+| Its snapshot failed at the last restart | `./stack restart <id>`, or `./stack restart <id> --no-snapshot` |
+| A rollback of it stopped halfway | `./stack rollback` |
+
+For a running stacklet after an update, the answer looks like this:
+
+```
+  ✗  docs runs a different release than the checkout. A start would apply the checkout's release without a snapshot. Apply it with: stack restart docs, which takes a snapshot first. Or without one: stack restart docs --no-snapshot
+```
+
+`./stack snapshot create <id>` refuses the last two cases with the same text. Their state is not whole, and the next
+rollback would go to the newest snapshot.
 
 ### How to see the snapshots
 

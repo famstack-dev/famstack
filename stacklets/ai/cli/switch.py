@@ -194,9 +194,15 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
     runs for a server `[ai]` does not name, now or after the next login.
     When another switch wrote `[ai]` meanwhile, its route stays as it is.
     A refusal names the run that holds the AI's lock. A settings file of famstack's oMLX
-    that cannot be read stops it before anything is written. Returns an
-    error, or None when the engine is up.
+    that cannot be read stops it before anything is written. So does an ai
+    stacklet that `stack up ai` would refuse (`stack.snapshot.guard`), such
+    as one that runs on another release after `stack update`: the error
+    says what to run first. Returns an error, or None when the engine is up.
     """
+    if refused := _refused_start(config):
+        kept = ai.get("openai_url") or "no AI server"
+        return {"error": f"The ai stacklet cannot start now, so the stack still uses {kept}. "
+                         f"{refused}. Then run the switch again."}
     try:
         engine = managed_engine(config["data_dir"])
     except UnreadableSettings as e:
@@ -220,6 +226,19 @@ def _run_the_engine(config: dict, ai: dict, model: str) -> dict | None:
                          f"{kept}. Try again when it is done."}
     return {"error": f"Bringing up the ai stacklet failed, so the stack "
                      f"still uses {kept}. Its output above says why."}
+
+
+def _refused_start(config: dict) -> str | None:
+    """The refusal `stack up ai` would answer now, or None. The switch asks
+    first, because a refused start would leave `[ai]` written for an
+    engine that does not run, and the run's own answer goes to stderr."""
+    from stack.snapshot import guard
+    from stack.stack import Stack
+
+    stck = Stack(Path(config["repo_root"]), Path(config["data_dir"]),
+                 instance_dir=Path(config["instance_dir"]))
+    refused = guard.starting(stck, "ai")
+    return refused["error"].rstrip(".") if refused else None
 
 
 def _put_back(config: dict, before: dict, agents_before: set[str]) -> None:

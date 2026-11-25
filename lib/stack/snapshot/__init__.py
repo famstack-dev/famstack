@@ -17,7 +17,8 @@ It is the way back after a change that broke a stacklet.
     stack.snapshot.cli      `stack snapshot create|list`
     stack.snapshot.remove_cli     `stack snapshot remove`
     stack.snapshot.rollback_cli   `stack rollback`
-    stack.snapshot.restart_cli    the snapshot of `stack restart`, and the start it refuses
+    stack.snapshot.restart_cli    the snapshot of `stack restart`
+    stack.snapshot.guard    the start and the snapshot it refuses, to keep the way back
     stack.snapshot.answer   how these commands print their answer and ask
 
 A snapshot is not a backup. It does not survive the loss of the Mac,
