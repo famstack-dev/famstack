@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -150,7 +151,7 @@ def card_text(card: dict, t, *, link: str = "", corrected: bool = False,
     """
     head = "diary_card_corrected" if corrected else "diary_card"
     title = card.get("title", "")
-    title = f"[{title}]({link})" if link else f"**{title}**"
+    title = f"[{_link_text(title)}]({link})" if link else f"**{title}**"
     blocks = [t(head, title=title, date=card.get("date_label")
                 or card.get("date", "")),
               # The first line says the day already.
@@ -158,6 +159,17 @@ def card_text(card: dict, t, *, link: str = "", corrected: bool = False,
     if hint:
         blocks.append(t("diary_card_hint"))
     return "\n\n".join(b for b in blocks if b)
+
+
+def _link_text(title: str) -> str:
+    """`title` escaped for the text of a Markdown link.
+
+    The title is the model's words, so a `]` in it would end the link
+    text early and a `](url)` would link elsewhere. A backslash before
+    each `\\`, `[` and `]` keeps the whole title as the text of the one
+    link.
+    """
+    return re.sub(r"([\\\[\]])", r"\\\1", title)
 
 
 def card_link(card: dict, base: str) -> str:

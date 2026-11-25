@@ -476,6 +476,7 @@ class TestTheCardsTitleLinksToItsPage:
         assert bot.sent[0][1].startswith("📔 **Sandcastle at the lake** · ")
 
     def test_a_card_with_no_id_keeps_its_bold_title(self):
+        assert diary_room.card_link({"title": "Sandcastle at the lake"}, "https://h/go") == ""
         assert diary_room.card_text(_card(), _t_en, link="").startswith(
             "📔 **Sandcastle at the lake** · ")
 
@@ -485,3 +486,17 @@ class TestTheCardsTitleLinksToItsPage:
                                     link="https://h/go/diary/e1", corrected=corrected)
         assert "[Sandcastle at the lake](https://h/go/diary/e1) · Sunday" in text.split("\n")[0]
         assert "**" not in text.split("\n")[0]
+
+    @pytest.mark.parametrize("title", [
+        "Plan B] done", "Bart (age 7) [sic", "Ordner C:\\",
+        "Look](http://evil.example) here"])
+    def test_brackets_in_a_title_neither_break_nor_replace_its_link(self, title):
+        """The title is the model's words, so it can hold any bracket.
+        As Element shows it, the whole title is the one link, to the card."""
+        import re
+        from stack.matrix.html import matrix_html
+
+        line = diary_room.card_text(_card(title=title), _t_en,
+                                    link="https://h/go/diary/e1").split("\n\n")[0]
+        links = re.findall(r'<a href="([^"]*)">(.*?)</a>', matrix_html(line))
+        assert links == [("https://h/go/diary/e1", title)]
