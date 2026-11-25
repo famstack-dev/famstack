@@ -2059,6 +2059,10 @@ A release without `./stack rollback` does not know the record, and its `./stack 
 safe, because each state is whole before the checkout moves. The record stays open until a release with `./stack
 rollback` runs it once. Until then, the stack keeps its snapshot and its replaced state.
 
+When the snapshot's release has no `./stack rollback`, no release can end the record. On such a release,
+`./stack help` lists no `rollback`. On that release, rename `ROLLBACK.json` to `ROLLBACK.json.ended` in
+`~/famstack-data/.snapshots/replaced/<time>/`. Then run `./stack up` for each stacklet.
+
 #### After a stop inside the checkout
 
 Some or all files on disk are of the snapshot's release. Thus `./stack` runs a mix of two releases, or the code of
