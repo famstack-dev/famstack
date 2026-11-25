@@ -186,6 +186,36 @@ def remove_image(image: str) -> bool:
     return removed.returncode == 0
 
 
+def tag_image(image_id: str, name: str) -> tuple[bool, str]:
+    """Make the tag `name` name the image `image_id` on this Mac, as
+    `docker image tag` does. Returns (ok, error output). The image the tag
+    named before stays on the Mac, without that tag."""
+    result = _docker("image", "tag", image_id, name, capture_output=True, text=True, timeout=60)
+    return result.returncode == 0, result.stderr.strip()
+
+
+def inspect_image(image: str) -> dict | None:
+    """What Docker knows of the image `image` on this Mac: its `Id`, its
+    `RepoDigests` and the rest of `docker image inspect`. None when the
+    Mac does not hold the image."""
+    result = _docker("image", "inspect", image, capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        return None
+    found = json.loads(result.stdout)
+    return found[0] if found else None
+
+
+def inspect_containers(names: list[str]) -> list[dict]:
+    """What Docker knows of each named container: its `Image` id, its
+    `Config` with the image reference and the compose labels, and the
+    rest of `docker container inspect`. A name that Docker does not know
+    is left out."""
+    if not names:
+        return []
+    result = _docker("container", "inspect", *names, capture_output=True, text=True, timeout=60)
+    return json.loads(result.stdout) if result.stdout.strip() else []
+
+
 def find_compose_file(stacklet_dir: Path) -> Path | None:
     """Find docker-compose.yml for a stacklet. Returns path or None."""
     compose = stacklet_dir / "docker-compose.yml"
@@ -568,6 +598,20 @@ def running_project_ids() -> set[str]:
     """Convenience wrapper — stacklet IDs with running containers."""
     states = project_states()
     return {sid for sid, state in states.items() if state in ("running", "starting")}
+
+
+def ids_with_a_container_up() -> set[str]:
+    """The stacklet ids whose project may have a container that runs: every
+    project state except "stopped".
+
+    Wider than `running_project_ids`, because a "failing" project can have
+    one crashed container and a database server that still writes, and an
+    "unknown" one (paused, created) may run too. A caller that copies a
+    stacklet's files asks this, not whether the stacklet serves.
+
+        ids_with_a_container_up()    # {"docs"} while Paperless restarts and Postgres runs
+    """
+    return {sid for sid, state in project_states().items() if state != "stopped"}
 
 
 def container_commits() -> dict[str, str]:

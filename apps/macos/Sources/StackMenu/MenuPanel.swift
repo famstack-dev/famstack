@@ -635,7 +635,7 @@ struct SetupGrid: View {
             Button("Edit users.toml") { store.edit(report.usersToml) }
         }
         .buttonStyle(.link).font(.callout)
-        Text("A change applies with stack up <stacklet>. Doctor lists what still runs the old setting.")
+        Text("A change applies with stack up <stacklet>, a new release with stack restart <stacklet>. Doctor lists what still runs the old setting.")
             .font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }

@@ -247,6 +247,25 @@ class Checkout:
         code, out, _ = self._run("describe", "--tags", "--always", "--dirty")
         return out if code == 0 else ""
 
+    def describe_of(self, commit: str) -> str:
+        """The position of `commit`, as `describe` says it for HEAD: a
+        tag, a tag plus commits, or the bare SHA. Empty when git does not
+        know the commit.
+
+            checkout.describe_of("f5834a67")   # "v0.4.0-rc.1"
+        """
+        code, out, _ = self._run("describe", "--tags", "--always", commit)
+        return out if code == 0 else ""
+
+    def commit_of(self, ref: str) -> str:
+        """The full commit that `ref` names (a tag, a short commit,
+        `HEAD`), or empty when git does not know it.
+
+            checkout.commit_of("f5834a67")   # "f5834a67c0…"
+        """
+        code, out, _ = self._run("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        return out if code == 0 else ""
+
     def commits_ahead_of(self, ref: str) -> int:
         """How many commits HEAD carries that `ref` does not."""
         code, out, _ = self._run("rev-list", "--count", f"{ref}..HEAD")
@@ -282,6 +301,89 @@ class Checkout:
         """
         _, out, _ = self._run("status", "--porcelain", "--untracked-files=no")
         return [line.split(maxsplit=1)[1] for line in out.splitlines() if line.strip()]
+
+    def untracked_copies_of(self, commit: str) -> list[str]:
+        """Paths of the untracked files that are copies of the file of
+        `commit` at the same path. A copy is a regular file in both, with
+        the same exec bit and equal content. Ignored files and files that
+        git tracks are never listed. An empty list when git fails.
+
+        Git writes the worktree before the index. A checkout that stopped
+        in between leaves the target's new files untracked, and the next
+        checkout refuses them as "in the way". These are those files. A
+        file someone made is not listed, because it differs from the
+        commit's file. A link is not listed, because it is no regular
+        file.
+
+            untracked_copies_of("v0.4.0-rc.1")   # ["stacklets/docs/NOTES.md"]
+        """
+        # git's -z lists keep each name as it is, a leading space too.
+        # A stripped list could name a tracked file instead of the
+        # untracked one.
+        untracked = self._paths("ls-files", "--others", "--exclude-standard", "-z")
+        tracked = set(self._paths("ls-files", "-z"))
+        theirs = self._regular_files_of(commit)
+        # The paths go to git on stdin, one per line. A large list would not
+        # fit as arguments. That input is not plain: git unquotes
+        # a line that starts with a double quote and drops a carriage
+        # return at its end. A line break ends a line. Git reads each such
+        # name as another file or refuses the whole input. Such a name is
+        # never a copy, and git's refusal names it instead.
+        candidates = [path for path in untracked
+                      if path in theirs and path not in tracked
+                      and not path.startswith('"') and "\n" not in path and "\r" not in path
+                      and self._same_mode(path, theirs[path][0])]
+        if not candidates:
+            return []
+        code, out, _ = self._raw("hash-object", "--stdin-paths",
+                                 stdin="".join(f"{path}\n" for path in candidates))
+        hashes = out.splitlines()
+        if code != 0 or len(hashes) != len(candidates):
+            return []
+        return [path for path, sha in zip(candidates, hashes) if theirs[path][1] == sha]
+
+    def _same_mode(self, path: str, mode: str) -> bool:
+        """Whether the file at `path` is a regular file, not a link, with
+        the exec bit of the git `mode` ("100755" or "100644"). A file whose
+        mode someone changed is not git's own leftover."""
+        on_disk = self.root / path
+        if on_disk.is_symlink() or not on_disk.is_file():
+            return False
+        return bool(on_disk.stat().st_mode & 0o111) == (mode == "100755")
+
+    def _regular_files_of(self, commit: str) -> dict[str, tuple[str, str]]:
+        """The regular files of `commit` (mode 100644 or 100755), each
+        path with its mode and blob: `{"README.md": ("100644", "9daeafb…")}`.
+        Empty when git fails. A link (120000) and a submodule are left
+        out."""
+        code, out, _ = self._raw("ls-tree", "-r", "-z", commit)
+        if code != 0:
+            return {}
+        files = {}
+        for entry in out.split("\0"):
+            if "\t" not in entry:
+                continue
+            meta, path = entry.split("\t", 1)
+            mode, kind, sha = meta.split()
+            if kind == "blob" and mode in ("100644", "100755"):
+                files[path] = (mode, sha)
+        return files
+
+    def _paths(self, *args: str) -> list[str]:
+        """The paths of a git command with `-z`, each as git wrote it.
+        Empty when git fails."""
+        code, out, _ = self._raw(*args)
+        return [path for path in out.split("\0") if path] if code == 0 else []
+
+    def _raw(self, *args: str, stdin: str = "") -> tuple[int, str, str]:
+        """Like `_run`, with `stdin` as git's input and the output as git
+        wrote it. `_run` strips its output, which changes the first name
+        of a `-z` list that starts with a space."""
+        result = subprocess.run(
+            ["git", "-C", str(self.root), *args], input=stdin,
+            capture_output=True, text=True, timeout=180,
+        )
+        return result.returncode, result.stdout, result.stderr
 
     # ── What changes ──
 

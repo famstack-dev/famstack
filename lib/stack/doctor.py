@@ -189,7 +189,8 @@ def check_stale_host_api() -> Finding:
 
 
 def check_migrations(stacklet: str, pending: list[tuple[str, str]],
-                     failed: dict[str, str], newer: list[str]) -> list[Finding]:
+                     failed: dict[str, str], newer: list[str],
+                     stale: bool = False) -> list[Finding]:
     """Migrations the stacklet's data has not had, or had from a newer release.
 
     `pending` pairs each waiting migration's key with its summary, which
@@ -197,13 +198,16 @@ def check_migrations(stacklet: str, pending: list[tuple[str, str]],
     key of one that raised to its recorded error; it is pending as well
     and reported once, as the error. `newer` names migrations applied
     here that this checkout does not ship: older code is reading data a
-    newer release changed.
+    newer release changed. `stale` says the stacklet runs code from before
+    the last update: its migrations then run at `stack restart`, which
+    applies the release (with `--with-snapshot`, after a snapshot).
     """
+    start = f"stack restart {stacklet}" if stale else f"stack up {stacklet}"
     findings = [Finding(
         level=ERROR,
         title=f"migration {key} failed",
         detail=failed[key] or "No error was recorded.",
-        fix=f"stack up {stacklet}",
+        fix=start,
     ) for key in failed]
     waiting = [(key, summary) for key, summary in pending if key not in failed]
     if waiting:
@@ -212,7 +216,7 @@ def check_migrations(stacklet: str, pending: list[tuple[str, str]],
             title=f"{stacklet} has data migrations waiting",
             detail="; ".join(f"{key}: {summary}" for key, summary in waiting)
                    + ". They run on the next start.",
-            fix=f"stack up {stacklet}",
+            fix=start,
         ))
     if newer:
         findings.append(Finding(
@@ -531,7 +535,8 @@ def diagnose(stacklets, expected_env, containers_for, container_env,
                 findings.append(found)
 
         if migrations:
-            findings += check_migrations(stacklet, *migrations(stacklet))
+            findings += check_migrations(stacklet, *migrations(stacklet),
+                                         stale=stacklet in stale)
 
         for container in containers:
             name = container["name"]

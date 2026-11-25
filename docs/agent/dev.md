@@ -557,3 +557,4 @@ Read the relevant ADR before touching the pillar it describes.
 | [adr-020](../adr/adr-020-live-events-for-screens.md) | Live events for screens: SSE plus POST, one envelope, state in the job |
 | [adr-021](../adr/adr-021-setup-questions-are-forms.md) | Setup questions are forms: asked in a terminal, answered by flags or a screen |
 | [adr-022](../adr/adr-022-extensions-are-copied-from-a-repo.md) | Extensions are copied from a repo: the catalog, `.source.toml`, the warning for code from elsewhere |
+| [adr-024](../adr/adr-024-snapshots-and-their-manifest.md) | Snapshots and their manifest: the `.snapshots/` layout and `MANIFEST.json` as a contract between releases |
