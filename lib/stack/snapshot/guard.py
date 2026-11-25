@@ -105,9 +105,9 @@ def waiting(stck, stacklet_id: str) -> dict | None:
         waiting(stck, "docs")
         # {"error": "docs waits for its snapshot: … stack restart docs …", "stacklet": "docs"}
     """
-    held = rollback.holding(stck.data, stacklet_id)
+    held = rollback.holding(stck.data, stacklet_id, stck.root)
     if held is not None:
-        return {**rollback.why_held(held, stacklet_id), "refused": True}
+        return {**rollback.why_held(held, stacklet_id, stck.root), "refused": True}
     if not pending.waiting(stck.instance_dir, stacklet_id):
         return None
     return _refused(stacklet_id, f"{stacklet_id} waits for its snapshot, which failed at the "

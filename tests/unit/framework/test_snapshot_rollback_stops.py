@@ -30,6 +30,7 @@ three to six `./stack` processes, about 2 seconds.
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 
 import pytest
@@ -122,9 +123,9 @@ def held(checkout: Checkout, stacklet_id: str) -> dict:
     answer's `state` from the record module."""
     refused = checkout.stack("up", stacklet_id)
     assert refused.code != 0
-    folder = rollback_record.holding(checkout.data, stacklet_id)
+    folder = rollback_record.holding(checkout.data, stacklet_id, checkout.root)
     assert folder is not None
-    answer = rollback_record.why_held(folder, stacklet_id)
+    answer = rollback_record.why_held(folder, stacklet_id, checkout.root)
     assert answer["error"] in refused.out + refused.err
     return answer
 
@@ -321,3 +322,103 @@ def test_a_checkout_git_refuses_after_the_restore_starts_nothing(updated):
 
     assert ran.code == 0, ran.err
     rolled_back(updated, set())
+
+
+# ── A stop in the start, then another release ────────────────────────────
+
+def stopped_in_the_start_then_updated(checkout: Checkout) -> None:
+    """A rollback whose start failed after the checkout, so its record
+    says "starting". Then `stack update` moved the checkout on to rc.2."""
+    checkout.docker.fail("up", "port is already allocated")
+    try:
+        assert rollback(checkout).code == 1
+    finally:
+        checkout.docker.fail("up", "")
+    assert "starting" in record(checkout)
+    assert head(checkout) == checkout.rc1
+    moved = checkout.stack("update", "v0.4.0-rc.2", "--yes")
+    assert moved.code == 0, moved.err
+    assert head(checkout) == checkout.rc2
+    checkout.docker.forget()
+
+
+def test_a_finish_on_another_release_refuses_and_names_the_way_back(updated):
+    """Given a rollback that stopped in its start, and the checkout moved
+    on to rc.2 since, when the admin runs `stack rollback`, then it
+    refuses and starts nothing: rc.2 would migrate the snapshot's state
+    with no snapshot of it. The answer names the snapshot's release and
+    the command that goes back to it."""
+    stopped_in_the_start_then_updated(updated)
+
+    refused = rollback(updated)
+
+    assert refused.code == 1
+    error = json.loads(refused.out)["error"]
+    assert "0.4.0-rc.1" in error
+    assert "stack update v0.4.0-rc.1" in error
+    assert "up" not in updated.docker.compose_steps()
+    assert head(updated) == updated.rc2
+    assert "finished" not in record(updated)
+
+
+def test_up_refuses_the_stacklets_of_a_finish_on_another_release(updated):
+    """Given the same rollback on rc.2, when the admin runs `stack up` of
+    one of its stacklets, then it refuses too, with the same way back,
+    because the record still holds the stacklet."""
+    stopped_in_the_start_then_updated(updated)
+
+    for sid in ("docs", "photos"):
+        refused = updated.stack("up", sid)
+        assert refused.code != 0
+        assert "stack update v0.4.0-rc.1" in refused.out + refused.err
+    assert "up" not in updated.docker.compose_steps()
+
+
+def test_a_finish_back_on_the_snapshots_release_ends_the_rollback(updated):
+    """Given the same rollback, and the checkout back on rc.1 with the
+    command the refusal named, when the admin runs `stack rollback`, then
+    it starts the stacklets and ends, as a finish does."""
+    stopped_in_the_start_then_updated(updated)
+    back = updated.stack("update", "v0.4.0-rc.1", "--yes")
+    assert back.code == 0, back.err
+
+    ran = rollback(updated)
+
+    assert ran.code == 0, ran.err
+    rolled_back(updated, set())
+
+
+def test_a_finish_whose_snapshot_is_gone_names_the_way_out(updated):
+    """Given a rollback that stopped in its start, on the snapshot's
+    release, and its snapshot deleted by hand since, when the admin runs
+    `stack rollback` or `stack up`, then both refuse, because the stack
+    cannot tell the snapshot's commit. The answer names the way out: on
+    the snapshot's release, rename the record and start the stacklets.
+    After that, `stack up` starts them."""
+    updated.docker.fail("up", "port is already allocated")
+    try:
+        assert rollback(updated).code == 1
+    finally:
+        updated.docker.fail("up", "")
+    [name] = [n for n in updated.snapshot_folders() if n != "replaced"]
+    shutil.rmtree(updated.data / ".snapshots" / name)
+    updated.docker.forget()
+
+    refused = rollback(updated)
+    held_up = updated.stack("up", "docs")
+
+    assert refused.code == 1
+    error = json.loads(refused.out)["error"]
+    path = replaced_folder(updated) / "ROLLBACK.json"
+    assert "0.4.0-rc.1" in error
+    assert f"mv {path} {path}.ended" in error
+    assert "stack up docs photos" in error
+    assert held_up.code != 0
+    assert f"mv {path} {path}.ended" in held_up.out + held_up.err
+    assert "up" not in updated.docker.compose_steps()
+
+    path.rename(path.with_name("ROLLBACK.json.ended"))
+    started = updated.stack("up", "docs")
+
+    assert started.code == 0, started.err
+    assert updated.docker.state_of("docs") == "running"

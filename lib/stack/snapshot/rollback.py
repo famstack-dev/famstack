@@ -55,6 +55,17 @@ Why the plan works this way:
   it. A restore would lose a password, a paired phone or a person added
   since. A release also reads the configuration of the next one.
 
+Debt: after "starting", the finish checks the images and the tags no
+more. The order is right, because the tags moved before the record named
+"starting". But a stop in the start leaves a window until the next
+`stack rollback`.
+
+In that window, the admin guide sends the admin
+through `stack update` and back. Watchtower or a stacklet outside the
+rollback that shares a tag can move the tag. An image prune can remove
+the image. The finish then starts on another image. Trigger: the first
+report of a finish on another image, or a pull that keeps a local tag.
+
 Debt: the plan reads the `[[backup.archive]]` sources from the checkout
 before it moves, not from the snapshot. The two are the same today,
 because each restart that applies a release takes its own snapshot.
@@ -79,6 +90,7 @@ from .rollback_record import (
     Done,
     Plan,
     RollbackError,
+    elsewhere,
     holding,
     read_record,
     unfinished,
@@ -165,13 +177,17 @@ def _resumed(stck, folder: Path, name: str | None, source: ImageSource) -> Plan:
     if name not in (None, record["snapshot"]):
         raise RollbackError(f"The rollback of {folder.name} to {record['snapshot']} stopped "
                             f"halfway. Finish it first: stack rollback")
+    done = tuple(record["done"])
+    if STARTING in done and (moved_on := elsewhere(stck.root, folder, record)):
+        # The checkout moved on after the stop in the start, for example
+        # with `stack update`. Its migrations would run without a snapshot.
+        raise RollbackError(moved_on)
     snapshot = next((s for s in store.snapshots(stck.data) if s.name == record["snapshot"]), None)
     if snapshot is None or snapshot.manifest is None:
         raise RollbackError(f"The rollback of {folder.name} to {record['snapshot']} stopped "
                             f"halfway, and that snapshot is gone or cannot be read. The state "
                             f"it replaced is in {folder}.")
     stacklets = _known(stck, snapshot, record["stacklets"])
-    done = tuple(record["done"])
     if STARTING not in done:
         _check_images(snapshot.name, snapshot.manifest, record["starts"], source)
         _check_checkout(stck, snapshot.manifest.commit)

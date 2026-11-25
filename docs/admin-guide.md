@@ -2039,11 +2039,18 @@ What you find depends on where the rollback stopped:
 | At the checkout, because git refused it | The current release's code. Each state is back. | Fix the cause that the message names, for example a git lock. Then run `./stack rollback`. |
 | Inside the checkout, for example at a power loss | Git names the current release, but it wrote the files of the snapshot's release. It left the lock `.git/HEAD.lock`. Each state is back. | See [After a stop inside the checkout](#after-a-stop-inside-the-checkout). |
 | After the checkout | The code of the snapshot's release. Each state is back. | Run `./stack rollback`, if that release has it. If it does not have it, run `./stack up <id>` for each stacklet. |
+| After the start began (the record says "starting"), and then the checkout moved to another release (for example with `./stack update`) | The code of the other release. Each state is back. | Go back to the snapshot's release with the command that the message names, for example `./stack update v0.4.0-rc.1`. Then run `./stack rollback`. |
 
 Until `./stack rollback` ends the run, `./stack up` refuses its stacklets. This is true for each release that has
 `./stack rollback`. The message tells what is true of the state. Before its restore ends, the state may be half
 restored. After it, the state is whole, and only the checkout and the start wait. The new release's code must not
 start on the old state.
+
+After the start began (the record says "starting"), `./stack rollback` and `./stack up` also refuse the stacklets
+while the checkout is on another commit than the snapshot's. They name the snapshot's release and the command that
+goes back to it. Another release can migrate the restored state, and that migration cannot be undone. No snapshot
+holds the restored state. When the snapshot is gone, the message names the way out: on the snapshot's release,
+rename the record and start the stacklets.
 
 A release without `./stack rollback` does not know the record, and its `./stack up` starts the stacklets. The start is
 safe, because each state is whole before the checkout moves. The record stays open until a release with `./stack

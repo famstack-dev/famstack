@@ -11,9 +11,10 @@ rollback replaces. The rollback adds each step there once it is done:
      "done": ["moved docs", "restored docs", "moved photos"]}
 
     unfinished(data_root)          # [Path(".../replaced/2026-11-25T2203Z")]
-    holding(data_root, "photos")   # that folder: photos must not start yet
-    holding(data_root, "docs")     # that folder too, until "starting" is done
-    why_held(folder, "docs")       # {"error": "…", "stacklet": "docs", "state": "whole"}
+    holding(data_root, "photos", root)   # that folder: photos must not start yet
+    holding(data_root, "docs", root)     # that folder too, until "starting" is done
+    why_held(folder, "docs", root)       # {"error": "…", "stacklet": "docs", "state": "whole"}
+    elsewhere(root, folder, record)      # the refusal of a start on another commit, or None
     needs(data_root, snapshot.path)  # that folder: the rollback needs the snapshot
 
 Why it works this way:
@@ -34,6 +35,14 @@ Why it works this way:
   a stop inside the checkout. A release that does not know the record
   ignores the hold. It starts on whole states, because the checkout is
   the last step before the start. A finished record holds nothing.
+- **The start runs only on the snapshot's commit.** A record that names
+  "starting" still holds its stacklets while the checkout at `root` is
+  on another commit (`elsewhere`). Between a stop in the start and the
+  next `stack rollback`, `stack update` can move the checkout to a newer
+  release. That release would run its one-way migrations on the
+  snapshot's state, and no snapshot holds that state. The hold and
+  `stack rollback` name the command that goes back to the snapshot's
+  release. The check compares commits, because a tag can move.
 - **A rollback that has not ended keeps its way back.** Because `needs`
   names it for its snapshot and for its replaced state, no remove and no
   prune deletes what the next `stack rollback` finishes from.
@@ -63,7 +72,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import manifest as manifests
 from ..manifest import Manifest
+from ..updater import Checkout, is_release
 from . import rollback_images as images
 from . import store
 from .errors import SnapshotError
@@ -81,6 +92,7 @@ __all__ = [
     "Plan",
     "RollbackError",
     "begin",
+    "elsewhere",
     "holding",
     "mark",
     "needs",
@@ -203,16 +215,18 @@ class Done:
 
 # ── Which rollback holds a stacklet ────────────────────────────────────
 
-def holding(data_root: Path, stacklet_id: str) -> Path | None:
+def holding(data_root: Path, stacklet_id: str, root: Path) -> Path | None:
     """The folder of a rollback that holds the stacklet. None when no
-    rollback holds it.
+    rollback holds it. `root` is the checkout.
 
     The stacklet's state may be moved aside or half restored, or the
     checkout may still be the new release's. For this reason the
     stacklet must not start until `stack rollback` has brought every
-    state back and moved the checkout.
+    state back and moved the checkout. After that, it must not start
+    while the checkout is on another commit than the snapshot's
+    (`elsewhere`).
 
-        holding(Path("~/famstack-data"), "docs")
+        holding(Path("~/famstack-data"), "docs", Path("~/famstack"))
         # Path(".../.snapshots/replaced/2026-11-25T2203Z") after a power loss in the restore
     """
     for folder in unfinished(data_root):
@@ -222,12 +236,14 @@ def holding(data_root: Path, stacklet_id: str) -> Path | None:
             if stacklet_id in _ids_beside(folder):
                 return folder
             continue
-        if stacklet_id in record["stacklets"] and STARTING not in record["done"]:
+        if stacklet_id not in record["stacklets"]:
+            continue
+        if STARTING not in record["done"] or elsewhere(root, folder, record):
             return folder
     return None
 
 
-def why_held(folder: Path, stacklet_id: str) -> dict:
+def why_held(folder: Path, stacklet_id: str, root: Path) -> dict:
     """The answer of a start that the rollback in `folder` holds. It
     contains the message, the stacklet and what is true of its state.
     `state` is "half restored" while the record does not name its
@@ -236,7 +252,10 @@ def why_held(folder: Path, stacklet_id: str) -> dict:
     has not moved, and the start. `stack up` and every restart return
     this answer.
 
-        why_held(folder, "photos")
+    When the record names "starting" and the checkout at `root` moved on
+    since, the message is the one of `elsewhere`.
+
+        why_held(folder, "photos", root)
         # {"error": "A rollback of photos stopped halfway, before its state was back. …",
         #  "stacklet": "photos", "state": "half restored"}
 
@@ -244,9 +263,13 @@ def why_held(folder: Path, stacklet_id: str) -> dict:
     the stack cannot tell how far the rollback got.
     """
     try:
-        done = read_record(folder)["done"]
+        record = read_record(folder)
     except RollbackError as unreadable:
         return {"error": str(unreadable), "stacklet": stacklet_id}
+    done = record["done"]
+    moved_on = STARTING in done and elsewhere(root, folder, record)
+    if moved_on:
+        return {"error": moved_on, "stacklet": stacklet_id, "state": "whole"}
     if f"{RESTORED} {stacklet_id}" not in done:
         return {"error": (f"A rollback of {stacklet_id} stopped halfway, before its state was "
                           f"back, so the state may be half restored ({folder}). Finish it with: "
@@ -327,6 +350,59 @@ def read_record(folder: Path) -> dict:
                             f"it replaced is in {folder}. To keep the state the stacklets have "
                             f"now, rename the record: mv {path} {path}.unreadable",
                             [str(path)]) from error
+
+
+def elsewhere(root: Path, folder: Path, record: dict) -> str | None:
+    """The refusal of the start of the rollback in `folder`, whose record
+    is `record`. It refuses while the checkout at `root` is not on the
+    commit of the rollback's snapshot, and returns None when it is.
+
+    Each refusal names the way out:
+
+    - The checkout is on another commit: `stack update <tag>` when a
+      release tag names the snapshot's commit, `git checkout <commit>`
+      otherwise.
+    - git does not know the commit: `git fetch --tags`.
+    - The snapshot is gone or cannot be read, and its commit is unknown:
+      on the snapshot's release, rename the record and start the
+      stacklets. A folder without a record holds nothing.
+
+        elsewhere(root, folder, record)
+        # "The rollback to the snapshot 2026-11-25T2114Z stopped in its start, … stack update v0.4.0-rc.1 …"
+    """
+    name, version = record["snapshot"], record.get("version", "")
+    snapshot = manifests.read(folder.parent.parent / name)
+    if snapshot is None:
+        return _snapshot_gone(folder, record)
+    checkout = Checkout(root)
+    target = checkout.commit_of(snapshot.commit)
+    if not target:
+        return (f"The rollback to the snapshot {name} stopped in its start, and git does not "
+                f"know the commit {snapshot.commit} of the snapshot's release {version}. "
+                f"Nothing was started. Fetch it first: git fetch --tags. Then run: stack "
+                f"rollback")
+    if checkout.commit_of("HEAD") == target:
+        return None
+    tag = checkout.describe_of(snapshot.commit)
+    back = f"stack update {tag}" if is_release(tag) else f"git checkout {snapshot.commit}"
+    return (f"The rollback to the snapshot {name} stopped in its start, and the checkout "
+            f"is no longer on the snapshot's release {version}. A start on this "
+            f"checkout could migrate the snapshot's state one way, without a snapshot, so "
+            f"nothing was started. Go back to the release: {back}. Then run: stack rollback")
+
+
+def _snapshot_gone(folder: Path, record: dict) -> str:
+    """The refusal of a start whose snapshot is gone or cannot be read.
+    Only the admin knows the checkout's release then. On the snapshot's
+    release, every state is whole, so renaming the record and starting
+    the stacklets ends the rollback."""
+    path = folder / RECORD_FILE
+    return (f"The rollback to the snapshot {record['snapshot']} stopped in its start, and "
+            f"that snapshot is gone or cannot be read, so the stack cannot tell its commit. "
+            f"Nothing was started. The state it replaced is in {folder}. Check that the "
+            f"checkout is on the snapshot's release {record.get('version', '')}. Then end "
+            f"the rollback: mv {path} {path}.ended. Then start the stacklets: stack up "
+            f"{' '.join(record['starts'])}")
 
 
 # ── Writing the record ────────────────────────────────────────────────
