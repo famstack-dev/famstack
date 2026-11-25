@@ -1,13 +1,15 @@
 """The record of a restart whose snapshot failed, kept until a snapshot is whole.
 
-A restart records what a stacklet runs while it runs, stops it, and then
-takes the snapshot (`stack.snapshot.release`). When the take fails, the
-stacklet is stopped and the record is all that is left of what it ran:
-a stopped container drops out of `docker ps`, and a stacklet without
-containers loses its `.stack/<id>.up` stamp at the stop. So the restart
-keeps the record in `.stack/snapshot-pending/<id>/MANIFEST.json` before
-it stops anything, and removes it once the snapshot is whole. While a
-record waits, the stacklet does not start on the new release:
+A restart records what a stacklet runs while it runs. Then it stops the
+stacklet and takes the snapshot (`stack.snapshot.release`). When the
+take fails, the stacklet is stopped. The record is now all that is left
+of what it ran. A stopped container drops out of `docker ps`. A stacklet
+without containers loses its `.stack/<id>.up` stamp at the stop.
+
+For this reason the restart keeps the record in
+`.stack/snapshot-pending/<id>/MANIFEST.json` before it stops anything.
+It removes the record once the snapshot is whole. While a record waits,
+the stacklet does not start on the new release:
 
     pending.keep(instance_dir, record)          # before the stop
     pending.waiting(instance_dir, "docs")       # True: `stack up docs` refuses
@@ -20,22 +22,23 @@ Why it works this way:
 
 - **The record, not Docker, is the memory of the failed restart.** A
   retry that asked Docker again would find no commit for a stopped
-  stacklet without containers, and the record taken while it ran names
-  `up: true` and the images that ran, which a record after the stop
-  cannot say.
-- **One record per stacklet**, so the admin can retry one stacklet of a
+  stacklet without containers. The record taken while it ran names
+  `up: true` and the images that ran. A record after the stop cannot say
+  that.
+- **One record per stacklet** lets the admin retry one stacklet of a
   failed restart of several. Each file is a manifest with one stacklet
   record, in the format of `stack.manifest`.
 - **Kept before the stop.** A record that cannot be kept (a full disk)
-  stops nothing, so no stacklet is left stopped without one.
+  stops nothing, because no stacklet may be left stopped without one.
 - **A whole snapshot, `--no-snapshot`, `stack destroy` or a rollback
-  ends the wait.** A stacklet that did not stop still runs what it ran,
-  so its record goes too. A rollback restores the state of a snapshot,
-  so the record of the newer release no longer applies. Nothing else
+  ends the wait.** The record of a stacklet that did not stop goes too,
+  because the stacklet still runs what it ran. A rollback restores the
+  state of a snapshot. The record of the newer release then no longer
+  applies, because it describes a state that is gone. Nothing else
   removes it.
 
-This module keeps and reads the records; `stack.snapshot.release` decides
-when, and `stack.cli` refuses the start while one waits.
+This module keeps and reads the records. `stack.snapshot.release`
+decides when, and `stack.cli` refuses the start while one waits.
 """
 
 from __future__ import annotations
@@ -54,7 +57,7 @@ PENDING_FOLDER = "snapshot-pending"
 
 
 class Unreadable(SnapshotError):
-    """The kept record of `stacklet` at `path` cannot be read, so no
+    """The kept record of `stacklet` at `path` cannot be read. No
     snapshot can be taken from it.
 
         Unreadable("docs", path, f"{path}: not a readable manifest: …")
@@ -87,7 +90,7 @@ def waiting(instance_dir: Path, stacklet_id: str) -> bool:
 
 
 def read(instance_dir: Path, ids: list[str]) -> Manifest | None:
-    """The kept records of the stacklets among `ids`, as one manifest, or
+    """The kept records of the stacklets among `ids`, as one manifest.
     None when none of them waits.
 
     Raises `Unreadable` when a record cannot be read: then the restart

@@ -8,8 +8,8 @@
     files.clone_back(snapshot.path, snapshot.name, "docs", data_root / "docs")   # restore
     files.archive_paths(Path("stacklets/docs"), data_root)       # [Path("paperless/media")]
 
-A snapshot holds one folder for each stacklet's data folder and one,
-`stack/`, for the configuration (`stack.toml`, `users.toml`, `.stack/`).
+A snapshot holds one folder for each stacklet's data folder. Its folder
+`stack/` holds the configuration (`stack.toml`, `users.toml`, `.stack/`).
 The store (`stack.snapshot.store`) decides where they go, when a
 snapshot is whole and what its name is. This module only reads and
 writes the files.
@@ -17,26 +17,26 @@ writes the files.
 Why it works this way:
 
 - **A file is a clone when the volume can clone.** On APFS a clone
-  (`clonefile(2)`, what `cp -c` uses) takes no space until one of the
-  two files changes, and a change of the live file never changes the
-  snapshot. On another file system the files are copied. A copy needs
-  the space, so `check_room` refuses when the disk has too little free
-  space, and names the size.
+  (`clonefile(2)`, the call of `cp -c`) takes no space until one of the
+  two files changes. A change of the live file never changes the
+  snapshot. On another file system the files are copied. `check_room`
+  refuses when the disk has too little free space, because a copy needs
+  the space. It names the size.
 - **The large files are left out.** Each stacklet declares them as
   `[[backup.archive]]` sources in its `stacklet.toml` (the photo
   library, the document originals). A rollback never replaces them, and a
   copy of them could fill the disk.
 - **A restore never writes over a file.** `clone_back` enters a folder
-  that is there, and refuses a file or a link that is there, because it
+  that is there. It refuses a file or a link that is there, because it
   can be the family's file.
-- **Folders get their mode and times last,** so a read-only folder still
-  takes its files.
+- **Folders get their mode and times last,** because a read-only folder
+  must still take its files.
 
 The file system is behind the port `Volume` (`stack.snapshot.volume`).
 
 Debt: `[[backup.archive]]` has two readers. `archive_paths` here resolves
-the paths for the snapshot, and the backup stacklet resolves them for
-its sync, because the framework never imports a stacklet's code. Both
+the paths for the snapshot. The backup stacklet resolves them for its
+sync, because the framework never imports a stacklet's code. Both
 replace only `{data_dir}`, and nothing checks that they agree. Trigger: a
 second template variable in an archive path, or a restore in the backup
 stacklet that reads the snapshot's folder.
@@ -77,9 +77,11 @@ _CONFIG_ITEMS = ("stack.toml", "users.toml", ".stack")
 
 @dataclass(frozen=True)
 class Part:
-    """One folder of the snapshot: `target` is its name in the snapshot,
-    `source` the folder it holds, `items` the entries of `source` it
-    takes (None: all), `leave_out` the paths in `source` it skips.
+    """One folder of the snapshot.
+
+    `target` is its name in the snapshot. `source` is the folder it holds.
+    `items` are the entries of `source` that it takes (None: all).
+    `leave_out` are the paths in `source` that it skips.
 
         Part("docs", Path("~/famstack-data/docs"),
              leave_out=(Path("paperless/media"),))
@@ -139,7 +141,7 @@ def archive_paths(stacklet_dir: Path, data_root: Path) -> list[Path]:
 def check_room(parts: list[Part], folder: Path, volume: Volume) -> None:
     """Refuse a copy that does not fit on the volume, naming both sizes.
     Raises `SnapshotError` when the files of `parts` need more than the
-    free space of the volume that holds `folder`; writes nothing.
+    free space of the volume that holds `folder`. Writes nothing.
 
         check_room(parts, Path("~/famstack-data/.snapshots"), volume)
         # SnapshotError: … The copy needs 2.1 GB and the disk has 1.5 GB free
@@ -153,7 +155,8 @@ def check_room(parts: list[Part], folder: Path, volume: Volume) -> None:
 
 
 def size_text(count: int) -> str:
-    """A size in bytes for a person.
+    """A byte count as text for a person: GB, MB or bytes.
+    The text uses the largest unit that fits.
 
         >>> size_text(1_500_000_000), size_text(300_000_000), size_text(512)
         ('1.5 GB', '300.0 MB', '512 bytes')
@@ -167,10 +170,11 @@ def size_text(count: int) -> str:
 # ── Writing and cloning back ─────────────────────────────────────────────
 
 def write_part(part: Part, target: Path, volume: Volume | None) -> None:
-    """Clone or copy the entries of `part` into `target`. The folders get
-    their mode and times last, so a read-only folder still takes its
-    files. Clones with `volume`, or copies when it is None. `target` must
-    not exist yet. Raises `OSError` when a file cannot be read or written.
+    """Clone or copy the entries of `part` into `target`. The folders
+    get their mode and times last, because a read-only folder must still
+    take its files. Clones with `volume`, or copies when it is None.
+    `target` must not exist yet. Raises `OSError` when a file cannot be
+    read or written.
 
         write_part(parts[0], Path("…/.snapshots/.taking-2026-11-24T2114Z/docs"), volume)
         # …/docs/postgres/…, …/docs/paperless/data/… (no paperless/media/)
@@ -194,19 +198,22 @@ def write_part(part: Part, target: Path, volume: Volume | None) -> None:
 
 def clone_back(folder: Path, name: str, stacklet_id: str, target: Path,
                volume: Volume | None = None) -> bool:
-    """Clone the state of `stacklet_id` in the snapshot `name`, whose
-    folder is `folder`, into `target`, the stacklet's data folder, and
-    return whether the files are clones. `name` is for the messages.
+    """Clone the state of `stacklet_id` from a snapshot into `target`.
+    Return whether the files are clones. `folder` is the snapshot's
+    folder, and `name` its name for the messages. `target` is the
+    stacklet's data folder.
 
     `target` holds only what the snapshot left out: the rollback moved
     the rest aside before. Each entry of the snapshot is cloned into
     `target`. A folder that is there already (the parent of an
     `[[backup.archive]]` source) is entered, and its other entries stay. A
     file or a link that is there already is never replaced: the call
-    refuses. The snapshot is only read. Raises `SnapshotError` when the
-    snapshot has no state of the stacklet, a file is there already, or a
-    file cannot be read or written; then `target` may hold part of the
-    state, which the caller moves aside before it calls again.
+    refuses. The snapshot is only read.
+
+    Raises `SnapshotError` when the snapshot has no state of the
+    stacklet. It raises it also when a file is there already or cannot
+    be read or written. After such a failure, `target` may hold part of
+    the state. The caller moves that part aside before it calls again.
 
         clone_back(Path("~/famstack-data/.snapshots/2026-11-24T2114Z"), "2026-11-24T2114Z",
                    "docs", Path("~/famstack-data/docs"))   # True on APFS

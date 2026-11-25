@@ -1,8 +1,8 @@
 """The record of a rollback: what it does, which steps are done, what it holds.
 
 A rollback (`stack.snapshot.rollback`) writes its record before the first
-state moves, into the folder that keeps the state it replaces, and adds
-each step there once it is done:
+state moves. The record goes into the folder that keeps the state the
+rollback replaces. The rollback adds each step there once it is done:
 
     .snapshots/replaced/2026-11-25T2203Z/ROLLBACK.json
     {"snapshot": "2026-11-25T2114Z", "version": "0.4.0-rc.1",
@@ -18,37 +18,41 @@ each step there once it is done:
 
 Why it works this way:
 
-- **The record names each step that is done,** so the next `stack
-  rollback` after a stop halfway goes on from there and never runs a done
-  step a second time. It is written beside the old one and renamed over
-  it, so a stop while it is written leaves the old record or the new one.
+- **The record names each step that is done.** After a stop halfway,
+  the next `stack rollback` goes on from there. It never runs a done
+  step a second time. The record is written beside the old one and
+  renamed over it. Because of the rename, a stop while it is written
+  leaves the old record or the new one.
 - **A stacklet waits until the checkout is done.** Until the record
-  names "starting", `holding` names it, and `stack up` refuses its
-  stacklets: their state may be half restored, or the checkout may still
-  be the new release's, whose code must not start on the old state. The
-  rollback writes "starting" only after git moved the checkout. A stop
-  before that, inside the checkout too, keeps the hold until the next
-  `stack rollback`. A release that does not know the record ignores the
-  hold; it starts on whole states, because the checkout is the last step
-  before the start. A finished record holds nothing.
-- **A rollback that has not ended keeps its way back.** `needs` names it
-  for its snapshot and for its replaced state, so no remove and no
+  names "starting", `holding` names it and `stack up` refuses its
+  stacklets. Their state may be half restored, or the checkout may still
+  be the new release's. That release's code must not start on the old
+  state.
+
+  The rollback writes "starting" only after git moved the checkout. A
+  stop before that keeps the hold until the next `stack rollback`, also
+  a stop inside the checkout. A release that does not know the record
+  ignores the hold. It starts on whole states, because the checkout is
+  the last step before the start. A finished record holds nothing.
+- **A rollback that has not ended keeps its way back.** Because `needs`
+  names it for its snapshot and for its replaced state, no remove and no
   prune deletes what the next `stack rollback` finishes from.
-- **A record that cannot be read is named, never guessed.** `stack
-  rollback` refuses and names its file. It holds each stacklet that has a
-  folder beside it, because that state may be half moved, and no other.
+- **A record that cannot be read is named, never guessed.**
+  `stack rollback` refuses and names its file. It holds each stacklet
+  that has a folder beside it, because that state may be half moved. It
+  holds no other stacklet.
 
-The types a rollback passes between its plan and its steps (`Plan`,
-`Done`, `RollbackError`) live here too, because each of them describes
-what the record holds.
+A rollback passes three types between its plan and its steps: `Plan`,
+`Done` and `RollbackError`. They live here too, because each of them
+describes what the record holds.
 
-Debt: a rollback that stopped after the checkout, whose stacklets a
-release without the record then started, stays unfinished: it names
-"starting" but not "finished". `needs` keeps its snapshot and its
-replaced state, so `stack snapshot remove` and the prune refuse them,
-until a release with `stack rollback` runs it once and finishes the
-record. Trigger: an admin rolls back to a release without `stack
-rollback` and then wants the disk space back.
+Debt: a rollback can stop after the checkout, and a release without the
+record can then start its stacklets. That rollback stays unfinished: it
+names "starting" but not "finished". `needs` keeps its snapshot and its
+replaced state. `stack snapshot remove` and the prune refuse them until
+a release with `stack rollback` runs it once and finishes the record.
+Trigger: an admin rolls back to a release without `stack rollback` and
+then wants the disk space back.
 """
 
 from __future__ import annotations
@@ -113,7 +117,7 @@ _NAME_TIME = "%Y-%m-%dT%H%MZ"
 
 class RollbackError(SnapshotError):
     """A rollback that refused, or a step that failed. The message says
-    why and what to do; `problems` lists what it names (files, images).
+    why and what to do. `problems` lists what it names (files, images).
 
         RollbackError("There is no snapshot to go back to. stack snapshot list shows them.")
     """
@@ -125,11 +129,19 @@ class RollbackError(SnapshotError):
 
 @dataclass(frozen=True)
 class Plan:
-    """What a rollback does: the snapshot, the stacklets it replaces with
-    their folders, the ones it starts (those that ran), their archive
-    sources, the files in them newer than the snapshot, the running
-    stacklets outside the snapshot, and the tags it moves. `replaced` and
-    `done` are set when the plan finishes a rollback that stopped halfway.
+    """What a rollback does.
+
+    - `snapshot`: the snapshot it goes back to.
+    - `stacklets`: the stacklets it replaces, with their folders.
+    - `starts`: the ones it starts, which are those that ran.
+    - `archives`: their archive sources.
+    - `newer`: the files in those sources that are newer than the
+      snapshot.
+    - `others`: the running stacklets outside the snapshot.
+    - `tags`: the tags it moves.
+
+    `replaced` and `done` are set when the plan finishes a rollback that
+    stopped halfway.
 
         Plan(snapshot=Snapshot(name="2026-11-25T2114Z", …),
              stacklets={"docs": Path("stacklets/docs")}, starts=["docs"],
@@ -171,9 +183,10 @@ class Plan:
 
 @dataclass(frozen=True)
 class Done:
-    """What a rollback did: the snapshot, the release it went back to, the
-    folder of the state it replaced, the stacklets it started, whether the
-    restored files are clones, and the tags it moved.
+    """What a rollback did. It names the snapshot and the release it went
+    back to. It holds the folder of the state it replaced and the
+    stacklets it started. It says whether the restored files are clones,
+    and names the tags it moved.
 
         Done(snapshot="2026-11-25T2114Z", version="0.4.0-rc.1",
              replaced=Path("~/famstack-data/.snapshots/replaced/2026-11-25T2203Z"),
@@ -191,11 +204,13 @@ class Done:
 # ── Which rollback holds a stacklet ────────────────────────────────────
 
 def holding(data_root: Path, stacklet_id: str) -> Path | None:
-    """The folder of a rollback that holds the stacklet: its state may be
-    moved aside or half restored, or the checkout may still be the new
-    release's, so it must not start until `stack rollback` has brought
-    every state back and moved the checkout. None when no rollback holds
-    it.
+    """The folder of a rollback that holds the stacklet. None when no
+    rollback holds it.
+
+    The stacklet's state may be moved aside or half restored, or the
+    checkout may still be the new release's. For this reason the
+    stacklet must not start until `stack rollback` has brought every
+    state back and moved the checkout.
 
         holding(Path("~/famstack-data"), "docs")
         # Path(".../.snapshots/replaced/2026-11-25T2203Z") after a power loss in the restore
@@ -213,12 +228,13 @@ def holding(data_root: Path, stacklet_id: str) -> Path | None:
 
 
 def why_held(folder: Path, stacklet_id: str) -> dict:
-    """The answer of a start that the rollback in `folder` holds: the
-    message, the stacklet, and what is true of its state. `state` is
-    "half restored" while the record does not name its restore, and
-    "whole" once it does: then only the end of the rollback is left (the
-    checkout, when it has not moved, and the start). `stack up` and every
-    restart return it.
+    """The answer of a start that the rollback in `folder` holds. It
+    contains the message, the stacklet and what is true of its state.
+    `state` is "half restored" while the record does not name its
+    restore. It is "whole" once the record does. When the state is
+    whole, only the end of the rollback is left: the checkout, when it
+    has not moved, and the start. `stack up` and every restart return
+    this answer.
 
         why_held(folder, "photos")
         # {"error": "A rollback of photos stopped halfway, before its state was back. …",
@@ -246,7 +262,7 @@ def why_held(folder: Path, stacklet_id: str) -> dict:
 def needs(data_root: Path, folder: Path) -> Path | None:
     """The folder of a rollback that has not ended and needs `folder`: its
     snapshot (`.snapshots/<name>/`) or its own replaced folder. None when
-    no rollback needs it, so it may go.
+    no rollback needs it, which means that it may go.
 
     A record that cannot be read needs every snapshot, because the stack
     cannot tell which one it goes back to.
@@ -303,9 +319,9 @@ def read_record(folder: Path) -> dict:
             record[key]
         return record
     except (OSError, ValueError, KeyError, TypeError) as error:
-        # The stack cannot tell how far the rollback got, so the admin
-        # decides. A folder without a record holds nothing, so a rename
-        # is a way on that deletes nothing.
+        # The admin decides, because the stack cannot tell how far the
+        # rollback got. A rename is a way on that deletes nothing, because
+        # a folder without a record holds nothing.
         raise RollbackError(f"{path}: the record of a rollback cannot be read: {error}. The "
                             f"stack cannot tell how far it got, and does not guess. The state "
                             f"it replaced is in {folder}. To keep the state the stacklets have "
@@ -316,9 +332,9 @@ def read_record(folder: Path) -> dict:
 # ── Writing the record ────────────────────────────────────────────────
 
 def begin(data_root: Path, planned: Plan, now: datetime) -> Path:
-    """Make the replaced folder of a new rollback, named for `now`, and
-    write its record with no step done. Returns the folder. Raises
-    `RollbackError` when it cannot; then no state has moved.
+    """Make the replaced folder of a new rollback, with a name from `now`.
+    Write its record with no step done. Returns the folder. Raises
+    `RollbackError` when it cannot. In that case no state has moved.
 
         begin(data_root, planned, now)   # Path(".../replaced/2026-11-25T2203Z")
     """
@@ -353,8 +369,9 @@ def mark(folder: Path, done: list[str], step: str) -> None:
 
 
 def _write_record(folder: Path, record: dict) -> None:
-    """Write the record beside the old one and rename it over it, so a
-    stop halfway leaves the old record or the new one."""
+    """Write the record beside the old one and rename it over it.
+    Because of the rename, a stop halfway leaves the old record or the
+    new one."""
     partial = folder / f".{RECORD_FILE}.partial"
     with open(partial, "w", encoding="utf-8") as out:
         out.write(json.dumps(record, indent=2) + "\n")

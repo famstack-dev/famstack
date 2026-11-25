@@ -6,8 +6,9 @@
 
 Every module of `stack.snapshot` raises it when it refuses or fails, and
 every command prints its message. It has a module of its own, because
-the store (`stack.snapshot.store`) and the files of a snapshot
-(`stack.snapshot.files`) both raise it, and the store imports the files.
+two modules raise it and one imports the other. The store
+(`stack.snapshot.store`) imports the files of a snapshot
+(`stack.snapshot.files`).
 """
 
 from __future__ import annotations

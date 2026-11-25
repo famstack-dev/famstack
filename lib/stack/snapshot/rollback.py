@@ -33,32 +33,33 @@ The rollback is four modules, one topic each:
 
 Why the plan works this way:
 
-- **It refuses before any change.** No snapshot, a snapshot that cannot
-  be read, a stacklet the checkout does not have, an image the Mac no
-  longer holds, local edits in the checkout: each one ends the command
-  with nothing stopped.
+- **It refuses before any change.** A missing or unreadable snapshot
+  ends the command with nothing stopped. A stacklet that the checkout
+  does not have ends it too. An image that the Mac no longer holds and
+  local edits in the checkout end it as well.
 - **The newest snapshot, or the one named.** A snapshot whose manifest
-  cannot be read is refused, also when an older one could be read: that
-  one undoes more than the last update.
+  cannot be read is refused. An older one that can be read is not taken
+  instead, because it undoes more than the last update.
 - **A rollback that stopped halfway is finished first.** Its plan comes
   from its record (`rollback_record`), and a rollback to another snapshot
   is refused until it is.
 - **The archive sources stay where they are.** The snapshot left out the
   `[[backup.archive]]` sources (the photo library, the document
-  originals), and the rollback never touches them. The files that came
-  in after the snapshot stay, and the plan counts them, because the
-  restored database does not know them.
+  originals). The rollback never touches them. The files that came
+  in after the snapshot stay. The plan counts them, because the restored
+  database does not know them.
 - **Local edits in the checkout are refused, not set aside.** The admin
   decides what to do with them (commit, stash), because the rollback
   ends on another commit where the edits may not apply.
 - **The configuration is not restored.** The snapshot's `stack/` holds
-  it, but a password, a paired phone or a person added since would be
-  lost, and a release reads the configuration of the next.
+  it. A restore would lose a password, a paired phone or a person added
+  since. A release also reads the configuration of the next one.
 
 Debt: the plan reads the `[[backup.archive]]` sources from the checkout
-before it moves, not from the snapshot. Each restart that applies a
-release takes its own snapshot, so the two are the same today. Trigger:
-the manifest records the sources, or a checkout moves without a restart.
+before it moves, not from the snapshot. The two are the same today,
+because each restart that applies a release takes its own snapshot.
+Trigger: the manifest records the sources, or a checkout moves without a
+restart.
 """
 
 from __future__ import annotations
@@ -105,11 +106,14 @@ def plan(stck, name: str | None = None, source: ImageSource | None = None) -> Pl
 
     Goes back to the snapshot `name`, or the newest one. A rollback that
     stopped halfway is finished first: its plan is returned, with
-    `replaced` and `done` set. Raises `RollbackError` when there is no
-    snapshot, the snapshot or a record cannot be read, the snapshot names
-    a stacklet this checkout does not have, the Mac no longer holds an
-    image of a stacklet it starts, or the checkout has local edits.
-    `source` asks Docker for images. Changes nothing.
+    `replaced` and `done` set. `source` asks Docker for images. Changes
+    nothing. Raises `RollbackError` in these cases:
+
+    - There is no snapshot.
+    - The snapshot or a record cannot be read.
+    - The snapshot names a stacklet that this checkout does not have.
+    - The Mac no longer holds an image of a stacklet that it starts.
+    - The checkout has local edits.
 
         plan(stck)                         # Plan(snapshot=Snapshot(name="2026-11-25T2114Z", …), …)
         plan(stck, "2026-11-01T0900Z")     # that snapshot
@@ -135,7 +139,7 @@ def plan(stck, name: str | None = None, source: ImageSource | None = None) -> Pl
 # ── Choosing the snapshot ────────────────────────────────────────────────
 
 def _chosen(snapshots: list[Snapshot], name: str | None) -> Snapshot:
-    """The snapshot `name`, or the newest one; refused when there is none
+    """The snapshot `name`, or the newest one. Refused when there is none
     or it cannot be read."""
     if not snapshots:
         raise RollbackError("There is no snapshot to go back to. "
@@ -179,7 +183,7 @@ def _resumed(stck, folder: Path, name: str | None, source: ImageSource) -> Plan:
 
 
 def _known(stck, snapshot: Snapshot, ids: list[str]) -> dict[str, Path]:
-    """The folder of each stacklet among `ids`; refused when the checkout
+    """The folder of each stacklet among `ids`. Refused when the checkout
     does not have one."""
     known = {s["id"]: Path(s["path"]) for s in stck.discover()}
     missing = [sid for sid in ids if sid not in known]
@@ -211,8 +215,8 @@ def _check_images(name: str, manifest: Manifest, starts: list[str],
 
 
 def _check_checkout(stck, commit: str) -> None:
-    """Refuse a checkout that is not git, that does not know `commit`, or
-    that has local edits while it is on another commit."""
+    """Refuse a checkout that is not git or that does not know `commit`.
+    Refuse it also when it has local edits and is on another commit."""
     checkout = Checkout(stck.root)
     if not checkout.is_git():
         raise RollbackError("This is not a git checkout, so the stack cannot go back to the "

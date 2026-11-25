@@ -31,16 +31,16 @@ Why it works this way:
   and the remove never reaches it.
 - **The way back of an open rollback stays.** A rollback that has not
   ended finishes from its snapshot and its replaced state
-  (`rollback_record.needs`), so `plan` refuses both and names `stack
-  rollback`.
+  (`rollback_record.needs`). `plan` refuses both, because the rollback
+  needs them, and names `stack rollback`.
 - **Nothing whole goes while a rollback goes on.** A rollback holds the
   run locks of its stacklets from its question until their state is
-  restored, as the action `rollback` (`stack.runs`). Its lock does not
-  say which snapshot it restores, so `plan` refuses every snapshot and
-  replaced state meanwhile. After the restore its record keeps them
-  (`rollback_record.needs`) until the rollback ends. A remove that came
-  before the lock is caught by the rollback: it checks its snapshot
-  again before it stops anything.
+  restored, as the action `rollback` (`stack.runs`). `plan` refuses
+  every snapshot and replaced state meanwhile, because the lock does not
+  say which snapshot the rollback restores. After the restore its record
+  keeps them (`rollback_record.needs`) until the rollback ends. A remove
+  that came before the lock is caught by the rollback: it checks its
+  snapshot again before it stops anything.
 - **A remove holds the locks of the entry's stacklets** from its plan to
   its delete, and plans again under them (`stack.snapshot.remove_cli`).
   A rollback that starts during the remove's question is refused, and a
@@ -49,9 +49,9 @@ Why it works this way:
   writing it in that moment (`stack.runs`).
 - **A snapshot with an unreadable manifest can go.** The admin named it,
   and no rollback goes to it anyway.
-- **The size is the sum of the file sizes.** On APFS a clone shares its
-  blocks with the live file until one of them changes, so the space that
-  comes free can be less.
+- **The size is the sum of the file sizes.** The space that comes free
+  can be less, because on APFS a clone shares its blocks with the live
+  file until one of them changes.
 
 The command line (`stack.snapshot.remove_cli`) shows the entry, asks for the
 confirmation, and calls `remove`. The store (`stack.snapshot.store`)
@@ -104,7 +104,7 @@ class Entry:
     """One entry of `.snapshots/` that the admin can remove.
 
     `name` is the name the admin types. `version` and `stacklets` come
-    from the manifest or the rollback's record; `unreadable` says why
+    from the manifest or the rollback's record. `unreadable` says why
     they are missing. `snapshot` and `finished` are set for a replaced
     state. `size_bytes` is set by `plan` only, because the lists do not
     need it.
@@ -131,12 +131,13 @@ class Entry:
 def plan(data_root: Path, instance_dir: Path, name: str) -> Entry:
     """The entry `name` names, with its size, after every refusal.
 
-    Raises `RemovalError` when `name` is not the name of a snapshot, a
-    replaced state or an incomplete folder in `<data_root>/.snapshots/`;
-    when a rollback that has not ended needs it; when it is a snapshot
-    or a replaced state and a rollback goes on or waits at its question;
-    or when it is an incomplete folder and a run of the stack goes on.
-    Changes nothing.
+    Changes nothing. Raises `RemovalError` in four cases:
+
+    - `name` is not the name of an entry in `<data_root>/.snapshots/`.
+    - A rollback that has not ended needs the entry.
+    - A rollback goes on or waits at its question, and the entry is a
+      snapshot or a replaced state.
+    - A run of the stack goes on, and the entry is an incomplete folder.
 
         plan(Path("~/famstack-data"), Path("~/famstack"), "2026-11-25T2114Z")
         # Entry(name="2026-11-25T2114Z", kind="snapshot", size_bytes=1_240_000, …)
@@ -158,9 +159,9 @@ def remove(data_root: Path, entry: Entry) -> None:
 
     Refuses with `SnapshotError` a path that is not an entry of
     `<data_root>/.snapshots/` (`store.discard`). Raises it when the folder
-    cannot be renamed, or when a file in it cannot be deleted; then it
-    names the folder that stays, and `stack snapshot list` shows that
-    folder as incomplete.
+    cannot be renamed or a file in it cannot be deleted. Its error names
+    the folder that stays. `stack snapshot list` shows that folder as
+    incomplete.
 
         remove(data_root, plan(data_root, instance_dir, "replaced/2026-11-25T2203Z"))
     """
@@ -170,8 +171,10 @@ def remove(data_root: Path, entry: Entry) -> None:
 def replaced(data_root: Path) -> list[Entry]:
     """The states that rollbacks moved aside, oldest first, without sizes.
 
-    A folder whose record cannot be read, or that has none (the admin
-    renamed it), is listed with `unreadable`. Changes nothing.
+    A folder whose record cannot be read is listed with `unreadable`. A
+    folder without a record is listed the same way, for example one that
+    the admin renamed.
+    Changes nothing.
 
         replaced(Path("~/famstack-data"))
         # [Entry(name="replaced/2026-11-25T2203Z", kind="replaced", finished=True, …)]
@@ -184,9 +187,9 @@ def replaced(data_root: Path) -> list[Entry]:
 
 
 def incomplete(data_root: Path) -> list[Entry]:
-    """The folders that a stop halfway left, by name, without sizes: a
-    take (`.taking-`) and a removal (`.removing-`), also one of a replaced
-    state. Changes nothing.
+    """The folders that a stop halfway left, by name and without sizes.
+    These are a take (`.taking-`) and a removal (`.removing-`), also
+    those of a replaced state. Changes nothing.
 
         incomplete(Path("~/famstack-data"))
         # [Entry(name=".taking-2026-11-25T2300Z", kind="incomplete", …)]
@@ -205,7 +208,7 @@ def incomplete(data_root: Path) -> list[Entry]:
 # ── Finding the entry of a name ──────────────────────────────────────────
 
 def _found(data_root: Path, name: str) -> Entry:
-    """The entry `name` names; refused when there is none."""
+    """The entry that `name` names. Refused when there is none."""
     folder = data_root / store.SNAPSHOTS_FOLDER
     head, _, tail = name.partition("/")
     if head == REPLACED_FOLDER and (store.is_name(tail) or _is_half(tail)):
@@ -225,7 +228,7 @@ def _found(data_root: Path, name: str) -> Entry:
 
 
 def _snapshot(name: str, path: Path) -> Entry:
-    """A snapshot's entry; refused when its folder holds no manifest,
+    """A snapshot's entry. Refused when its folder holds no manifest,
     because then it is no snapshot of the store."""
     try:
         record = read_manifest(path)

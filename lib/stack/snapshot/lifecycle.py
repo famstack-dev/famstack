@@ -1,10 +1,11 @@
 """What the snapshot commands ask of the stack's command line.
 
 `stack snapshot create` stops its stacklets, takes the snapshot and
-starts them again, and records the version that runs. `stack rollback`
-stops the stacklets it replaces. The stop, the start and the version
-belong to the command line (`stack.cli`), which imports this package.
-So the dispatcher hands them in, and no module here imports `stack.cli`:
+starts them again. It also records the version that runs.
+`stack rollback` stops the stacklets it replaces. The stop, the start
+and the version belong to the command line (`stack.cli`). Because
+`stack.cli` imports this package, no module here imports `stack.cli`.
+The dispatcher hands them in instead:
 
     # in stack.cli, the dispatcher
     cli = CLI(stck)

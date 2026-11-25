@@ -21,10 +21,11 @@ runs. A stacklet that was stopped stays stopped. A take that fails still
 starts the stacklets again, because the family must not lose a page
 because of a snapshot.
 
-`create` refuses, before the record, a stacklet whose state is not whole:
-its last snapshot failed, or a rollback of it stopped halfway
-(`stack.snapshot.guard.waiting`, the refusal `stack up` gives). That
-state would become the newest snapshot, where the next rollback goes.
+Before the record, `create` refuses a stacklet whose state is not whole.
+The state is not whole when its last snapshot failed or a rollback of it
+stopped halfway. This is the refusal that `stack up` gives
+(`stack.snapshot.guard.waiting`). That state would become the newest
+snapshot, where the next rollback goes.
 
     $ stack snapshot create docs
       ✓  Snapshot 2026-11-24T2114Z: docs
@@ -162,7 +163,7 @@ def _stop_and_take(stck, stacklets: dict[str, Path], record: Manifest, was_up: l
 
 def _start_again(lifecycle: Lifecycle, was_up: list[str]) -> list[str]:
     """Start the stacklets in `was_up` again and return those that started.
-    A start that fails is said on stderr; the snapshot stays as it was."""
+    A start that fails is said on stderr. The snapshot stays as it was."""
     if not was_up:
         return []
     started = lifecycle.up(was_up)

@@ -3,7 +3,7 @@
 The restart that applies a release (`stack restart` in `stack.cli`) takes
 its snapshot in three calls around its own stop and start. They print
 what the restart says and exit 1 when no snapshot was taken. The
-decisions are in `stack.snapshot.release`; this module holds the text.
+decisions are in `stack.snapshot.release`. This module holds the text.
 A stacklet whose take failed waits for its snapshot, and
 `stack.snapshot.guard` refuses its start until a restart takes it:
 
@@ -37,7 +37,8 @@ __all__ = ["keep_and_say", "plan_line", "problem_line", "record_or_exit", "stopp
 def record_or_exit(stck, ids: list[str], no_snapshot: bool) -> Before:
     """`release.before_stop` for a restart of `ids`, before it stops them.
     `no_snapshot` is `stack restart --no-snapshot`. Exits 1 with the cause
-    and the two ways on when the record fails; then nothing has stopped.
+    and the two ways on when the record fails. In that case nothing has
+    stopped.
     Names each stacklet whose commit is unknown, which gets no snapshot.
 
         record_or_exit(stck, ["docs"], no_snapshot=False)   # Before(stacklets={"docs": …}, …)
@@ -57,7 +58,7 @@ def take_or_exit(stck, before: Before) -> Taken | None:
     """`release.after_stop` between the stop and the start of the
     stacklets `before` recorded: the snapshot, or None when `before` is
     empty. Exits 1 with the cause and the two ways on when the take
-    fails; then they stay stopped and wait for their snapshot
+    fails. In that case they stay stopped and wait for their snapshot
     (`stack.snapshot.guard.waiting`).
 
         take_or_exit(stck, before).snapshot.name   # "2026-11-25T2114Z"
@@ -73,11 +74,12 @@ def take_or_exit(stck, before: Before) -> Taken | None:
 
 
 def stopped_or_exit(stck, held: list[str], down_result: dict) -> None:
-    """Return when the stop of a restart stopped every stacklet; else
-    record the stop's errors as the result of each run of `held`, print
-    them, and exit 1. A stacklet that did not stop still runs its release,
-    so a start would only be refused (`stack.snapshot.guard`), with the
-    restart just run as its way on.
+    """Return when the stop of a restart stopped every stacklet. Else
+    record the stop's errors as the result of each run of `held`. Then
+    print them and exit 1. A start would only be refused
+    (`stack.snapshot.guard`), because a stacklet that did not stop still
+    runs its release. The refusal would name the restart just run as its
+    way on.
 
         stopped_or_exit(stck, ["docs"], {"ok": False, "errors": [
             {"stacklet": "docs", "result": {"error": "container is busy"}}]})
@@ -139,9 +141,10 @@ def plan_line() -> str:
 # ── What the restart says ────────────────────────────────────────────────
 
 def _refused_lines(cause: str, waiting: list[str], running: list[str]) -> list[str]:
-    """What the restart says when it took no snapshot: the cause, which
-    stacklets are stopped and wait for their snapshot (`waiting`), which
-    still run the release they ran (`running`), and the two ways on.
+    """What the restart says when it took no snapshot. It names the
+    cause and the stacklets that are stopped and wait for their snapshot
+    (`waiting`). It names those that still run the release they ran
+    (`running`). It also names the two ways on.
 
         _refused_lines("the disk is full", ["docs"], [])
         #   ✗  No snapshot: the disk is full
@@ -211,7 +214,7 @@ def _taken_lines(taken: Taken, pruned: release.Pruned) -> list[str]:
 
 def _exit(stck, ids: list[str], cause: str, lines: list[str]) -> NoReturn:
     """Record a restart without a snapshot as the result of each run of
-    `ids`, print `lines` on stderr, and exit 1."""
+    `ids`. Then print `lines` on stderr and exit 1."""
     for sid in ids:
         run_log.record_result(stck.instance_dir, sid,
                               {"error": f"No snapshot: {cause}", "stacklet": sid})

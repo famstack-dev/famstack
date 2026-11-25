@@ -3,9 +3,9 @@
 A snapshot's manifest names the image id that each service ran
 (`stack.manifest`). The tag in the compose file may name a newer image by
 now: a pull, or a newer release that uses the same tag. The rollback
-starts the old database on the image that wrote it, so before anything
-stops, the Mac must still hold each image id, and before the start, each
-tag names that id again:
+starts the old database on the image that wrote it. For this reason the
+Mac must still hold each image id before anything stops. Before the
+start, each tag names that id again:
 
     from stack.snapshot import rollback_images as images
 
@@ -20,16 +20,17 @@ tag names that id again:
 Why it works this way:
 
 - **Only a tag that moved is tagged again.** A tag that names the
-  manifest's id is left alone, so a rollback right after an update that
-  changed nothing of an image runs no `docker image tag`.
+  manifest's id is left alone. For this reason a rollback right after an
+  update that changed no image runs no `docker image tag`.
 - **A tag is shared.** `docker image tag` moves the tag for every
   stacklet that starts it, also one outside the rollback. The plan names
   each running stacklet outside the rollback whose container starts the
-  tag, so the admin knows which one gets the older image at its next
-  start.
-- **An image built on this Mac is neither checked nor tagged.** Its start
-  builds it again from the Dockerfile of the snapshot's commit, as every
-  start of that release does, so its old id is not what runs.
+  tag. It names them because the admin must know which one gets the
+  older image at its next start.
+- **An image built on this Mac is neither checked nor tagged.** Its old
+  id is not what runs, because its start builds it again. The build uses
+  the Dockerfile of the snapshot's commit, as every start of that release
+  does.
 - **A name with a digest names one image already,** and is not tagged.
 
 Debt: Watchtower can pull a newer image for a tag that the rollback
@@ -37,11 +38,11 @@ moved back, and so undo the rollback's images without a word. Trigger:
 Watchtower's image changes get a snapshot, or a stacklet reports it.
 
 Debt: a tag shared with a stacklet outside the rollback moves for that
-stacklet too; the plan names it and changes nothing for it. Trigger: a
+stacklet too. The plan names it and changes nothing for it. Trigger: a
 stacklet reports a start on an older image after a rollback.
 
 This module only asks Docker and tags. The rollback's plan
-(`stack.snapshot.rollback`) refuses on `missing` and shows `moves`; its
+(`stack.snapshot.rollback`) refuses on `missing` and shows `moves`. Its
 steps (`stack.snapshot.rollback_steps`) call `retag` before the start.
 """
 
@@ -59,10 +60,12 @@ __all__ = ["TagMove", "missing", "moves", "retag"]
 
 @dataclass(frozen=True)
 class TagMove:
-    """A tag that names another image than the manifest's: `name` is the
-    tag, `image_id` the manifest's id it names again, `now` the id it
-    names now (None when the Mac has no image of that tag), and
-    `also_used_by` the running stacklets outside the rollback that start it.
+    """A tag that names another image than the manifest's.
+
+    `name` is the tag. `image_id` is the manifest's id that it names
+    again. `now` is the id that it names now (None when the Mac has no
+    image of that tag). `also_used_by` are the running stacklets outside
+    the rollback that start it.
 
         TagMove(name="ghcr.io/paperless-ngx/paperless-ngx:2.20.1",
                 image_id="sha256:44…", now="sha256:99…", also_used_by=("search",))
@@ -113,8 +116,9 @@ def retag(manifest: Manifest, starts: list[str],
           source: ImageSource) -> tuple[list[str], list[str]]:
     """Make each tag that `moves` finds name the manifest's image again,
     with `docker image tag <id> <name>`. Returns the tags it moved and,
-    for each tag Docker refused, "<name>: <error>". Each call asks Docker
-    again, so a second call after a stop halfway moves only what is left.
+    for each tag Docker refused, "<name>: <error>". Because each call
+    asks Docker again, a second call after a stop halfway moves only
+    what is left.
 
         retag(manifest, ["docs"], source)
         # (["ghcr.io/paperless-ngx/paperless-ngx:2.20.1"], [])

@@ -5,8 +5,8 @@ configuration, as they were before a change. This module keeps the
 `.snapshots/` folder: it takes a snapshot, lists the snapshots, removes
 one, and owns the names. It stops and starts nothing: the caller stops
 the stacklets first (`stack snapshot create`, or the restart that
-applies a release). What a snapshot holds, and how its files are cloned
-and cloned back, is in `stack.snapshot.files`.
+applies a release). `stack.snapshot.files` says what a snapshot holds
+and how its files are cloned and cloned back.
 
     from stack.snapshot import store
 
@@ -41,12 +41,13 @@ Why it works this way:
 - **Time Machine skips `.snapshots/`** (`tmutil addexclusion`, when the
   folder is made), because the snapshot is a clone of data that Time
   Machine already holds.
-- **`.snapshots/` starts with a dot.** A stacklet's id never does, so no
-  part of the stack reads the folder as a stacklet's data folder.
+- **`.snapshots/` starts with a dot.** No part of the stack reads the
+  folder as a stacklet's data folder, because a stacklet's id never
+  starts with a dot.
 
-The file system is behind the port `Volume` (`stack.snapshot.volume`),
-so a test can stand in a volume that does not clone or is full. The
-manifest's records come from `stack.manifest`; the caller makes them
+The file system is behind the port `Volume` (`stack.snapshot.volume`).
+The port lets a test stand in a volume that does not clone or is full.
+The manifest's records come from `stack.manifest`. The caller makes them
 while the stacklets still run, because a running container names the
 image it runs.
 """
@@ -191,9 +192,9 @@ def snapshots(data_root: Path) -> list[Snapshot]:
     folder without one is left out: a snapshot that is still being
     written or that stopped halfway, or the state a rollback moved aside.
     A manifest that cannot be read is listed with `unreadable` and no
-    manifest, because one broken snapshot must not hide the others or
-    stop an update that lists them. Empty when there is no `.snapshots/`.
-    Changes nothing.
+    manifest. It is listed because one broken snapshot must not hide the
+    others or stop an update that lists them. Empty when there is no
+    `.snapshots/`. Changes nothing.
 
         snapshots(Path("~/famstack-data"))
         # [Snapshot(name="2026-11-24T2140Z", …), Snapshot(name="2026-11-24T2114Z", …)]
@@ -241,11 +242,12 @@ def discard(data_root: Path, folder: Path) -> None:
     - a path that is not a folder.
 
     A folder with a name that does not start with a dot is renamed to
-    `.removing-<name>` first and deleted after, so a removal that stops
-    halfway leaves a folder that no list takes for whole. A folder whose
-    name starts with a dot is not whole anyway, and is deleted where it
-    is. Raises `SnapshotError` when the folder cannot be renamed, or when
-    a file in it cannot be deleted: then it names the folder that stays.
+    `.removing-<name>` first and deleted after. Because of the rename, a
+    removal that stops halfway leaves a folder that no list takes for
+    whole. A folder whose name starts with a dot is not whole anyway,
+    and is deleted where it is. Raises `SnapshotError` when the folder
+    cannot be renamed, or when a file in it cannot be deleted: then it
+    names the folder that stays.
 
         discard(Path("~/famstack-data"),
                 Path("~/famstack-data/.snapshots/replaced/2026-11-25T2203Z"))
@@ -262,9 +264,9 @@ def discard(data_root: Path, folder: Path) -> None:
         except OSError as error:
             raise SnapshotError(f"{folder} cannot be removed: {error}") from error
         folder = removing
-    # Safe to delete: the folder is in `.snapshots/` and is no link, so it
-    # holds clones, copies or a state a rollback moved aside. rmtree
-    # deletes a link inside it, never what the link points at.
+    # Safe to delete, because the folder is in `.snapshots/` and is no
+    # link. It holds clones, copies or a state a rollback moved aside.
+    # rmtree deletes a link inside it, never what the link points at.
     shutil.rmtree(folder, ignore_errors=True)
     if folder.exists():
         left = next((str(p) for p in folder.rglob("*")), str(folder))
@@ -300,8 +302,8 @@ def is_entry_name(name: str) -> bool:
 # ── Writing a snapshot ───────────────────────────────────────────────────
 
 def _snapshots_folder(data_root: Path, volume: Volume) -> Path:
-    """`.snapshots/` in `data_root`; made, and excluded from Time Machine,
-    when it is missing."""
+    """`.snapshots/` in `data_root`. When it is missing, it is made and
+    excluded from Time Machine."""
     folder = data_root / SNAPSHOTS_FOLDER
     if not folder.is_dir():
         try:
@@ -317,8 +319,8 @@ def _write(folder: Path, name: str, parts: list[files.Part], record: Manifest,
     """Write the snapshot `name` into `folder`: the parts into a `.taking-`
     folder, the manifest last, then the rename. Clones with `volume`, or
     copies when it is None. Any failure, also Ctrl-C, removes the
-    `.taking-` folder. The manifest comes before the rename, so a folder
-    with a snapshot's name always holds its manifest."""
+    `.taking-` folder. The manifest comes before the rename, because a
+    folder with a snapshot's name must always hold its manifest."""
     partial, final = folder / f"{TAKING}{name}", folder / name
     renamed = False
     try:
@@ -354,13 +356,15 @@ def _free_name(folder: Path, now: datetime) -> str:
 
 def _is_entry(data_root: Path, folder: Path) -> bool:
     """Whether `folder` is an entry of `<data_root>/.snapshots/` that
-    `discard` may delete: a folder, no link, with an entry's name, whose
-    parent is `.snapshots/` or `.snapshots/replaced/` of this data folder.
+    `discard` may delete. Such an entry is a folder with an entry's name,
+    and no link. Its parent is `.snapshots/` or `.snapshots/replaced/` of
+    this data folder.
 
-    The parent is compared after `resolve`, so `..` and a link above the
-    data folder lead to the same answer as the plain path. `.snapshots/`
-    and `replaced/` must be no links themselves, because `resolve` follows
-    them, and then the parent compares equal wherever the link points.
+    The parent is compared after `resolve`, because `..` and a link
+    above the data folder must lead to the same answer as the plain
+    path. `.snapshots/` and `replaced/` must be no links themselves,
+    because `resolve` follows them. A link there would make the parent
+    compare equal wherever the link points.
     """
     snapshots = data_root / SNAPSHOTS_FOLDER
     replaced = snapshots / REPLACED_FOLDER

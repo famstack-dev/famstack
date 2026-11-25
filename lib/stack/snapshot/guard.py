@@ -12,36 +12,43 @@ back, and ask here before they act:
     guard.waiting(stck, "docs")    # `stack snapshot create docs`: None, or the refusal
 
 `waiting` refuses a stacklet whose last snapshot failed
-(`stack.snapshot.pending`) or whose rollback stopped halfway
-(`stack.snapshot.rollback`): a start would run on a state that has no
-snapshot or is half restored, and a new snapshot of that state would
-become the newest one, where the next rollback goes. `starting` refuses
-those too, and also a running stacklet on a different release than the
-checkout's (`stack.snapshot.release.applying`). That is an older release
-after `stack update`, or a newer one after a rollback of other stacklets.
-`stack up` would recreate it on the checkout's code and run its
-migrations with no snapshot. A stopped
-stacklet is not refused, because nothing runs that a restart would
-record; the restart that applies a release stops its stacklets before
-it starts them, so the guard never refuses it.
+(`stack.snapshot.pending`). It also refuses a stacklet whose rollback
+stopped halfway (`stack.snapshot.rollback`). A start would run on a
+state that has no snapshot or is half restored. A new snapshot of that
+state would become the newest one, where the next rollback goes.
+
+`starting` refuses those too. It also refuses a running stacklet on a
+different release than the checkout's (`stack.snapshot.release.applying`).
+That is an older release after `stack update`, or a newer one after a
+rollback of other stacklets. `stack up` would recreate it on the
+checkout's code and run its migrations with no snapshot.
+
+A stopped stacklet is not refused, because nothing runs that a restart
+would record. The restart that applies a release stops its stacklets
+before it starts them. For this reason the guard never refuses it.
 
 Every refusal is an answer `{"error": ..., "stacklet": ..., "refused":
 True}` that names the command that goes on. The guards change nothing,
-and nothing failed: a caller that reports a failed start (the Server
+and nothing failed. A caller that reports a failed start (the Server
 room's notice) leaves a refusal out by its `refused` key.
 
-Debt: the guard fails open. `docker ps` that times out or
-fails, a container without the `stack.commit` label, and a commit git
-cannot diff (one the checkout no longer has) all leave a stacklet out of
-`release.applying`, and `stack up` then applies a release without a
-snapshot and says nothing. Trigger: the first report of a release applied
+Debt: the guard fails open. Three things leave a stacklet out of
+`release.applying`:
+
+- A `docker ps` that times out or fails.
+- A container without the `stack.commit` label.
+- A commit that git cannot diff (one the checkout no longer has).
+
+In each case, `stack up` applies a release without a snapshot and says
+nothing.
+Trigger: the first report of a release applied
 without a snapshot, or the `unknown` list of `stack restart` growing past
 the containers of old installs.
 
-Debt: any commit under `lib/` makes every running stacklet
-stale, so on a development checkout `stack up <id>` after a change of
-`stack.toml` is refused until `stack restart <id>`. Trigger: a second
-complaint from a developer or a bot that edits the configuration; then
+Debt: any commit under `lib/` makes every running stacklet stale. For
+that reason, `stack up <id>` after a change of `stack.toml` is refused
+on a development checkout until `stack restart <id>`. Trigger: a second
+complaint from a developer or a bot that edits the configuration. Then
 `stack up` could take the snapshot itself.
 """
 
@@ -65,7 +72,7 @@ def starting(stck, stacklet_id: str) -> dict | None:
 
 def refusals(stck, stacklet_ids: list[str]) -> dict[str, dict]:
     """Each stacklet among `stacklet_ids` whose start `starting` refuses,
-    with its refusal; empty when none. `stack up` asks it before its setup
+    with its refusal. Empty when none. `stack up` asks it before its setup
     questions and preparation, `stack ai key new` before it makes a key.
 
         refusals(stck, ["docs", "photos"])   # {"docs": {"error": "...", "refused": True}}
@@ -77,10 +84,10 @@ def split(stck, stacklet_ids: list[str]) -> tuple[dict[str, dict], list[str]]:
     """`refusals` of `stacklet_ids`, and the stacklets among them that may
     start, in their order. `stack up` starts the second and names the first.
 
-    `stack up` asks it before it claims anything, so a run lock that is
-    held belongs to another run. Such a stacklet is not asked about: that
-    run may be the restart that applies the release, and the run lock
-    refuses the start with its own answer (exit 75).
+    Because `stack up` asks it before it claims anything, a run lock
+    that is held belongs to another run. Such a stacklet is not asked
+    about, because that run may be the restart that applies the release.
+    The run lock refuses the start with its own answer (exit 75).
 
         split(stck, ["docs", "photos"])   # ({"docs": {...}}, ["photos"])
     """
@@ -90,9 +97,10 @@ def split(stck, stacklet_ids: list[str]) -> tuple[dict[str, dict], list[str]]:
 
 
 def waiting(stck, stacklet_id: str) -> dict | None:
-    """The refusal of a start or a snapshot of a stacklet whose last
-    snapshot failed, with the two ways on, or whose rollback stopped
-    halfway. None when the stacklet waits for nothing.
+    """The refusal of a start or a snapshot of a waiting stacklet. The
+    stacklet's last snapshot failed, or its rollback stopped halfway. The
+    refusal of a failed snapshot names the two ways on. None when the
+    stacklet waits for nothing.
 
         waiting(stck, "docs")
         # {"error": "docs waits for its snapshot: … stack restart docs …", "stacklet": "docs"}
@@ -109,10 +117,10 @@ def waiting(stck, stacklet_id: str) -> dict | None:
 
 def _applying(stck, stacklet_id: str) -> dict | None:
     """The refusal of a start that would apply a release with no
-    snapshot: the stacklet runs a commit whose files differ from the
-    checkout's, older or, after a rollback of other stacklets, newer.
-    None when it is stopped, its commit is unknown, or it runs the
-    checkout's code."""
+    snapshot. The stacklet runs a commit whose files differ from the
+    checkout's. That commit is older, or newer after a rollback of other
+    stacklets. None in three cases: the stacklet is stopped, its commit
+    is unknown or it runs the checkout's code."""
     if stacklet_id not in release.applying(stck, [stacklet_id]):
         return None
     return _refused(stacklet_id, f"{stacklet_id} runs a different release than the checkout. "

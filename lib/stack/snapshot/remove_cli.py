@@ -14,10 +14,11 @@ release, the stacklets and the size. It waits for a confirmation, or
       Remove the snapshot 2026-11-24T2114Z: 0.4.0-rc.1, docs, 1.2 MB
       ? Remove it? [y/N]
 
-The decisions and the refusals are in `stack.snapshot.removal`; this
+The decisions and the refusals are in `stack.snapshot.removal`. This
 module reads the command line and prints. It holds the run locks of the
-entry's stacklets from its plan to its delete, so a rollback cannot
-start on the snapshot while the admin reads the question.
+entry's stacklets from its plan to its delete. It holds them because a
+rollback must not start on the snapshot while the admin reads the
+question.
 
 A question left open keeps those locks: the debt is in
 `stack.snapshot.answer`.
@@ -45,7 +46,7 @@ def run(stck, args) -> None:
     exits 0. Without a terminal it needs `--yes`. Exits 1 when it refused.
 
     Holds the run locks of the entry's stacklets from the plan to the
-    delete, as the action `snapshot remove`, and plans again under them.
+    delete, as the action `snapshot remove`. Plans again under them.
     Refused when a run of one of them goes on.
 
         $ stack snapshot remove 2026-11-24T2114Z --yes --json
@@ -58,9 +59,9 @@ def run(stck, args) -> None:
     name = args.stacklets[0]
     try:
         first = removal.plan(stck.data, stck.instance_dir, name)
-        # The locks of the entry's stacklets, from the plan to the delete:
-        # a rollback that starts meanwhile is refused, and one that came
-        # before the locks is seen by the second plan.
+        # The locks of the entry's stacklets, from the plan to the
+        # delete. A rollback that starts meanwhile is refused. The
+        # second plan sees a rollback that came before the locks.
         with runs.reserve(stck.instance_dir, first.stacklets, action=RUN_ACTION):
             return _remove(stck, args, removal.plan(stck.data, stck.instance_dir, name))
     except runs.AlreadyRunning as busy:

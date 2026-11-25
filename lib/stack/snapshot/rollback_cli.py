@@ -6,10 +6,11 @@
     rollback_cli.run(stck, args, lifecycle)    # what `stack rollback ...` runs
 
 `stack rollback` shows its plan (`stack.snapshot.rollback`): the
-snapshot, the release it goes back to, the stacklets it replaces, and the
-files that came in after the snapshot. It waits for a confirmation, or
-`--yes` where there is no terminal. Then the rollback runs, and the old
-release starts its stacklets with a `stack up` process of its own:
+snapshot and the release that the rollback goes back to. The plan also
+names the stacklets that the rollback replaces and the files that came
+in after the snapshot. The command waits for a confirmation, or `--yes`
+where there is no terminal. Then the rollback runs, and the old release
+starts its stacklets with a `stack up` process of its own:
 
     $ stack rollback
       Roll back to 0.4.0-rc.1, the snapshot 2026-11-25T2114Z (2026-11-25 22:14)
@@ -19,7 +20,7 @@ release starts its stacklets with a `stack up` process of its own:
 
 While it asks, it holds the run locks of the plan's stacklets as the
 action `rollback` (`runs.reserve`). A start of one of them refuses
-meanwhile, and so does `stack snapshot remove`, because the plan
+meanwhile. `stack snapshot remove` refuses too, because the plan
 restores one of the snapshots (`stack.snapshot.removal`).
 
 A question left open keeps those locks: the debt is in
@@ -58,8 +59,9 @@ def run(stck, args, lifecycle: Lifecycle, volume: Volume | None = None) -> None:
     """`stack rollback [<snapshot>]` on the instance `stck`: show the
     plan, wait for the confirmation, run it. Prints the answer. Exits 1
     when it refused or a step failed. A declined confirmation changes
-    nothing and exits 0; with `--json` it prints the plan as JSON, and the
+    nothing and exits 0. With `--json` it prints the plan as JSON, and the
     question goes to stderr. Without a terminal it needs `--yes`.
+
     `lifecycle.down` stops the stacklets it replaces. `volume` is the file
     system of the data folder, `volume.ThisVolume` by default.
 
@@ -99,11 +101,11 @@ def run(stck, args, lifecycle: Lifecycle, volume: Volume | None = None) -> None:
 # ── Rolling back ─────────────────────────────────────────────────────────
 
 def _starting(stck, quiet: bool):
-    """The rollback's start: `stack up <ids>` as a process of its own, from
-    the checkout, which is on the snapshot's commit by then. It runs that
-    release's code, framework included, and not the code this process
-    loaded. Its output goes to the terminal, or to stderr with `--json`
-    (`quiet`). Says whether it exited 0."""
+    """The rollback's start: `stack up <ids>` as a process of its own,
+    from the checkout. By then the checkout is on the snapshot's commit.
+    The process runs that release's code and framework, not the code
+    this process loaded. Its output goes to the terminal, or to stderr
+    with `--json` (`quiet`). Says whether it exited 0."""
     def start(ids: list[str]) -> bool:
         if not ids:
             return True
@@ -117,13 +119,13 @@ def _starting(stck, quiet: bool):
 
 
 def _confirmed(stck, planned: rollback.Plan, quiet: bool) -> bool:
-    """Ask the confirmation; on stderr when stdout carries JSON (`quiet`).
+    """Ask the confirmation, on stderr when stdout carries JSON (`quiet`).
 
     Holds the run locks of the plan's stacklets while it asks, as the
-    action `rollback`, so a `stack snapshot remove` meanwhile refuses the
-    snapshot the plan restores. Raises `runs.AlreadyRunning` when a run of
-    one of them goes on. The locks go before the run, which takes them
-    again with its own run log."""
+    action `rollback`. It holds them because a `stack snapshot remove`
+    meanwhile must refuse the snapshot that the plan restores. Raises
+    `runs.AlreadyRunning` when a run of one of them goes on. The locks
+    go before the run, which takes them again with its own run log."""
     with runs.reserve(stck.instance_dir, planned.stacklets, action=RUN_ACTION):
         return ask("Finish the rollback?" if planned.replaced else "Roll back?", quiet)
 

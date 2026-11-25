@@ -3,6 +3,7 @@
 A snapshot before an update keeps one manifest in its folder. A later
 backup keeps one too. The manifest records the commit and the version
 that the stacklets ran. It holds one stacklet record for each stacklet.
+
 A stacklet record says whether the stacklet is up and which commit it
 started from. It lists the migrations that ran on the stacklet's data
 and the image of each service. A rollback or a restore reads the
@@ -58,12 +59,13 @@ Why it works this way:
 
 The caller says whether a stacklet is up and which commit it started from
 (`Stack.is_running`, `Stack.started_commits`). The caller also gives the
-commit and the version they ran (`stack.updater.Checkout`): the checkout's
-for `stack snapshot create`, the release before the update for the
-restart's snapshot (`stack.snapshot.release`). This module takes no
-snapshot and has no command. The snapshot store calls it. A release
-writes the file and a later release reads it, so the file's shape is a
-contract between releases.
+commit and the version they ran (`stack.updater.Checkout`).
+For `stack snapshot create` that is the checkout's. For the restart's
+snapshot (`stack.snapshot.release`) it is the release before the update.
+
+This module takes no snapshot and has no command. The snapshot store
+calls it. The file's shape is a contract between releases, because a
+release writes the file and a later release reads it.
 """
 
 from __future__ import annotations
@@ -88,8 +90,8 @@ __all__ = [
 
 MANIFEST_FILE = "MANIFEST.json"
 
-# The name of the file during a write. It starts with a dot, so a reader of
-# the folder sees it as a leftover, and never as a manifest.
+# The name of the file during a write. It starts with a dot, because a
+# reader of the folder must see it as a leftover and never as a manifest.
 _PARTIAL_FILE = "." + MANIFEST_FILE + ".partial"
 
 

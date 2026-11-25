@@ -232,9 +232,10 @@ def images_of(stacklet_dir: Path, source: ImageSource) -> dict[str, Image]:
 
     A stacklet with containers is recorded also when its compose file
     cannot be read. After `stack update` that file is the new release's,
-    which the running containers never used. The compose file then only
-    cannot say which service builds its image here: such an image is
-    recorded with its local id and without `built` and `base`.
+    which the running containers never used. In that case only one fact
+    is missing, because the containers name their images: which service
+    builds its image here. Such an image is recorded with its local id
+    and without `built` and `base`.
     """
     compose_file = Path(stacklet_dir) / COMPOSE_FILE
     if not compose_file.is_file():

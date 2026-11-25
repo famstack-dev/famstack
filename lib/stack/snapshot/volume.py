@@ -11,10 +11,10 @@ The snapshot store (`stack.snapshot.store`) and the rollback's restore
     volume.clone(Path("a"), Path("b"))                     # b is a clone of a
     volume.free_bytes(Path("~/famstack-data"))             # 412_000_000_000
 
-Why a port: a test stands in a volume that does not clone, that is
-full, or whose clone fails, without a second disk. The store decides
-what to clone and what to refuse; this module only does the file
-system's part.
+Why a port: a test can stand in a volume that does not clone, is full
+or fails to clone, without a second disk. The store decides what to
+clone and what to refuse. This module only does the file system's
+part.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class Volume(Protocol):
     """The file system of the data folder, as the store uses it.
 
     `ThisVolume` is the real one. A test stands in a volume that does not
-    clone, that is full, or whose clone fails:
+    clone, is full or fails to clone:
 
         class CopyOnly(ThisVolume):            # a disk that is not APFS
             def can_clone(self, folder): return False
@@ -71,7 +71,7 @@ class ThisVolume:
     A clone is `clonefile(2)`, the call that `cp -c` makes. On a system
     without it (Linux) or a volume that does not support it, `can_clone`
     is False and the store copies. `exclude_from_backups` runs
-    `tmutil addexclusion`; without `tmutil` it does nothing.
+    `tmutil addexclusion`. Without `tmutil` it does nothing.
     """
 
     def can_clone(self, folder: Path) -> bool:
