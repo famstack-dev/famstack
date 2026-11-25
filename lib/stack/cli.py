@@ -3220,6 +3220,7 @@ DISPATCH = {
     "family": handle_family,
     "devices": devices_cli.run,
     "snapshot": snapshot_cli.run,
+    "rollback": snapshot_cli.run_rollback,
     "init": handle_init,
     "up": handle_up,
     "down": handle_down,
@@ -3480,6 +3481,7 @@ def _main():
     p.add_argument("--json", action="store_true", help="Output as JSON")
     devices_cli.add_parser(sub)
     snapshot_cli.add_parser(sub)
+    snapshot_cli.add_rollback_parser(sub)
     p = sub.add_parser("family")
     p.add_argument("verb", nargs="?", default=None, help="set")
     p.add_argument("--from", dest="source", metavar="FILE",

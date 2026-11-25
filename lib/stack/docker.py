@@ -186,6 +186,14 @@ def remove_image(image: str) -> bool:
     return removed.returncode == 0
 
 
+def tag_image(image_id: str, name: str) -> tuple[bool, str]:
+    """Make the tag `name` name the image `image_id` on this Mac, as
+    `docker image tag` does. Returns (ok, error output). The image the tag
+    named before stays on the Mac, without that tag."""
+    result = _docker("image", "tag", image_id, name, capture_output=True, text=True, timeout=60)
+    return result.returncode == 0, result.stderr.strip()
+
+
 def inspect_image(image: str) -> dict | None:
     """What Docker knows of the image `image` on this Mac: its `Id`, its
     `RepoDigests` and the rest of `docker image inspect`. None when the

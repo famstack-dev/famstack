@@ -144,6 +144,23 @@ def _inspected(state: dict, names: list[str]) -> list[dict]:
             for c in containers if c["name"] in names]
 
 
+def _tag(folder: Path, state: dict, source: str, name: str) -> int:
+    """`docker image tag <source> <name>`: `name` names the image `source`
+    (an id or a tag) from now on. A source the Mac does not hold fails, as
+    a real daemon's does, and so does every tag after `fail("tag", …)`."""
+    if state["fail"].get("tag"):
+        print(state["fail"]["tag"], file=sys.stderr)
+        return 1
+    images, tags = state.get("images", {}), state.get("tags", {})
+    image_id = source if source in images else tags.get(source)
+    if image_id not in images:
+        print(f"Error response from daemon: No such image: {source}", file=sys.stderr)
+        return 1
+    state["tags"] = {**tags, name: image_id}
+    (folder / "state.json").write_text(json.dumps(state))
+    return 0
+
+
 def _answer(folder: Path, argv: list[str]) -> int:
     """What `docker <argv>` prints and exits with, as a real daemon answers."""
     state = json.loads((folder / "state.json").read_text())
@@ -163,9 +180,12 @@ def _answer(folder: Path, argv: list[str]) -> int:
         print(json.dumps(_inspected(state, argv[2:])))
         return 0
     if argv[:2] == ["image", "inspect"]:
-        found = state.get("images", {}).get(argv[2])
+        images = state.get("images", {})
+        found = images.get(argv[2]) or images.get(state.get("tags", {}).get(argv[2], ""))
         print(json.dumps([found] if found else []))
         return 0 if found else 1
+    if argv[:2] == ["image", "tag"]:
+        return _tag(folder, state, argv[2], argv[3])
     if argv[:1] == ["ps"]:
         # `container_commits`: one `stack-<id>-<service>` row per stamped
         # stacklet. A real `docker ps` lists a stopped container only with -a.
@@ -189,7 +209,8 @@ def _answer(folder: Path, argv: list[str]) -> int:
         return 0
     step = next((a for a in argv if a in COMPOSE_STEPS), None) if argv[:1] == ["compose"] else None
     if step:
-        message = state["fail"].get(step)
+        stacklet = _compose_file(argv).parent.name
+        message = state.get("fail_of", {}).get(stacklet, {}).get(step) or state["fail"].get(step)
         print(message or "", file=sys.stderr, end="")
         if step == "up" and not message:
             _create(folder, state, argv)

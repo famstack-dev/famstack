@@ -257,6 +257,15 @@ class Checkout:
         code, out, _ = self._run("describe", "--tags", "--always", commit)
         return out if code == 0 else ""
 
+    def commit_of(self, ref: str) -> str:
+        """The full commit that `ref` names (a tag, a short commit,
+        `HEAD`), or empty when git does not know it.
+
+            checkout.commit_of("f5834a67")   # "f5834a67c0…"
+        """
+        code, out, _ = self._run("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        return out if code == 0 else ""
+
     def commits_ahead_of(self, ref: str) -> int:
         """How many commits HEAD carries that `ref` does not."""
         code, out, _ = self._run("rev-list", "--count", f"{ref}..HEAD")

@@ -1,10 +1,13 @@
-"""The command line of `stack snapshot`: take a snapshot, list the snapshots.
+"""The command line of `stack snapshot` and `stack rollback`.
 
     stack snapshot create docs [photos ...]    stop, clone the state, start again
     stack snapshot list                        the snapshots, newest first
+    stack rollback [<snapshot>] [--yes]        back to the snapshot before the last update
 
-    add_parser(sub)       # in lib/stack/cli.py, next to the other commands
-    run(stck, args)       # what `stack snapshot ...` runs
+    add_parser(sub)                # in lib/stack/cli.py, next to the other commands
+    run(stck, args)                # what `stack snapshot ...` runs
+    add_rollback_parser(sub)
+    run_rollback(stck, args)       # what `stack rollback ...` runs
 
 `create` takes a snapshot of the named stacklets in four steps. It holds
 their run locks (`stack.runs`), because no other run may start or stop
@@ -40,6 +43,18 @@ was taken; the decisions are in `stack.snapshot.release`. A fourth call,
     cli.up_many(["docs"])
     keep_and_say(stck, taken)                                    # the newest 3 stay
 
+`stack rollback` shows its plan (`stack.snapshot.rollback`): the
+snapshot, the release it goes back to, the stacklets it replaces, and the
+files that came in after the snapshot. It waits for a confirmation, or
+`--yes` where there is no terminal. Then the rollback runs, and the old
+release starts its stacklets with a `stack up` process of its own:
+
+    $ stack rollback
+      Roll back to 0.4.0-rc.1, the snapshot 2026-11-25T2114Z (2026-11-25 22:14)
+      Replaces docs, photos. Their changes since then move to
+      .snapshots/replaced/, and the stacklets lose them.
+      ? Roll back? [y/N]
+
 This module reads the command line and prints the answer. It calls the
 store for the snapshot, and the CLI to start and stop. The snapshot's
 folder and its rules are in `stack.snapshot.store`.
@@ -47,7 +62,10 @@ folder and its rules are in `stack.snapshot.store`.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -55,12 +73,21 @@ from .. import manifest as manifests
 from .. import run_log, runs
 from ..images import DockerImages
 from ..manifest import Manifest, ManifestError
-from ..prompt import DIM, GREEN, RED, RESET
-from . import pending, release, store
+from ..prompt import DIM, GREEN, ORANGE, RED, RESET, confirm
+from . import pending, release, rollback, store
 from .release import Before, anything_up
 from .store import SnapshotError, Taken, Volume
 
-__all__ = ["add_parser", "keep_and_say", "record_or_exit", "run", "take_or_exit", "waiting"]
+__all__ = [
+    "add_parser",
+    "add_rollback_parser",
+    "keep_and_say",
+    "record_or_exit",
+    "run",
+    "run_rollback",
+    "take_or_exit",
+    "waiting",
+]
 
 
 def add_parser(sub) -> None:
@@ -87,6 +114,52 @@ def run(stck, args, volume: Volume | None = None) -> None:
         result = _create(stck, _ids(args.stacklets), volume)
         return _print(result, args.json, _created_lines)
     return _print(_listed(stck), args.json, _list_lines)
+
+
+def add_rollback_parser(sub) -> None:
+    """Add `stack rollback` and its options to `sub`, the CLI's subparsers."""
+    p = sub.add_parser("rollback")
+    p.add_argument("snapshot", nargs="?", default=None,
+                   help="the snapshot to go back to (default: the newest)")
+    p.add_argument("--yes", action="store_true", help="Skip the confirmation")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+
+
+def run_rollback(stck, args, volume: Volume | None = None) -> None:
+    """`stack rollback [<snapshot>]` on the instance `stck`: show the
+    plan, wait for the confirmation, run it. Prints the answer. Exits 1
+    when it refused or a step failed. A declined confirmation changes
+    nothing and exits 0; with `--json` it prints the plan as JSON, and the
+    question goes to stderr. Without a terminal it needs `--yes`. `volume`
+    is the file system of the data folder, `store.ThisVolume` by default.
+
+        $ stack rollback --yes --json
+        {"ok": true, "snapshot": "2026-11-25T2114Z", "version": "0.4.0-rc.1",
+         "replaced": ".../.snapshots/replaced/2026-11-25T2203Z", "started": ["docs"],
+         "newer_files": {"docs": {"paperless/media": 3}}, "tags": [], ...}
+    """
+    try:
+        planned = rollback.plan(stck, args.snapshot)
+    except rollback.RollbackError as error:
+        return _print({"error": str(error), "problems": error.problems}, args.json, None)
+    if not args.json:
+        print("\n".join(_plan_lines(planned)))
+    if not args.yes:
+        if not sys.stdin.isatty():
+            return _print({"error": "Pass --yes to confirm (no terminal to ask in)"},
+                          args.json, None)
+        if not _confirmed(planned, quiet=args.json):
+            return _print({"ok": False, "declined": True, **_planned(planned)}, args.json,
+                          lambda _: [f"  {DIM}Nothing changed.{RESET}", ""])
+    try:
+        done = rollback.run(stck, planned, stop=_stopping(stck),
+                            start=_starting(stck, quiet=args.json), volume=volume)
+    except SnapshotError as error:
+        return _print({"error": str(error), "problems": getattr(error, "problems", [])},
+                      args.json, None)
+    _print({**_planned(planned), "ok": True, "replaced": str(done.replaced),
+            "started": done.started, "cloned": done.cloned, "moved_tags": done.tags},
+           args.json, _rolled_back_lines)
 
 
 # ── The snapshot of a restart ────────────────────────────────────────────
@@ -131,13 +204,23 @@ def take_or_exit(stck, before: Before) -> Taken | None:
 
 def waiting(stck, stacklet_id: str) -> dict | None:
     """The answer of a start refused because the stacklet's last snapshot
-    failed (`stack.snapshot.pending`), with the two ways on. None when
+    failed (`stack.snapshot.pending`), with the two ways on, or because a
+    rollback of it stopped halfway (`stack.snapshot.rollback`). None when
     the stacklet waits for nothing. `stack up` and every restart ask it
     before they start a stacklet.
 
         waiting(stck, "docs")
         # {"error": "docs waits for its snapshot: … stack restart docs …"}
     """
+    held = rollback.holding(stck.data, stacklet_id)
+    if held is not None:
+        try:
+            rollback.read_record(held)
+        except rollback.RollbackError as unreadable:
+            return {"error": str(unreadable), "stacklet": stacklet_id}
+        return {"error": (f"A rollback of {stacklet_id} stopped halfway, so its state may be "
+                          f"half restored ({held}). Finish it with: stack rollback"),
+                "stacklet": stacklet_id}
     if not pending.waiting(stck.instance_dir, stacklet_id):
         return None
     return {"error": (f"{stacklet_id} waits for its snapshot, which failed at the last restart. "
@@ -249,6 +332,105 @@ def _start_again(stck, was_up: list[str]) -> list[str]:
         print(f"\n  {RED}✗{RESET}  These stacklets did not start again: {failed}. "
               f"Start them with: stack up {failed.replace(', ', ' ')}\n", file=sys.stderr)
     return list(started.get("started", []))
+
+
+# ── Rolling back ─────────────────────────────────────────────────────────
+
+def _stopping(stck):
+    """The rollback's stop: `CLI.down_many`, dependents first."""
+    from ..cli import CLI
+
+    return lambda ids: CLI(stck).down_many(ids)
+
+
+def _starting(stck, quiet: bool):
+    """The rollback's start: `stack up <ids>` as a process of its own, from
+    the checkout, which is on the snapshot's commit by then. It runs that
+    release's code, framework included, and not the code this process
+    loaded. Its output goes to the terminal, or to stderr with `--json`
+    (`quiet`). Says whether it exited 0."""
+    def start(ids: list[str]) -> bool:
+        if not ids:
+            return True
+        # The checkout's lib/ first: the wrapper `./stack` sets the same.
+        paths = [str(Path(stck.root) / "lib"), os.environ.get("PYTHONPATH", "")]
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in paths if p)}
+        done = subprocess.run([sys.executable, "-m", "stack", "up", *ids], cwd=stck.root,
+                              env=env, stdout=sys.stderr if quiet else None)
+        return done.returncode == 0
+    return start
+
+
+def _confirmed(planned: rollback.Plan, quiet: bool) -> bool:
+    """Ask the confirmation; on stderr when stdout carries JSON (`quiet`)."""
+    question = "Finish the rollback?" if planned.replaced else "Roll back?"
+    if not quiet:
+        return confirm(question, default=False)
+    with contextlib.redirect_stdout(sys.stderr):
+        return confirm(question, default=False)
+
+
+def _planned(planned: rollback.Plan) -> dict:
+    """The plan, as the answer carries it."""
+    return {"snapshot": planned.snapshot.name, "version": planned.version,
+            "stacklets": list(planned.stacklets), "starts": planned.starts,
+            "newer_files": planned.newer, "others": planned.others,
+            "tags": [{"name": t.name, "image": t.image_id, "now": t.now,
+                      "also_used_by": list(t.also_used_by)} for t in planned.tags],
+            "finishes": planned.replaced.name if planned.replaced else None,
+            "left": planned.left}
+
+
+def _plan_lines(planned: rollback.Plan) -> list[str]:
+    """What a person reads before the confirmation."""
+    if planned.replaced is not None:
+        lines = ["", f"  {ORANGE}⚠{RESET} The rollback of {planned.replaced.name} to "
+                     f"{planned.version} (snapshot {planned.snapshot.name}) stopped halfway.",
+                 f"  This finishes it. Left: {'; '.join(planned.left)}.",
+                 f"  {DIM}The state it replaced: {planned.replaced}{RESET}"]
+    else:
+        local = planned.snapshot.taken.astimezone().strftime("%Y-%m-%d %H:%M")
+        lines = ["", f"  Roll back to {planned.version}, the snapshot {planned.snapshot.name} "
+                     f"({local})",
+                 f"  Replaces {', '.join(planned.stacklets)}. Their changes since then move to "
+                 f"{store.SNAPSHOTS_FOLDER}/{rollback.REPLACED_FOLDER}/,",
+                 "  and the stacklets lose them."]
+    lines += _newer_lines(planned.newer) + _tag_lines(planned.tags)
+    if planned.others:
+        lines.append(f"  {DIM}Not in the snapshot, still running: {', '.join(planned.others)}. "
+                     f"They keep the newer code until they restart.{RESET}")
+    return [*lines, ""]
+
+
+def _newer_lines(newer: dict[str, dict[str, int]]) -> list[str]:
+    """One line for each archive source with files newer than the snapshot."""
+    return [f"  {ORANGE}⚠{RESET} {count} file{'s' if count != 1 else ''} in {sid}/{source} "
+            f"came after the snapshot. {'They stay' if count != 1 else 'It stays'}, "
+            f"and the restored {sid} does not know {'them' if count != 1 else 'it'}."
+            for sid, sources in newer.items() for source, count in sources.items()]
+
+
+def _tag_lines(tags: list) -> list[str]:
+    """One line for each tag the rollback moves back, and one for the
+    stacklets outside the rollback that start it too."""
+    lines = []
+    for tag in tags:
+        lines.append(f"  The tag {tag.name} names the image {tag.image_id[:19]} again.")
+        if tag.also_used_by:
+            lines.append(f"    {ORANGE}⚠{RESET} {', '.join(tag.also_used_by)} start "
+                         f"this tag too, and get that image at the next start.")
+    return lines
+
+
+def _rolled_back_lines(result: dict) -> list[str]:
+    """What a person reads after the rollback."""
+    lines = [f"\n  {GREEN}✓{RESET}  Rolled back to {result['version']} "
+             f"(snapshot {result['snapshot']}): {', '.join(result['stacklets'])}",
+             f"     {DIM}The state it replaced: {result['replaced']}{RESET}"]
+    lines += [f"     {DIM}The tag {name} names the snapshot's image again.{RESET}"
+              for name in result["moved_tags"]]
+    lines += _newer_lines(result["newer_files"])
+    return [*lines, ""]
 
 
 # ── Listing ──────────────────────────────────────────────────────────────

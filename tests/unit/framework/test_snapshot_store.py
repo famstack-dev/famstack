@@ -32,6 +32,7 @@ from stack.snapshot.store import (
     ThisVolume,
     Snapshot,
     archive_paths,
+    clone_back,
     remove,
     snapshots,
     take,
@@ -269,6 +270,25 @@ def test_a_take_that_stops_halfway_leaves_no_snapshot(mac):
 
     assert snapshots(mac.data) == []
     assert list((mac.data / SNAPSHOTS_FOLDER).iterdir()) == []
+
+
+@pytest.mark.parametrize("volume", [None, CopyOnly(free=10**9)], ids=["clones", "copies"])
+def test_a_clone_back_never_writes_over_a_file_that_is_there(mac, volume):
+    """Given a snapshot of docs, and a data folder that still holds the
+    family's database file, when the state is cloned back, on APFS or on
+    a volume that copies, then the call refuses and names the file, and
+    the file keeps its content: a restore never replaces a file, the
+    rollback moves it aside first."""
+    taken = mac.take()
+    target = mac.root / "restored"
+    live = target / "postgres" / "base.dat"
+    live.parent.mkdir(parents=True)
+    live.write_bytes(b"homer's invoices and the parking ticket")
+
+    with pytest.raises(SnapshotError, match="base.dat"):
+        clone_back(taken.snapshot, "docs", target, volume)
+
+    assert live.read_bytes() == b"homer's invoices and the parking ticket"
 
 
 def test_a_folder_without_a_manifest_is_not_listed(mac):

@@ -2,7 +2,7 @@
 
 A snapshot holds the state of stopped stacklets and the stack's
 configuration, as they were before a change. This module takes a
-snapshot, lists the snapshots and removes one. It stops and starts nothing: the caller
+snapshot, lists the snapshots, removes one and clones one back. It stops and starts nothing: the caller
 stops the stacklets first (`stack.snapshot.cli`, later the restart that
 applies a release).
 
@@ -14,6 +14,7 @@ applies a release).
     taken.cloned               # True on APFS, False when the files were copied
     store.snapshots(data_root) # [Snapshot(name="2026-11-24T2114Z", …), …], newest first
     store.remove(snapshot)     # renamed to `.removing-<name>`, then deleted
+    store.clone_back(snapshot, "docs", data_root / "docs")   # the rollback's restore
 
 One snapshot, on disk:
 
@@ -61,6 +62,7 @@ runs.
 from __future__ import annotations
 
 import ctypes
+import errno
 import os
 import re
 import shutil
@@ -83,6 +85,7 @@ __all__ = [
     "ThisVolume",
     "Volume",
     "archive_paths",
+    "clone_back",
     "remove",
     "snapshots",
     "take",
@@ -350,6 +353,38 @@ def remove(snapshot: Snapshot) -> None:
     shutil.rmtree(removing, ignore_errors=True)
 
 
+def clone_back(snapshot: Snapshot, stacklet_id: str, target: Path,
+               volume: Volume | None = None) -> bool:
+    """Clone the state of `stacklet_id` in `snapshot` into `target`, the
+    stacklet's data folder, and return whether the files are clones.
+
+    `target` holds only what the snapshot left out: the rollback moved
+    the rest aside before. Each entry of the snapshot is cloned into
+    `target`. A folder that is there already (the parent of an
+    `[[backup.archive]]` source) is entered, and its other entries stay. A
+    file or a link that is there already is never replaced: the call
+    refuses. The snapshot is only read. Raises `SnapshotError` when the
+    snapshot has no state of the stacklet, a file is there already, or a
+    file cannot be read or written; then `target` may hold part of the
+    state, which the caller moves aside before it calls again.
+
+        clone_back(snapshot, "docs", Path("~/famstack-data/docs"))   # True on APFS
+    """
+    source = Path(snapshot.path) / stacklet_id
+    if not source.is_dir():
+        raise SnapshotError(f"the snapshot {snapshot.name} holds no state of {stacklet_id}")
+    volume = volume or ThisVolume()
+    target = Path(target)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        cloned = volume.can_clone(target)
+        _clone_into(source, target, volume if cloned else None)
+    except OSError as error:
+        raise SnapshotError(f"the state of {stacklet_id} cannot be cloned back from "
+                            f"the snapshot {snapshot.name}: {error}") from error
+    return cloned
+
+
 def archive_paths(stacklet_dir: Path, data_root: Path) -> list[Path]:
     """The `[[backup.archive]]` sources of the stacklet in `stacklet_dir`,
     as paths in its data folder (`<data_root>/<id>/`).
@@ -499,6 +534,36 @@ def _write_part(part: _Part, target: Path, volume: Volume | None) -> None:
             shutil.copy2(source, copy, follow_symlinks=False)
     for source, copy in reversed(folders):
         shutil.copystat(source, copy, follow_symlinks=False)
+
+
+def _clone_into(source: Path, target: Path, volume: Volume | None) -> None:
+    """`clone_back` below `source`: each entry into `target`, folders
+    entered when they are there. A file or a link there already raises
+    `FileExistsError`. Folders get their mode and times last, as in
+    `_write_part`."""
+    for name in sorted(os.listdir(source)):
+        entry, copy = source / name, target / name
+        if entry.is_symlink() or not entry.is_dir():
+            if copy.is_symlink() or copy.exists():
+                # It may be a family's file: a restore never writes over one.
+                raise FileExistsError(errno.EEXIST, "is there already, and a restore "
+                                      "never replaces a file", str(copy))
+            if entry.is_symlink():
+                copy.symlink_to(os.readlink(entry))
+            elif entry.is_file():
+                _clone_file(entry, copy, volume)
+            continue
+        copy.mkdir(exist_ok=True)
+        _clone_into(entry, copy, volume)
+        shutil.copystat(entry, copy, follow_symlinks=False)
+
+
+def _clone_file(source: Path, target: Path, volume: Volume | None) -> None:
+    """Clone `source` as `target` with `volume`, or copy it when None."""
+    if volume is not None:
+        volume.clone(source, target)
+    else:
+        shutil.copy2(source, target, follow_symlinks=False)
 
 
 def _free_name(folder: Path, now: datetime) -> str:

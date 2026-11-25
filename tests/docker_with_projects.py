@@ -38,7 +38,10 @@ The states are the ones `stack list` shows: `running`, `starting`,
     docker ps -a --filter label=com.docker.compose.project=...
                                       the containers set with `runs_image`
     docker container inspect | image inspect
-                                      what `runs_image` set
+                                      what `runs_image` set; an image by its
+                                      id or by a tag `tags` or `image tag` set
+    docker image tag <id> <name>      `name` names that image from now on;
+                                      exit 1 after `fail("tag", ...)`
     docker inspect | exec | logs ...  "No such container", exit 1
 
 Anything else exits non-zero and says so, as `docker_with_no_containers`
@@ -105,6 +108,26 @@ class Docker:
         images = {**state.get("images", {}), image_id: {"Id": image_id, "RepoDigests": [digest]}}
         self._write(containers_of=containers, images=images)
 
+    def tags(self, **by_name: str) -> None:
+        """Say which image id each tag names, as a pull or a build leaves
+        it: `tags(**{"ghcr.io/paperless-ngx/paperless-ngx:2.20.1": "sha256:…"})`.
+        The image is added to the images the Mac holds."""
+        state = self._read()
+        images = {**state.get("images", {}),
+                  **{image_id: {"Id": image_id, "RepoDigests": []} for image_id in by_name.values()
+                     if image_id not in state.get("images", {})}}
+        self._write(tags={**state.get("tags", {}), **by_name}, images=images)
+
+    def tagged(self, name: str) -> str | None:
+        """The image id that the tag `name` names now, or None."""
+        return self._read().get("tags", {}).get(name)
+
+    def drops_image(self, image_id: str) -> None:
+        """Remove the image `image_id` from the Mac, as `docker image rm` does."""
+        state = self._read()
+        images = {key: value for key, value in state.get("images", {}).items() if key != image_id}
+        self._write(images=images)
+
     def follows_compose(self, follows: bool = True) -> None:
         """Make `compose up` start the stacklet of its compose file and
         `compose stop` or `down` stop it, as a real daemon does. Without
@@ -128,9 +151,15 @@ class Docker:
         """The commands run in containers, as `[container, *command]`, oldest first."""
         return [argv[1:] for argv in self.commands() if argv[:1] == ["exec"]]
 
-    def fail(self, step: str, message: str) -> None:
-        """Make every `docker compose <step>` exit 1 with `message` on stderr."""
-        self._write(fail={**self._read()["fail"], step: message})
+    def fail(self, step: str, message: str, stacklet: str | None = None) -> None:
+        """Make every `docker compose <step>` exit 1 with `message` on
+        stderr, or only those of `stacklet`. `fail("tag", …)` makes every
+        `docker image tag` fail. An empty `message` ends the failure."""
+        if stacklet is None:
+            self._write(fail={**self._read()["fail"], step: message})
+            return
+        fails = self._read().get("fail_of", {})
+        self._write(fail_of={**fails, stacklet: {**fails.get(stacklet, {}), step: message}})
 
     def commands(self) -> list[list[str]]:
         """Every command Docker got, oldest first, without the word `docker`."""
