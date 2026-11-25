@@ -21,7 +21,9 @@ The states are the ones `stack list` shows: `running`, `starting`,
 
     docker compose ls ...             one row per stacklet set
     docker compose up|pull|down ...   exit 0, or the failure set with `fail`;
-                                      `up` creates the services it names, or all
+                                      `up` creates the services it names, or all;
+                                      after `follows_compose`, `up` starts the
+                                      stacklet and `stop` or `down` stops it
     docker compose config             each service's resolved environment
     docker inspect --format {{range .Config.Env}}...
                                       the environment `up` created it with
@@ -31,7 +33,15 @@ The states are the ones `stack list` shows: `running`, `starting`,
     docker info                       exit 0, or 1 after `daemon_down`
     docker context ls --format json   one context, orbstack
     docker network inspect|create     exit 0
-    docker ps ...                     the commits set with `commits`
+    docker ps ...                     the commits set with `commits`, of a
+                                      stopped stacklet only with -a
+    docker ps -a --filter label=com.docker.compose.project=...
+                                      the containers set with `runs_image`
+    docker container inspect | image inspect
+                                      what `runs_image` set; an image by its
+                                      id or by a tag `tags` or `image tag` set
+    docker image tag <id> <name>      `name` names that image from now on;
+                                      exit 1 after `fail("tag", ...)`
     docker inspect | exec | logs ...  "No such container", exit 1
 
 Anything else exits non-zero and says so, as `docker_with_no_containers`
@@ -85,6 +95,51 @@ class Docker:
         """Say which commit each stacklet's containers were started from."""
         self._write(commits=by_stacklet)
 
+    def runs_image(self, stacklet: str, service: str, image: str, image_id: str,
+                   digest: str) -> None:
+        """Give `stacklet` a container of `service`, created from `image`
+        (`image_id`, with the registry `digest`), which `ps -a`,
+        `container inspect` and `image inspect` then answer."""
+        state = self._read()
+        containers = state.get("containers_of", {})
+        containers[stacklet] = [*containers.get(stacklet, []),
+                                {"service": service, "name": f"stack-{stacklet}-{service}",
+                                 "image": image, "id": image_id}]
+        images = {**state.get("images", {}), image_id: {"Id": image_id, "RepoDigests": [digest]}}
+        self._write(containers_of=containers, images=images)
+
+    def tags(self, **by_name: str) -> None:
+        """Say which image id each tag names, as a pull or a build leaves
+        it: `tags(**{"ghcr.io/paperless-ngx/paperless-ngx:2.20.1": "sha256:…"})`.
+        The image is added to the images the Mac holds."""
+        state = self._read()
+        images = {**state.get("images", {}),
+                  **{image_id: {"Id": image_id, "RepoDigests": []} for image_id in by_name.values()
+                     if image_id not in state.get("images", {})}}
+        self._write(tags={**state.get("tags", {}), **by_name}, images=images)
+
+    def tagged(self, name: str) -> str | None:
+        """The image id that the tag `name` names now, or None."""
+        return self._read().get("tags", {}).get(name)
+
+    def drops_image(self, image_id: str) -> None:
+        """Remove the image `image_id` from the Mac, as `docker image rm` does."""
+        state = self._read()
+        images = {key: value for key, value in state.get("images", {}).items() if key != image_id}
+        self._write(images=images)
+
+    def follows_compose(self, follows: bool = True) -> None:
+        """Make `compose up` start the stacklet of its compose file, with
+        the commit it started from (`STACK_COMMIT`), and `compose stop` or
+        `down` stop it, as a real daemon does. Without
+        it, or with `follows=False`, the states stay as the test set them:
+        a stop that exits 0 and leaves a container up."""
+        self._write(follows_compose=follows)
+
+    def state_of(self, stacklet: str) -> str | None:
+        """The state of `stacklet` now: one of `running`'s states, or None."""
+        return self._read()["projects"].get(stacklet)
+
     def daemon_down(self) -> None:
         """Make `docker info` fail, as with the runtime installed and not started."""
         self._write(daemon="down")
@@ -97,9 +152,15 @@ class Docker:
         """The commands run in containers, as `[container, *command]`, oldest first."""
         return [argv[1:] for argv in self.commands() if argv[:1] == ["exec"]]
 
-    def fail(self, step: str, message: str) -> None:
-        """Make every `docker compose <step>` exit 1 with `message` on stderr."""
-        self._write(fail={**self._read()["fail"], step: message})
+    def fail(self, step: str, message: str, stacklet: str | None = None) -> None:
+        """Make every `docker compose <step>` exit 1 with `message` on
+        stderr, or only those of `stacklet`. `fail("tag", …)` makes every
+        `docker image tag` fail. An empty `message` ends the failure."""
+        if stacklet is None:
+            self._write(fail={**self._read()["fail"], step: message})
+            return
+        fails = self._read().get("fail_of", {})
+        self._write(fail_of={**fails, stacklet: {**fails.get(stacklet, {}), step: message}})
 
     def commands(self) -> list[list[str]]:
         """Every command Docker got, oldest first, without the word `docker`."""

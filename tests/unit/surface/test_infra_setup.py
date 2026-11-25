@@ -49,6 +49,7 @@ def test_the_first_setup_shows_the_network_warning_and_needs_a_yes(infra):
     assert form["schema"]["required"] == ["understood"]
 
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 def test_without_the_yes_up_names_the_form_and_installs_nothing(infra):
     ran = infra("up", "infra")
 

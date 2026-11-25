@@ -1567,11 +1567,11 @@ Run `stack up backup`. You need an APFS-formatted external drive plugged in. The
 | Immich photo originals | `/Volumes/<disk>/data/photos/library/` |
 | Paperless archived PDFs | `/Volumes/<disk>/data/docs/media/` |
 | Matrix uploads: voice messages, photos, files | `/Volumes/<disk>/data/messages/media/` |
-| Matrix timeline, as dated snapshots | `/Volumes/<disk>/data/messages/synapse/` |
+| Matrix timeline, as dated database dumps | `/Volumes/<disk>/data/messages/synapse/` |
 | Family memory: cards, diary, lists, as dated git bundles | `/Volumes/<disk>/data/memory/vault/` |
 | Files behind memory pages | `/Volumes/<disk>/data/memory/media/` |
 
-Immich's and Paperless's Postgres databases are still not covered. You get those files back but lose albums, tags, custom fields and saved views. They use the same snapshot mechanism the chat server already uses, so wiring them up is a small change rather than a new design.
+Immich's and Paperless's Postgres databases are still not covered. You get those files back but lose albums, tags, custom fields and saved views. They use the same database dumps the chat server already uses, so wiring them up is a small change rather than a new design.
 
 **Disks from an earlier release**
 
@@ -1585,7 +1585,7 @@ A second check watches the sources themselves. Before each run the engine compar
 
 A **canary file** is a tripwire (named after the canary miners used to take underground to detect bad air). famstack plants a small file with known contents inside `~/famstack-data`; before every sync the engine reads it and refuses to proceed if the contents have changed. If something has been encrypting or modifying files under the data directory, the canary will not match what was planted and the sync aborts before opening the archive, so the corrupted state cannot propagate.
 
-**Database snapshots**
+**Database dumps**
 
 Files that never change are easy: rsync copies them and the kernel locks them. A database is the opposite. Its files change under you continuously, and a copy taken mid-write will not restore. So databases are dumped instead.
 
@@ -1593,7 +1593,7 @@ Before each sync the backup stacklet runs `pg_dump` against every database that 
 
 The chat server is the first thing wired up, and it is the one that matters most. The media store holds your family's actual voice recordings; the database is what makes them messages. Without it you would restore a folder of anonymous audio blobs with no sender, no room and no date.
 
-A Synapse snapshot is around 200 KB and contains:
+A Synapse dump is around 200 KB and contains:
 
 | File | Why |
 |---|---|
@@ -1602,7 +1602,7 @@ A Synapse snapshot is around 200 KB and contains:
 | `*.signing.key` | The server's identity |
 | `MANIFEST.json` | What this file is, what produced it, and how to put it back |
 
-The manifest also records the exact image versions and digests that were running when the snapshot was taken. A dump only restores into something compatible with what wrote it, and the failure is not subtle: a Paperless 3.x database will not boot under 2.x, and there is no downgrade. The digest matters more than the tag, because `latest` names a different image every month and nothing identifiable in five years. Nothing reads this yet. It is recorded now because it is the one part of a snapshot that cannot be added afterwards.
+The manifest also records the exact image versions and digests that were running when the dump was taken. A dump only restores into something compatible with what wrote it, and the failure is not subtle: a Paperless 3.x database will not boot under 2.x, and there is no downgrade. The digest matters more than the tag, because `latest` names a different image every month and nothing identifiable in five years. Nothing reads this yet. It is recorded now because it is the one part of a dump that cannot be added afterwards.
 
 Those config files carry live secrets, including the database password. That is deliberate, because a dump without them restores a server nobody can log into, and it is one more reason the archive disk is a physical object you keep somewhere safe.
 
@@ -1610,16 +1610,16 @@ The last seven tarballs are kept on the internal disk; the archive disk keeps ev
 
 **The family memory**
 
-The family memory is a git repository. The memory curator keeps a clone of it on this Mac and pushes to Forgejo. The backup takes a snapshot of the clone each night, because both copies are on the internal disk. The snapshot holds a git bundle of the whole history, including changes that wait for Forgejo because Forgejo was down.
+The family memory is a git repository. The memory curator keeps a clone of it on this Mac and pushes to Forgejo. The backup writes a dump of the clone each night, because both copies are on the internal disk. The dump holds a git bundle of the whole history, including changes that wait for Forgejo because Forgejo was down.
 
-A night with no new change writes no new snapshot, and the sync output says the memory is unchanged. Restore is manual. Unpack the newest tarball and run `git clone vault.bundle vault`. `MANIFEST.json` holds the same command, and its `refs` show what each remote had when the snapshot was taken. Point the clone's `origin` at Forgejo before you push, because after the clone it is the bundle file.
+A night with no new change writes no new dump, and the sync output says the memory is unchanged. Restore is manual. Unpack the newest tarball and run `git clone vault.bundle vault`. `MANIFEST.json` holds the same command, and its `refs` show what each remote had when the dump was taken. Point the clone's `origin` at Forgejo before you push, because after the clone it is the bundle file.
 
 **Restoring the chat server**
 
-Recover the snapshot and the media together, and do the database first. Media the database does not know about is harmless; a message whose recording is missing is broken.
+Recover the dump and the media together, and do the database first. Media the database does not know about is harmless; a message whose recording is missing is broken.
 
 ```bash
-# 1. Take the snapshot off the archive disk and unpack it
+# 1. Take the dump off the archive disk and unpack it
 sudo chflags nouchg /Volumes/<disk>/data/messages/synapse/synapse-<date>.tar.gz
 cp /Volumes/<disk>/data/messages/synapse/synapse-<date>.tar.gz ~/
 tar xzf ~/synapse-<date>.tar.gz -C ~/restore/
@@ -1748,6 +1748,22 @@ once it knows, the move it is proposing:
 
 A stacklet is named only if the release changed files inside it and it is running, so a documentation release asks for nothing. If the release changed anything under `lib/`, every running stacklet is named, because that is the code they all share.
 
+The restart that applies a release takes a [snapshot](#snapshots-and-rollback) of each stacklet first. If the release
+breaks a page, `./stack rollback` goes back to it.
+
+Apply a release with `./stack restart`, not with `./stack up`. `./stack up <id>` refuses a running stacklet on a
+different release than the checkout, because it would take no snapshot.
+
+> ⚠️ **Run `./stack update` while the stacklets run, then `./stack restart`.** A stacklet that is stopped at the update
+> gets no snapshot. `./stack up <id>` starts it on the new release, and a rollback cannot take it back. To update a
+> stopped stacklet, take a snapshot first, before `./stack update`:
+>
+> ```bash
+> ./stack snapshot create docs
+> ```
+>
+> The stacklet stays stopped after the snapshot.
+
 Run `./stack restart` before you start other stacklets. Until then, `./stack up <id>` does not recreate core. The reason is that core's new containers can need a port that an old container still holds. It prints this line instead:
 
 ```
@@ -1757,6 +1773,15 @@ Run `./stack restart` before you start other stacklets. Until then, `./stack up 
 ### Updating by hand
 
 `stack update` ships in v0.4.0-rc.1. Moving *to* that release, or moving between older ones, is the same steps typed out:
+
+Take a snapshot of each stacklet first, because the steps below take none. A stacklet that you stop before the update
+gets none either:
+
+```bash
+./stack snapshot create docs photos
+```
+
+Then move the checkout:
 
 ```bash
 cd ~/famstack
@@ -1881,11 +1906,289 @@ git fetch --tags && git checkout v0.3.0-beta.3
 ./stack up docs
 ```
 
-The backup stacklet does not cover this yet. It archives Paperless's files but not its Postgres database, so a `stack backup sync` alone will not get you back to 2.x. (Database snapshots exist and are wired up for the chat server; Paperless is next.)
+The backup stacklet does not cover this yet. It archives Paperless's files but not its Postgres database, so a `stack backup sync` alone will not get you back to 2.x. (Database dumps exist and are wired up for the chat server; Paperless is next.)
 
 **If Watchtower already moved you to 3.x.** Older famstack releases tracked the `:latest` Paperless tag, and Watchtower's nightly pull rolled some instances from 2.x straight to 3.0 without asking. If that happened to you, your database is already migrated and pinning the image back to 2.20.15 will not start. You need a backup taken before the 3.x boot. Without one, staying on 3.x is the only option, which this release makes the supported path. Paperless is now pinned to an exact tag, so Watchtower can still deliver 3.0.x patches but can no longer jump a major version on its own.
 
 **One behaviour change worth knowing.** 3.0 stopped rejecting a re-uploaded identical file by default and would have filed a second copy instead. famstack sets `PAPERLESS_CONSUMER_DELETE_DUPLICATES` to keep the old behaviour: send the same receipt twice and the archivist replies "already filed", with a link to the document you sent the first time.
+
+---
+
+## Snapshots and rollback
+
+### What is a snapshot?
+
+A **snapshot** is a copy of the state of one or more stacklets on the Mac, taken before a change. It holds each
+stacklet's data folder, the stack's configuration (`stack.toml`, `users.toml`, `.stack/`) and a record of the release
+and the images that ran. It is the way back after an update that broke a page.
+
+A snapshot is not a backup. It does not survive the loss of the Mac, because it stays on the same disk as the data.
+For backups, see [Backups](#backups).
+
+### Where are snapshots kept?
+
+The snapshots are in `~/famstack-data/.snapshots/`. Each snapshot is one folder, named for its time in UTC:
+
+```
+~/famstack-data/.snapshots/
+├── 2026-11-24T2114Z/        a snapshot
+│   ├── MANIFEST.json        the release, the commit and the images that ran
+│   ├── stack/               stack.toml, users.toml, .stack/
+│   └── docs/                the data folder of docs, without its large files
+└── replaced/
+    └── 2026-11-25T2203Z/    the state that a rollback replaced
+```
+
+The stack takes a snapshot while the stacklets are stopped, because a database that writes during the copy gives a
+broken copy. On APFS each file is a clone. A clone takes no space until the live file changes. On other file systems
+the stack copies the files, and refuses when the disk has too little free space.
+
+The take adds seconds to minutes to the time that the stacklet is down. The time grows with the number of files. On a
+disk without APFS the take is a copy of each file, and the stacklet stays down while the copy runs.
+
+A snapshot does not hold the large files that a stacklet declares for the backup: the photo library and the document
+originals. A rollback does not replace them.
+
+Time Machine skips `.snapshots/`, because the folder holds clones of data that Time Machine already backs up.
+
+### When does the stack take a snapshot?
+
+The stack takes a snapshot in two cases:
+
+- **At the restart that applies a release.** After `./stack update`, `./stack restart` takes a snapshot of each
+  stacklet that starts on the new release. The restart stops the stacklets anyway, and the take adds its time to
+  that stop. The newest 3 snapshots stay. The restart removes older ones.
+- **When you ask for one.** To take a snapshot before a change of your own, run:
+
+```bash
+./stack snapshot create docs
+```
+
+The stack stops `docs`, takes the snapshot and starts `docs` again. A stacklet that was stopped stays stopped.
+
+The stack takes no snapshot in these cases:
+
+- **A stacklet that is stopped at the update.** See [Updating](#updating).
+- **The nightly image updates of Watchtower.** Watchtower changes the images of the services, not the release of the
+  stack. A rollback goes back to the images of the snapshot, but no snapshot holds the state from before a nightly
+  image update.
+
+When the snapshot of a restart fails, the stacklet does not start on the new release. `./stack up` refuses it. To take
+the snapshot again, run `./stack restart <id>`. To start without a snapshot, run `./stack restart <id> --no-snapshot`.
+
+### When does `./stack up` refuse a stacklet?
+
+`./stack up <id>` refuses a start that loses the way back to a snapshot. It changes nothing and names the command to
+run:
+
+| The stacklet | What to run |
+|---|---|
+| It runs a different release than the checkout, for example after `./stack update` | `./stack restart <id>`, which takes the snapshot first. To skip the snapshot, add `--no-snapshot`. |
+| Its snapshot failed at the last restart | `./stack restart <id>`, or `./stack restart <id> --no-snapshot` |
+| A rollback of it stopped halfway | `./stack rollback` |
+
+For a running stacklet after an update, the answer looks like this:
+
+```
+  ✗  docs runs a different release than the checkout. A start would apply the checkout's release without a snapshot. Apply it with: stack restart docs, which takes a snapshot first. Or without one: stack restart docs --no-snapshot
+```
+
+`./stack snapshot create <id>` refuses the last two cases with the same text. Their state is not whole, and the next
+rollback would go to the newest snapshot.
+
+### How to see the snapshots
+
+To list the snapshots, run:
+
+```bash
+./stack snapshot list
+```
+
+The list shows the snapshots, newest first, with their time, stacklets and release. Then it shows the states that a
+rollback replaced, and the folders that a stop halfway left:
+
+```
+  2026-11-25T2114Z  2026-11-25 22:14  docs, photos  0.4.0-rc.1
+
+  Replaced by a rollback:
+  replaced/2026-11-25T2203Z  docs, photos  from 2026-11-25T2114Z
+
+  Not whole (a stop halfway left them):
+  .taking-2026-11-25T0100Z
+  stack snapshot remove <name> deletes one.
+```
+
+A folder that is **not whole** is a snapshot or a remove that a power loss or a crash stopped halfway. Its name starts
+with `.taking-` for a snapshot and with `.removing-` for a remove. A rollback never goes to it.
+
+### How to go back to the snapshot before an update
+
+To go back to the newest snapshot, run:
+
+```bash
+./stack rollback
+```
+
+The stack shows what it replaces and waits for your confirmation:
+
+```
+  Roll back to 0.4.0-rc.1, the snapshot 2026-11-25T2114Z (2026-11-25 22:14)
+  Replaces docs, photos. Their changes since then move to .snapshots/replaced/,
+  and the stacklets lose them.
+  ? Roll back? [y/N]
+```
+
+While the stack waits for your answer, it holds the stacklets of the snapshot. Another command for them refuses
+until you answer. A remove of a snapshot refuses too, because the rollback can restore it.
+
+The rollback does these steps:
+
+1. It stops the stacklets of the snapshot.
+2. It moves the current state of each stacklet to `.snapshots/replaced/<time>/`.
+3. It clones the snapshot's state back into the data folders.
+4. It checks out the commit of the snapshot's release.
+5. It starts the stacklets on the images that they ran before the update.
+
+The checkout comes after the restore. Until each state is back, the code of the current release stays on disk. Thus
+`./stack rollback` is there to finish a rollback that stopped.
+
+To go back to an older snapshot, name it: `./stack rollback 2026-11-01T0900Z`. To skip the question in a script, add
+`--yes`.
+
+The rollback does not restore the configuration. A password, a paired phone or a person added since the snapshot
+stays.
+
+A host stacklet, such as `ai`, gets its data folder back. Its Homebrew packages and its LaunchAgents stay as they are,
+because they are outside the data folder.
+
+After a rollback, the checkout is on the old release. Thus `./stack update` offers the release that you left again.
+Do not take it until a newer release fixes the fault.
+
+Files that came in after the snapshot, such as a new scan, stay too. The restored database does not know them. The
+plan and the end of the rollback name the data folder and each file by its path under it, newest first. They name the
+first 20 and then how many more. `--json` gives every path in `newer_files`, and the folder in `data_folder`.
+
+A rollback does not restore a file in an archive folder that was renamed or deleted after the snapshot. An archive
+folder is a folder of large files that the snapshot leaves out, for example `paperless/media` of `docs`. Paperless
+renames the file of a document when you change its title or its correspondent. After the rollback, the restored
+database names the old file name. The download of that document then fails. The plan does not name such a file,
+because the rename does not change its time.
+
+To find the documents with a missing file, run:
+
+```bash
+docker exec stack-docs-paperless document_sanity_checker
+```
+
+It lists each document whose original file is missing. The renamed file is in
+`~/famstack-data/docs/paperless/media/`, under its new name. A deleted document comes back without its file.
+
+The rollback refuses before it stops anything in these cases:
+
+| Case | What to do |
+|---|---|
+| The checkout has local edits | Commit or stash them, then run `./stack rollback` again. |
+| The Mac no longer holds an image of the snapshot | The message names the image. Pull it, or go back to another snapshot. |
+| The snapshot's manifest cannot be read | Name another snapshot: `./stack rollback <name>`. |
+| The snapshot was removed after the plan | Run `./stack snapshot list`, then roll back to another snapshot. |
+
+### What if a rollback stopped halfway?
+
+**Run `./stack rollback` again.** The rollback writes each step that it did into `ROLLBACK.json` in its replaced
+folder. The next run finishes from there, and never moves a state aside twice.
+
+What you find depends on where the rollback stopped:
+
+| Where it stopped | What is on disk | What to do |
+|---|---|---|
+| Before the checkout | The current release's code. A state may be half restored. | Run `./stack rollback`. |
+| At the checkout, because git refused it | The current release's code. Each state is back. | Fix the cause that the message names, for example a git lock. Then run `./stack rollback`. |
+| Inside the checkout, for example at a power loss | Git names the current release, but it wrote the files of the snapshot's release. It left the lock `.git/HEAD.lock`. Each state is back. | See [After a stop inside the checkout](#after-a-stop-inside-the-checkout). |
+| After the checkout | The code of the snapshot's release. Each state is back. | Run `./stack rollback`, if that release has it. If it does not have it, run `./stack up <id>` for each stacklet. |
+| After the start began (the record says "starting"), and then the checkout moved to another release (for example with `./stack update`) | The code of the other release. Each state is back. | Go back to the snapshot's release with the command that the message names, for example `./stack update v0.4.0-rc.1`. Then run `./stack rollback`. |
+
+Until `./stack rollback` ends the run, `./stack up` refuses its stacklets. This is true for each release that has
+`./stack rollback`. The message tells what is true of the state. Before its restore ends, the state may be half
+restored. After it, the state is whole, and only the checkout and the start wait. The new release's code must not
+start on the old state.
+
+After the start began (the record says "starting"), `./stack rollback` and `./stack up` also refuse the stacklets
+while the checkout is on another commit than the snapshot's. They name the snapshot's release and the command that
+goes back to it. Another release can migrate the restored state, and that migration cannot be undone. No snapshot
+holds the restored state. When the snapshot is gone, the message names the way out: on the snapshot's release,
+rename the record and start the stacklets.
+
+A release without `./stack rollback` does not know the record, and its `./stack up` starts the stacklets. The start is
+safe, because each state is whole before the checkout moves. The record stays open until a release with `./stack
+rollback` runs it once. Until then, the stack keeps its snapshot and its replaced state.
+
+When the snapshot's release has no `./stack rollback`, no release can end the record. On such a release,
+`./stack help` lists no `rollback`. On that release, rename `ROLLBACK.json` to `ROLLBACK.json.ended` in
+`~/famstack-data/.snapshots/replaced/<time>/`. Then run `./stack up` for each stacklet.
+
+#### After a stop inside the checkout
+
+Some or all files on disk are of the snapshot's release. Thus `./stack` runs a mix of two releases, or the code of
+the snapshot's release:
+
+- When that code has `./stack rollback`, the command refuses with "local edits". The edits are the files that git
+  wrote before it stopped. The rollback refused your own edits before it began.
+- When that code does not have `./stack rollback`, the command is unknown or fails.
+
+In both cases, do these steps:
+
+1. Run `rm -f .git/HEAD.lock .git/index.lock`. It removes the locks that git left, and does nothing for a lock that
+   is not there.
+2. Run `git checkout --force HEAD`. It puts back the files of the release that `HEAD` names.
+3. Run `./stack rollback`. It finishes the rollback.
+
+`git checkout --force` deletes no edit of yours, because the rollback refused local edits before it began.
+
+Git can stop before it records the files of the snapshot's release. Then these files stay on disk after step 2, and
+git does not track them. Step 3 removes each of these files, because the checkout writes the same file again. It
+keeps each other file that git does not track, for example a note of yours. It never removes an ignored file, such as
+`.env`.
+
+Step 3 keeps a file that is not exactly the same as the file of the snapshot's release. An example is a file that a
+power loss cut in the middle. Git then refuses the checkout and names the file. Remove that file and run step 3
+again.
+
+### How to remove a snapshot or a replaced state
+
+A clone takes space as soon as the live data changes. Only you know when a snapshot or a replaced state is no longer
+needed. To remove one, run `./stack snapshot remove` with its name from the list:
+
+```bash
+./stack snapshot remove 2026-11-24T2114Z
+./stack snapshot remove replaced/2026-11-25T2203Z
+./stack snapshot remove .taking-2026-11-25T0100Z
+```
+
+The stack shows what it deletes and waits for your confirmation:
+
+```
+  Remove the snapshot 2026-11-24T2114Z: 0.4.0-rc.1, docs, photos, 1.2 MB
+  ? Remove it? [y/N]
+```
+
+For a replaced state, the stack also says that it is the only copy of the state from before the rollback.
+
+While the stack waits for your answer, it holds the stacklets of the snapshot. Another command for them refuses
+until you answer. A rollback refuses too, because it can need the snapshot that you remove.
+
+The size is the sum of the file sizes. On APFS the space that comes free can be less, because a clone shares its
+blocks with the live file until one of them changes. To skip the question in a script, add `--yes`.
+
+The remove refuses in these cases, and deletes nothing:
+
+| Case | Why |
+|---|---|
+| The name is not in the list (`..`, a path, a stacklet's folder) | The remove deletes only in `.snapshots/`. |
+| A rollback that has not ended needs the snapshot or the replaced state | Finish the rollback first: `./stack rollback`. |
+| A snapshot or a replaced state, while a rollback runs or waits at its question | The rollback can restore it. Try again when the rollback ended. |
+| A folder that is not whole, while a command of the stack runs | A snapshot can be writing it. Try again when the command ended. |
+
+A snapshot whose manifest cannot be read can be removed, because you named it.
 
 ---
 

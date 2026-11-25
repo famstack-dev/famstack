@@ -327,6 +327,7 @@ def _last_result(checkout: Path, sid: str) -> dict:
     return [json.loads(line) for line in log.read_text().splitlines()][-1]["data"]
 
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 @pytest.mark.parametrize("argv", [["up", "all"], ["up", "engine", "other"],
                                   ["restart", "all"], ["restart", "engine", "other"]],
                          ids=["up all", "up two", "restart all", "restart two"])
@@ -351,6 +352,7 @@ def test_one_failed_preparation_leaves_the_others_to_start(checkout, capfd, monk
     assert not any("engine" in str(call) for call in stops.call_args_list)
 
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 @pytest.mark.parametrize("argv", [["up", "all"], ["up", "engine", "other"],
                                   ["restart", "all"], ["restart", "engine", "other"]],
                          ids=["up all", "up two", "restart all", "restart two"])

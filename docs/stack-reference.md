@@ -704,7 +704,15 @@ genuinely append-only (photo originals, archived PDFs), this is the
 right section. (Storage-industry vocabulary calls this WORM — Write
 Once Read Many.)
 
+The stack's [snapshots](admin-guide.md#snapshots-and-rollback) read
+`[[backup.archive]]` too. A snapshot leaves these paths out, because a
+copy of the photo library or the document originals can fill the disk.
+A rollback never replaces them. Declare only append-only folders here,
+because a folder that changes and is declared here gets no snapshot.
+
 **`[[backup.snapshot]]`** declares mutable state that cannot be rsynced.
+This page calls what it makes a **dump**. A snapshot is the stack's copy
+of a stacklet's state before a change, which is a different thing.
 A database changes under you continuously and a copy taken mid-write will
 not restore, so it is dumped instead: one `pg_dump` per run, packed with
 whatever small files must travel beside it, into a dated `.tar.gz`. Each
@@ -724,15 +732,16 @@ include  = ["{data_dir}/messages/synapse/homeserver.yaml",
 |---|---|
 | `name` | Short slug, as for an archive. Becomes the source id (`messages/synapse`). |
 | `postgres` | How to capture the state, namespaced by what captures it. `container` is where the database runs (the dump goes through `docker exec`), `database` and `user` are what to dump and as whom. |
-| `git` | The other capture: `repo` is a git repository on the host (`{data_dir}` is rendered). The snapshot holds `<name>.bundle`, made with `git bundle create --all`, and the restore command is `git clone <name>.bundle <name>`. An entry sets `postgres` or `git`, never both. |
-| `include` | Files that must travel with the dump for a restore to be possible. Globs allowed; a path this install never created is skipped rather than failing the snapshot. |
+| `git` | The other capture: `repo` is a git repository on the host (`{data_dir}` is rendered). The dump holds `<name>.bundle`, made with `git bundle create --all`, and the restore command is `git clone <name>.bundle <name>`. An entry sets `postgres` or `git`, never both. |
+| `include` | Files that must travel with the dump for a restore to be possible. Globs are allowed. A path that this install never created is skipped, and the dump does not fail. |
 
-The capture key is namespaced so a stacklet keeping state somewhere other
-than Postgres can declare a snapshot without the contract having to
-pretend every database looks like this one. Driving a containerised
-Postgres lives in `stack.postgres`, shared with whatever eventually
-restores one, rather than inside the backup coordinator where only it
-could reach it.
+The capture key is namespaced, because a stacklet can keep its state
+somewhere other than Postgres. Such a stacklet declares a dump with its
+own key, and the contract does not have to treat every database as
+Postgres.
+`stack.postgres` drives a containerised Postgres. That code is not in
+the backup coordinator, because the code that restores a database needs
+it too.
 
 The memory stacklet declares the second kind, for the curator's clone of
 the family memory:
@@ -751,14 +760,15 @@ remote yet is therefore in the backup too. The bundle is made on the
 host and only reads the repository: no fetch, no gc, no lock. The
 manifest records the repository's refs. When the refs are the same as in
 the newest local tarball, the run writes no tarball and reports the
-snapshot as unchanged.
+dump as unchanged.
 
-Snapshots run before the sync, so a dump is never newer than the files it
-references. `pg_dump` takes its own consistent view, so nothing stops and
-nobody is logged out while it runs. The tarball records the image
-versions and digests that produced it; nothing reads that yet, but it is
-the one part of a snapshot that cannot be added afterwards, and a restore
-has to be able to refuse an incompatible target.
+Dumps run before the sync, because a dump must never be newer than the
+files it references. Nothing stops and nobody is logged out while
+`pg_dump` runs, because it takes its own consistent view. The tarball
+records the image versions and digests that produced it. Nothing reads
+them yet. They are recorded now, because they cannot be added to a dump
+afterwards. A restore must be able to refuse a target that does not
+match.
 
 A stacklet may declare zero, one, or several entries of each kind. Sources
 flow to every configured target whose engine supports the declared
@@ -943,29 +953,42 @@ repeatedly. Every run refreshes config so changes in stack.toml take
 effect.
 
 ```
- 1. Check requires: start a requirement that is not set up and asks
+ 1. Refuse a start that loses the way back to a snapshot
+    (`stack.snapshot.guard`), before any setup question,
+    preparation or download:
+    a running stacklet on another release than the checkout
+    (`stack restart <id>` applies it), one whose last snapshot failed,
+    one a stopped rollback holds
+ 2. Check requires: start a requirement that is not set up and asks
     nothing first (its own steps, inside this run, waiting for another
     run of it); fail for one that asks questions or has `attended_setup`
- 2. Render .env from templates + generate missing secrets
- 3. hooks/on_configure.py (first run only): setup questions, as forms
- 4. hooks/on_prepare.py: long installs and downloads, every run,
+ 3. Render .env from templates + generate missing secrets
+ 4. hooks/on_configure.py (first run only): setup questions, as forms
+ 5. hooks/on_prepare.py: long installs and downloads, every run,
     holding only this stacklet's run lock; the queue of runs is
     entered after it
- 5. hooks/on_install.sh (first run only): create dirs, install deps, build
- 6. Write .env to stacklet directory; a first run renders it again
+ 6. hooks/on_install.sh (first run only): create dirs, install deps, build
+ 7. Write .env to stacklet directory; a first run renders it again
     first, so a secret `on_install` wrote reaches the container
- 7. Bot runner discovers bots (if stacklet has bot/bot.toml)
- 8. hooks/on_start.sh: start native services (host stacklets); without
+ 8. Bot runner discovers bots (if stacklet has bot/bot.toml)
+ 9. hooks/on_start.sh: start native services (host stacklets); without
     a compose file, write `.stack/<id>.up`
- 9. Write the Caddyfile, counting this stacklet as up (domain mode)
-10. Build or pull Docker images
-11. Start containers (docker compose up -d)
-12. Reload Caddy (domain mode)
-13. Wait for health check, with containers or without
-14. hooks/on_install_success.py (first run only): obtain tokens, seed data
-15. hooks/on_start_ready.py: service is healthy, seed data, sync accounts
-16. Show welcome screen with URL, login, hints
+10. Write the Caddyfile, counting this stacklet as up (domain mode)
+11. Build or pull Docker images
+12. Start containers (docker compose up -d)
+13. Reload Caddy (domain mode)
+14. Wait for health check, with containers or without
+15. hooks/on_install_success.py (first run only): obtain tokens, seed data
+16. hooks/on_start_ready.py: service is healthy, seed data, sync accounts
+17. Show welcome screen with URL, login, hints
 ```
+
+**A release is applied by `stack restart`:** step 1 refuses a running
+stacklet on another release than the checkout. The reason is that the
+start would run the release's migrations without a snapshot. The error
+names `stack restart <id>` and `stack restart <id> --no-snapshot`, and the
+Server room gets no notice: nothing started and nothing failed. A stopped
+stacklet starts on the checkout's release as before.
 
 **First run detection:** `.stack/{id}.setup-done` marker. Absent
 means first run. Created after `on_install` completes. Deleted by
