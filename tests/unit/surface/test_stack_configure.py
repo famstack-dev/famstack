@@ -115,6 +115,7 @@ def test_configure_on_a_configured_stacklet_says_what_is_set_and_changes_nothing
 
 # ── stack up ─────────────────────────────────────────────────────────────
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 def test_up_without_the_answer_names_the_form_and_installs_nothing(kettle):
     """Without a terminal, `stack up` stops before installing and says
     what to answer, instead of asking for a terminal."""
@@ -125,6 +126,7 @@ def test_up_without_the_answer_names_the_form_and_installs_nothing(kettle):
     assert not (kettle.instance / "installed").exists()
 
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 def test_up_hands_its_answers_to_the_forms(kettle):
     """The answer reached the form: it was judged, and refused."""
     ran = kettle("up", "kettle", "--answer", "litres=lots", "--answer", f"code={SECRET}")

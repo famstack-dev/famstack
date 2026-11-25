@@ -91,6 +91,14 @@ exit code. Each run also writes its events to the stacklet's run log,
 before it is let go (`stack.run_log`). Design: the install experience's
 "Run lock". Not here: following a run from another surface
 (`stack.live.follow`, which asks `is_held` whether a run is over).
+
+Debt: `_DOING` repeats the actions "rollback" and "snapshot remove",
+which `stack.snapshot.rollback_record.RUN_ACTION` and
+`stack.snapshot.remove_cli.RUN_ACTION` hold, because this module sits
+below the snapshot package and imports none of it. A test in
+`test_snapshot_guards.py` fails when the two disagree. Trigger: a third
+action from outside this module, or an action that a run of the stack
+takes.
 """
 
 from __future__ import annotations
@@ -598,7 +606,8 @@ def _message(stacklet: str, holder: dict) -> str:
 # What the holder's action does to the stacklet, as the message says it.
 _DOING = {"up": "starting", "down": "stopping", "restart": "restarting",
           "destroy": "being removed", "prepare": "being prepared",
-          "uninstall": "being removed", "switch": "switching to another server"}
+          "uninstall": "being removed", "switch": "switching to another server",
+          "rollback": "rolling back", "snapshot remove": "held while a snapshot is removed"}
 
 
 def _clock(started: str) -> str:

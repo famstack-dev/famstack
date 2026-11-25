@@ -739,6 +739,7 @@ the rendered `.env`.
 | `secrets.toml` | Auto-generated credentials (passwords, API tokens). |
 | `*.setup-done` | Marker files. They gate the once-only hooks (`on_install`, `on_install_success`). |
 | `*.up` | A stacklet without containers that is up, and the commit it started from. See [States](stack-reference.md#states). |
+| `snapshot-pending/<id>/MANIFEST.json` | The record of a restart whose snapshot failed. It says what the stacklet ran before the stop. While it is there, `stack up <id>` refuses the stacklet. A whole snapshot, `stack restart <id>` without `--with-snapshot`, `stack destroy <id>` or `stack rollback` deletes it. See [What is in `.snapshots/`?](#what-is-in-snapshots) |
 
 There is no `enabled` file. The state of a stacklet is derived from its Docker containers and the filesystem. See
 [States](stack-reference.md#states).
@@ -748,6 +749,61 @@ then it travels with a backup. See [Migrations](stack-reference.md#migrations).
 
 `stack uninstall` deletes `.stack/`, except `secrets.toml` when the data stays. The secrets hold the passwords of the
 databases in the data folder. See [stack uninstall](stack-reference.md#stack-uninstall).
+
+---
+
+## What is in `.snapshots/`?
+
+`.snapshots/` is in the data folder (`<data_dir>/.snapshots/`). It holds the snapshots of the stacklets' state and the
+state that a rollback replaced. Its name starts with a dot, because a stacklet's id never does. Thus no part of the
+stack reads it as a stacklet's data folder. The stack tells Time Machine to skip it when it makes the folder.
+
+| Entry | What it is | Who writes it | Who deletes it |
+|---|---|---|---|
+| `<time>/` | A snapshot, named for its time in UTC (`2026-11-24T2114Z`, then `-2` in the same minute). | `stack snapshot create`, and `stack restart --with-snapshot` before it applies a release | `stack snapshot remove <time>`, and the restart, which keeps the newest 3 |
+| `<time>/MANIFEST.json` | The record of the snapshot: the release, the commit, and for each stacklet whether it was up, its commit, its migrations and its images. | the snapshot, as its last file | with the snapshot |
+| `<time>/stack/` | `stack.toml`, `users.toml` and `.stack/` at the time of the snapshot. | the snapshot | with the snapshot |
+| `<time>/<id>/` | The stacklet's data folder, without its `[[backup.archive]]` sources. | the snapshot | with the snapshot |
+| `replaced/<time>/` | The state that a rollback moved aside: one entry for each stacklet (`docs`, then `docs.2` on a rerun). | `stack rollback` | `stack snapshot remove replaced/<time>` |
+| `replaced/<time>/ROLLBACK.json` | The record of the rollback: its snapshot, its stacklets and each step that is done. | `stack rollback` | with its folder |
+| `.taking-<time>/` | A snapshot that is still written, or that a stop halfway left. | the snapshot | the snapshot when it fails, or `stack snapshot remove` |
+| `.removing-<time>/` | A folder that a removal renamed and did not finish. | `stack snapshot remove`, the restart | `stack snapshot remove` |
+
+The manifest has this form:
+
+```json
+{
+  "kind": "snapshot", "name": "2026-11-24T2114Z",
+  "version": "0.4.0-rc.1", "commit": "f5834a67", "applies": "0.4.0-rc.2",
+  "stacklets": {
+    "docs": {"up": true, "commit": "f5834a67", "migrations": ["0001_move_tags"],
+             "images": {"stack-docs-redis": {"name": "docker.io/valkey/valkey:8.1-alpine",
+                                             "id": "sha256:8a1d…",
+                                             "digest": "valkey/valkey@sha256:9971…"}}}
+  }
+}
+```
+
+A folder is a snapshot only when it holds `MANIFEST.json`. The snapshot writes the manifest last, and then renames its
+`.taking-` folder. Thus `stack snapshot list` and `stack rollback` never take half a snapshot for a whole one.
+
+`stack snapshot remove` takes only the names that `stack snapshot list` prints. It refuses a path, `..` and a link. It
+refuses the snapshot and the replaced state of a rollback that has not ended, because the next `stack rollback`
+finishes from them. A record that cannot be read keeps every snapshot, because the stack cannot tell which one it
+needs.
+
+A rollback holds the run locks of its stacklets from its question until the checkout is on the snapshot's release,
+with the action `rollback`. Meanwhile `stack snapshot remove` refuses every snapshot and replaced state, because the
+lock does not name the snapshot. After the checkout, the rollback's record keeps its snapshot and its replaced state
+until it ends.
+
+`stack snapshot remove` holds the locks of the entry's stacklets from its plan to its delete. Thus a rollback that
+starts during the remove's question is refused. Under
+its locks, the rollback checks again that its snapshot is whole. It does this before it stops anything.
+
+Every delete in `.snapshots/` goes through one function (`stack.snapshot.store.discard`). It deletes only a folder
+directly in `.snapshots/` or in `replaced/`, with a snapshot's name or a `.taking-` or `.removing-` name. It follows
+no link.
 
 ---
 

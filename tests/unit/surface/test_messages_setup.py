@@ -21,6 +21,7 @@ def test_an_answer_given_as_a_flag_is_written(stack_cli):
     assert 'server_name = "simpson"' in stack_cli.toml()
 
 
+@pytest.mark.usefixtures("docker_with_no_containers")
 def test_without_the_answer_up_names_the_form_and_the_field(stack_cli):
     """Instead of "run this command interactively"."""
     ran = stack_cli("up", "messages")

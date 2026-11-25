@@ -107,6 +107,64 @@ def _create(folder: Path, state: dict, argv: list[str]) -> None:
         log.write(json.dumps([_compose_file(argv).parent.name, sorted(created)]) + "\n")
 
 
+def _follow(folder: Path, state: dict, step: str, argv: list[str]) -> None:
+    """With `follows_compose` set, a `compose up` makes the stacklet of the
+    compose file run, and a `compose stop` or `down` stops it. A `compose
+    up` with `STACK_COMMIT` in its environment stamps that commit, as the
+    `stack.commit` label of a stacklet's compose file does on a real daemon."""
+    stacklet = _compose_file(argv).parent.name
+    if step in ("up", "stop", "down"):
+        state["projects"] = {**state["projects"], stacklet: "running" if step == "up" else "stopped"}
+        if step == "up" and os.environ.get("STACK_COMMIT"):
+            state["commits"] = {**state.get("commits", {}), stacklet: os.environ["STACK_COMMIT"]}
+        (folder / "state.json").write_text(json.dumps(state))
+
+
+# ── Containers and images: what `runs_image` set ────────────────────────
+
+_PROJECT = "com.docker.compose.project"
+
+
+def _ps_rows(state: dict, argv: list[str]) -> str:
+    """`docker ps -a` rows (name, project, state, status) of the containers
+    `runs_image` set, of one stacklet when the filter names its project."""
+    named = next((a.split("=", 2)[2] for a in argv if a.startswith(f"label={_PROJECT}=")), None)
+    rows = []
+    for sid, containers in state.get("containers_of", {}).items():
+        if named not in (None, f"stack-{sid}"):
+            continue
+        up = state["projects"].get(sid, "stopped") != "stopped"
+        for c in containers:
+            rows.append(f"{c['name']}\tstack-{sid}\t{'running' if up else 'exited'}\t"
+                        f"{'Up 1 hour' if up else 'Exited (0) 1 minute ago'}")
+    return "\n".join(rows)
+
+
+def _inspected(state: dict, names: list[str]) -> list[dict]:
+    """`docker container inspect` of the named containers `runs_image` set."""
+    return [{"Name": "/" + c["name"], "Image": c["id"],
+             "Config": {"Image": c["image"], "Labels": {"com.docker.compose.service": c["service"]}}}
+            for containers in state.get("containers_of", {}).values()
+            for c in containers if c["name"] in names]
+
+
+def _tag(folder: Path, state: dict, source: str, name: str) -> int:
+    """`docker image tag <source> <name>`: `name` names the image `source`
+    (an id or a tag) from now on. A source the Mac does not hold fails, as
+    a real daemon's does, and so does every tag after `fail("tag", …)`."""
+    if state["fail"].get("tag"):
+        print(state["fail"]["tag"], file=sys.stderr)
+        return 1
+    images, tags = state.get("images", {}), state.get("tags", {})
+    image_id = source if source in images else tags.get(source)
+    if image_id not in images:
+        print(f"Error response from daemon: No such image: {source}", file=sys.stderr)
+        return 1
+    state["tags"] = {**tags, name: image_id}
+    (folder / "state.json").write_text(json.dumps(state))
+    return 0
+
+
 def _answer(folder: Path, argv: list[str]) -> int:
     """What `docker <argv>` prints and exits with, as a real daemon answers."""
     state = json.loads((folder / "state.json").read_text())
@@ -119,10 +177,25 @@ def _answer(folder: Path, argv: list[str]) -> int:
     if argv[:2] == ["compose", "ls"]:
         print(_compose_ls(state["projects"]))
         return 0
+    if argv[:1] == ["ps"] and any(a.startswith(f"label={_PROJECT}") for a in argv):
+        print(_ps_rows(state, argv))
+        return 0
+    if argv[:2] == ["container", "inspect"]:
+        print(json.dumps(_inspected(state, argv[2:])))
+        return 0
+    if argv[:2] == ["image", "inspect"]:
+        images = state.get("images", {})
+        found = images.get(argv[2]) or images.get(state.get("tags", {}).get(argv[2], ""))
+        print(json.dumps([found] if found else []))
+        return 0 if found else 1
+    if argv[:2] == ["image", "tag"]:
+        return _tag(folder, state, argv[2], argv[3])
     if argv[:1] == ["ps"]:
-        # `container_commits`: one `stack-<id>-<service>` row per stamped stacklet.
+        # `container_commits`: one `stack-<id>-<service>` row per stamped
+        # stacklet. A real `docker ps` lists a stopped container only with -a.
         for sid, commit in state.get("commits", {}).items():
-            print(f"stack-{sid}-main\t{commit}")
+            if "-a" in argv or state["projects"].get(sid) != "stopped":
+                print(f"stack-{sid}-main\t{commit}")
         return 0
     if argv[:1] == ["info"] and state.get("daemon") == "down":
         print("Cannot connect to the Docker daemon", file=sys.stderr)
@@ -140,10 +213,13 @@ def _answer(folder: Path, argv: list[str]) -> int:
         return 0
     step = next((a for a in argv if a in COMPOSE_STEPS), None) if argv[:1] == ["compose"] else None
     if step:
-        message = state["fail"].get(step)
+        stacklet = _compose_file(argv).parent.name
+        message = state.get("fail_of", {}).get(stacklet, {}).get(step) or state["fail"].get(step)
         print(message or "", file=sys.stderr, end="")
         if step == "up" and not message:
             _create(folder, state, argv)
+        if state.get("follows_compose") and not message:
+            _follow(folder, state, step, argv)
         return 1 if message else 0
     if (argv[:1] == ["inspect"] and any("{{range .Config.Env}}" in a for a in argv)
             and argv[1] in state.get("containers", {})):

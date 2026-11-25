@@ -7,6 +7,8 @@
 
 What it does: `destroy` stops a stacklet and removes its containers,
 secrets, setup markers and data folder (`CLI.destroy`, `Stack.destroy`).
+A destroyed stacklet also drops the record of a failed snapshot
+(`stack.snapshot.pending`), because it starts again as a new install.
 `uninstall` tears every stacklet down (`Stack.tear_down`: no secrets, no
 data), removes the config and the runtime state, and then asks one
 question: "Type 'delete' to remove all data".
@@ -49,6 +51,7 @@ from pathlib import Path
 from . import docker, global_command, run_log, runs
 from .secrets import SecretsUnreadable
 from .prompt import DIM, GREEN, ORANGE, RED, RESET, TEAL
+from .snapshot import pending
 
 __all__ = ["handle_destroy", "handle_uninstall"]
 
@@ -115,6 +118,9 @@ def _destroy_one(stck, args):
     print(f"\n  Destroying {name}...\n", file=sys.stderr)
     result = CLI(stck).destroy(args.stacklet)
     if result.get("ok"):
+        # A destroyed stacklet starts again as a new install, so it waits
+        # for no snapshot of what it ran before.
+        pending.clear(stck.instance_dir, [args.stacklet])
         print(f"  {GREEN}✓{RESET} {name} destroyed")
         if args.stacklet != "messages":
             _notify(stck, _server_room_lines(stck)["uninstalled"].format(name=name))
