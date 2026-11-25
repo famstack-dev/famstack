@@ -175,7 +175,6 @@
 
 /* ── 4. The page: its head, the type chips, the sections ───────────────── */
 
-.sheet.home { max-width: 880px; }
 .sheet.home .title:focus { outline: none; }
 .sheet.home .facts { margin: 0.6rem 0 0; color: var(--gray); font-size: 0.95rem; }
 .filters { display: flex; flex-wrap: wrap; gap: 0.4rem 0.5rem; margin: 0.4rem 0 0; }

@@ -15,6 +15,8 @@ Simpsons' cards, which core reaches over HTTP on localhost.
 from __future__ import annotations
 
 
+import re
+
 import pytest
 
 from tests.memory.unit.instance import running_memory
@@ -225,3 +227,42 @@ def test_the_old_address_sends_the_browser_on_to_the_card(tools):
 
 def test_the_network_still_gets_no_cards_address(tools):
     assert phone(tools).opens("/cards").status == 404
+
+
+# ── The sheet: one width, one paper ───────────────────────────────────────
+
+def stylesheet(app, path: str) -> str:
+    browser = phone(app)
+    r = browser.client.get(path, headers={"host": browser.host})
+    assert r.status_code == 200, path
+    return r.text
+
+
+def sheet_widths(css: str) -> dict[str, str]:
+    """Each `.sheet…` selector at the top level, with the max-width it sets."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    top_level = re.sub(r"@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}", "", css)
+    return {selector.strip(): width.strip()
+            for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", top_level)
+            if selector.strip().startswith(".sheet")
+            for width in re.findall(r"max-width:\s*([^;]+)", body)}
+
+
+def test_a_card_page_and_an_overview_share_one_sheet_width(tools):
+    card = stylesheet(tools, "/card/static/memory.css")
+    overview = stylesheet(tools, "/memory/static/home.css")
+    width = re.search(r"--fs-sheet-width:\s*([^;]+);", card)
+    assert width and width.group(1).strip() == "880px"
+    assert sheet_widths(card)[".sheet"] == "var(--fs-sheet-width)"
+    assert ".sheet.home" not in sheet_widths(overview)
+    # A notice keeps its own, narrower sheet.
+    assert sheet_widths(card)[".sheet.notice"] == "560px"
+
+
+def test_the_paper_is_lighter_and_still_warm(tools):
+    card = stylesheet(tools, "/card/static/memory.css")
+    paper = re.search(r"--fs-paper:\s*#([0-9a-fA-F]{6});", card).group(1)
+    red, green, blue = (int(paper[i:i + 2], 16) for i in (0, 2, 4))
+    assert red + green + blue > 0xf7 + 0xf6 + 0xf0
+    assert red >= green > blue, "warm: more red and green than blue"
+    assert min(red, green, blue) < 0xfa, "still paper, not white"

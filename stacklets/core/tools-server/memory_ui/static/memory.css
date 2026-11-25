@@ -139,7 +139,7 @@
   --textHighlight: #F5C842aa;
 
   /* custom.scss: the paper sheet and its edges. */
-  --fs-paper: #f7f6f0;
+  --fs-paper: #faf9f4;       /* a little whiter than the wiki's, still warm */
   --fs-border: rgba(61, 143, 160, 0.22);
   --fs-border-light: rgba(61, 143, 160, 0.14);
   --fs-border-faint: rgba(61, 143, 160, 0.08);
@@ -153,6 +153,9 @@
   --titleFont: "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif;
 
   --tap: 44px;   /* a finger's size */
+  /* Every sheet, a card or an overview, is this wide, so moving between them keeps
+     the text where it was. A notice and the photo mosaic set their own, narrower width. */
+  --fs-sheet-width: 880px;
   color-scheme: light;
 }
 
@@ -220,7 +223,7 @@ a.external:hover { color: var(--tertiary); }
 .center { min-width: 0; padding: 3.5rem 32px 140px 0; }
 /* One card is one sheet of paper on the parchment (custom.scss). */
 .sheet {
-  max-width: 660px;
+  max-width: var(--fs-sheet-width);
   background: var(--fs-paper); border: 1px solid var(--fs-border); border-radius: 10px;
   box-shadow: 0 1px 2px rgba(22, 31, 36, 0.04), 0 10px 28px rgba(22, 31, 36, 0.05);
   padding: 2rem 2.5rem 2.5rem;
