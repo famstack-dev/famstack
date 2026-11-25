@@ -9,7 +9,7 @@ applied it took a snapshot of each stacklet it moved
     planned = rollback.plan(stck)              # the newest snapshot; changes nothing
     planned.snapshot.name                      # "2026-11-25T2114Z"
     planned.stacklets                          # {"docs": Path("stacklets/docs"), …}
-    planned.newer                              # {"docs": {"paperless/media": 3}}
+    planned.newer                              # ["docs/paperless/media/new-bill.pdf"]
     done = rollback.run(stck, planned, stop=cli.down_many, start=start_in_a_process)
     done.replaced                              # .snapshots/replaced/2026-11-25T2203Z
 
@@ -46,8 +46,9 @@ Why the plan works this way:
 - **The archive sources stay where they are.** The snapshot left out the
   `[[backup.archive]]` sources (the photo library, the document
   originals). The rollback never touches them. The files that came
-  in after the snapshot stay. The plan counts them, because the restored
-  database does not know them.
+  in after the snapshot stay, and the restored database does not know
+  them. The plan names each one by its path under the data folder,
+  newest first. The admin needs the paths to find the files.
 - **Local edits in the checkout are refused, not set aside.** The admin
   decides what to do with them (commit, stash), because the rollback
   ends on another commit where the edits may not apply.
@@ -250,19 +251,19 @@ def _check_checkout(stck, commit: str) -> None:
                             f"them aside (git stash), then run: stack rollback", dirty)
 
 
-def _newer(data_root: Path, snapshot: Snapshot, archives: dict[str, list[str]]) -> dict:
-    """How many files in each archive source are newer than the snapshot:
-    `{"docs": {"paperless/media": 3}}`, sources with none left out. The
-    snapshot's time is its manifest's, which the take writes last."""
+def _newer(data_root: Path, snapshot: Snapshot, archives: dict[str, list[str]]) -> list[str]:
+    """The files in the archive sources that are newer than the snapshot,
+    each by its path under the data folder, newest first:
+    `["docs/paperless/media/new-bill.pdf"]`. Newest first, because the
+    admin looks for what came in last, and a large import would otherwise
+    fill the shown part. The snapshot's time is its manifest's, which the
+    take writes last."""
     taken = (Path(snapshot.path) / MANIFEST_FILE).stat().st_mtime
-    newer: dict[str, dict[str, int]] = {}
-    for sid, sources in archives.items():
-        for source in sources:
-            count = sum(1 for path in (data_root / sid / source).rglob("*")
-                        if path.is_file() and path.stat().st_mtime > taken)
-            if count:
-                newer.setdefault(sid, {})[source] = count
-    return newer
+    late = [(path.stat().st_mtime, str(path.relative_to(data_root)))
+            for sid, sources in archives.items() for source in sources
+            for path in (data_root / sid / source).rglob("*")
+            if path.is_file() and path.stat().st_mtime > taken]
+    return [path for _, path in sorted(late, key=lambda item: (-item[0], item[1]))]
 
 
 def _others(stck, stacklets: dict[str, Path]) -> list[str]:

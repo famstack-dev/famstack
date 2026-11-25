@@ -95,6 +95,18 @@ version = "{version}"
 OLD_IMAGE = "ghcr.io/paperless-ngx/paperless-ngx:2.20.1"
 
 
+RC1_ONLY = "Notes of the docs stacklet in rc.1.\n"
+
+
+README = "The stack of the test.\n"
+
+
+QUOTED = '"q2"'
+
+
+QUOTED_TEXT = "Only rc.1 has the file named with quotes.\n"
+
+
 OLD_IMAGE_ID = "sha256:" + "4" * 64
 
 
@@ -116,7 +128,8 @@ class Checkout:
     `stack(...)` runs `./stack` against it, as the admin does.
     """
 
-    def __init__(self, root: Path, monkeypatch, docker, host: bool = False):
+    def __init__(self, root: Path, monkeypatch, docker, host: bool = False,
+                 quoted: bool = False):
         self.root = root / "checkout"
         self.instance = root / "instance"
         self.data = root / "data"
@@ -134,9 +147,19 @@ class Checkout:
             speech.mkdir()
             (speech / "stacklet.toml").write_text(SPEECH_TOML.format(version="1"))
         (self.root / ".gitignore").write_text(".env\n")
+        # A file both releases have, as the same text.
+        (self.root / "README.md").write_text(README)
+        # A file that only rc.1 has, as a file a refactor in rc.2 moved.
+        (docs / "NOTES.md").write_text(RC1_ONLY)
+        if quoted:
+            # A name that git's line input reads as a quoted string.
+            (self.root / QUOTED).write_text(QUOTED_TEXT)
         self.git("init", "-q", "-b", "main")
         self.release("v0.4.0-rc.1")
         self.rc1 = self.git("rev-parse", "--short", "HEAD")
+        (docs / "NOTES.md").unlink()
+        if quoted:
+            (self.root / QUOTED).unlink()
         (docs / "docker-compose.yml").write_text(COMPOSE.format(tag="2.20.2"))
         (photos / "docker-compose.yml").write_text(PHOTOS_COMPOSE.format(tag="v2.2.0"))
         if host:
@@ -211,7 +234,8 @@ class Checkout:
                                                    version="0.3.0", commit="0ld0ld0"))
 
 
-def new_checkout(tmp_path, monkeypatch, docker_with_projects, host: bool) -> Checkout:
+def new_checkout(tmp_path, monkeypatch, docker_with_projects, host: bool,
+                 quoted: bool = False) -> Checkout:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "tmutil").write_text(f'#!/bin/sh\necho "$@" >> "{bin_dir / "tmutil.log"}"\n')
@@ -219,7 +243,7 @@ def new_checkout(tmp_path, monkeypatch, docker_with_projects, host: bool) -> Che
     monkeypatch.setenv("PATH", str(bin_dir), prepend=os.pathsep)
     docker = docker_with_projects(docs="running", photos="running")
     docker.follows_compose()
-    return Checkout(tmp_path, monkeypatch, docker, host=host)
+    return Checkout(tmp_path, monkeypatch, docker, host=host, quoted=quoted)
 
 
 @pytest.fixture
@@ -261,7 +285,20 @@ PHOTOS_IMAGE_ID = "sha256:" + "5" * 64
 def updated(tmp_path, monkeypatch, docker_with_projects) -> Checkout:
     """The checkout after `stack update` to rc.2 and the restart: one
     snapshot, docs on rc.2, and the family's changes since."""
-    checkout = new_checkout(tmp_path, monkeypatch, docker_with_projects, host=False)
+    return _updated(new_checkout(tmp_path, monkeypatch, docker_with_projects, host=False))
+
+
+@pytest.fixture
+def updated_with_a_quoted_name(tmp_path, monkeypatch, docker_with_projects) -> Checkout:
+    """`updated`, where rc.1 also has a file named `"q2"`, with the
+    quotes, which rc.2 does not have."""
+    return _updated(new_checkout(tmp_path, monkeypatch, docker_with_projects, host=False,
+                                 quoted=True))
+
+
+def _updated(checkout: Checkout) -> Checkout:
+    """Run `stack update`'s restart on `checkout` and make the family's
+    changes since."""
     (checkout.data / "photos" / "albums.json").write_text(ALBUMS)
     # Each tag names the image that runs, as after the pull that started it.
     checkout.docker.tags(**{OLD_IMAGE: OLD_IMAGE_ID, PHOTOS_IMAGE: PHOTOS_IMAGE_ID})

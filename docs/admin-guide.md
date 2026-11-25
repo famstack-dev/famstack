@@ -2014,8 +2014,11 @@ To go back to an older snapshot, name it: `./stack rollback 2026-11-01T0900Z`. T
 `--yes`.
 
 The rollback does not restore the configuration. A password, a paired phone or a person added since the snapshot
-stays. Files that came in after the snapshot, such as a new scan, stay too. The plan counts them, because the restored
-database does not know them.
+stays.
+
+Files that came in after the snapshot, such as a new scan, stay too. The restored database does not know them. The
+plan and the end of the rollback name the data folder and each file by its path under it, newest first. They name the
+first 20 and then how many more. `--json` gives every path in `newer_files`, and the folder in `data_folder`.
 
 The rollback refuses before it stops anything in these cases:
 
@@ -2058,20 +2061,30 @@ rollback` runs it once. Until then, the stack keeps its snapshot and its replace
 
 #### After a stop inside the checkout
 
-The files on disk are of the snapshot's release. Thus `./stack` runs the code of that release:
+Some or all files on disk are of the snapshot's release. Thus `./stack` runs a mix of two releases, or the code of
+the snapshot's release:
 
-- When that release has `./stack rollback`, the command refuses with "local edits". The edits are the files that git
+- When that code has `./stack rollback`, the command refuses with "local edits". The edits are the files that git
   wrote before it stopped. The rollback refused your own edits before it began.
-- When that release does not have `./stack rollback`, the command is unknown.
+- When that code does not have `./stack rollback`, the command is unknown or fails.
 
 In both cases, do these steps:
 
-1. Remove the lock: `rm .git/HEAD.lock`. Also remove `.git/index.lock` if it is there.
-2. Check out the release you came from: `git checkout --force v0.4.0-rc.2`. The `MANIFEST.json` of the snapshot
-   names it as `applies`.
+1. Run `rm -f .git/HEAD.lock .git/index.lock`. It removes the locks that git left, and does nothing for a lock that
+   is not there.
+2. Run `git checkout --force HEAD`. It puts back the files of the release that `HEAD` names.
 3. Run `./stack rollback`. It finishes the rollback.
 
 `git checkout --force` deletes no edit of yours, because the rollback refused local edits before it began.
+
+Git can stop before it records the files of the snapshot's release. Then these files stay on disk after step 2, and
+git does not track them. Step 3 removes each of these files, because the checkout writes the same file again. It
+keeps each other file that git does not track, for example a note of yours. It never removes an ignored file, such as
+`.env`.
+
+Step 3 keeps a file that is not exactly the same as the file of the snapshot's release. An example is a file that a
+power loss cut in the middle. Git then refuses the checkout and names the file. Remove that file and run step 3
+again.
 
 ### How to remove a snapshot or a replaced state
 

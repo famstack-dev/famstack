@@ -21,6 +21,7 @@ rollback is one more. A test runs three to six of them, about 2 seconds.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -164,11 +165,12 @@ def test_the_rollback_starts_the_image_the_snapshot_names_not_the_tags_newer_one
 
 # ── Files that came after the snapshot ───────────────────────────────────
 
-def test_files_newer_than_the_snapshot_stay_and_are_counted(updated):
+def test_files_newer_than_the_snapshot_stay_and_are_named(updated):
     """Given a new scan in docs' archive source, made after the snapshot,
     when the rollback ends, then the scan and the older originals stay
     where they are, nothing of the source was moved aside, and the answer
-    names how many newer files there are and where."""
+    names the scan by its path under the data folder, in the text a
+    person reads and in `--json`."""
     ran = rollback(updated)
 
     assert ran.code == 0, ran.err
@@ -176,7 +178,71 @@ def test_files_newer_than_the_snapshot_stay_and_are_counted(updated):
     assert sorted(p.name for p in media.iterdir()) == ["dentist-bill.pdf", "new-bill.pdf"]
     [time] = replaced_folders(updated)
     assert not (updated.data / ".snapshots" / "replaced" / time / "docs" / "paperless" / "media").exists()
-    assert json.loads(ran.out)["newer_files"] == {"docs": {"paperless/media": 1}}
+    assert json.loads(ran.out)["newer_files"] == ["docs/paperless/media/new-bill.pdf"]
+
+
+def late_scans(checkout: Checkout, count: int) -> list[str]:
+    """Write `count` scans into docs' archive source after the snapshot,
+    each a minute after the one before. Returns their paths under the data
+    folder, newest first, with new-bill.pdf, the oldest, last."""
+    media = checkout.data / "docs" / "paperless" / "media"
+    (media / "2026").mkdir()
+    start = (media / "new-bill.pdf").stat().st_mtime
+    for number in range(count):
+        scan = media / "2026" / f"scan-{number:02}.pdf"
+        scan.write_text("%PDF late")
+        os.utime(scan, (start + 60 * (number + 1),) * 2)
+    return ([f"docs/paperless/media/2026/scan-{n:02}.pdf" for n in reversed(range(count))]
+            + ["docs/paperless/media/new-bill.pdf"])
+
+
+def test_the_plan_names_each_late_file_up_to_twenty(updated):
+    """Given 24 files that came after the snapshot, when the admin sees the
+    plan in a terminal, then it names the newest 20 by their path under
+    the data folder, names that folder, and says "and 5 more". The older
+    original is not named."""
+    paths = late_scans(updated, 24)
+
+    ran = in_terminal(updated, "rollback", answer="n")
+
+    assert ran.code == 0, ran.err
+    assert "25 files came after the snapshot" in ran.out
+    assert str(updated.data) in ran.out
+    for path in paths[:20]:
+        assert path in ran.out
+    for path in paths[20:]:
+        assert path not in ran.out
+    assert "and 5 more" in ran.out
+    assert "dentist-bill.pdf" not in ran.out
+
+
+def test_the_end_of_the_rollback_names_the_newest_late_files(updated):
+    """Given 24 files that came after the snapshot, when the rollback ends,
+    then the text names the newest 20 and "and 5 more" as the plan does."""
+    paths = late_scans(updated, 24)
+
+    ran = in_terminal(updated, "rollback", answer="y")
+    end = ran.out[ran.out.index("Rolled back to"):]
+
+    assert ran.code == 0, ran.err
+    for path in paths[:20]:
+        assert path in end
+    assert paths[20] not in end
+    assert "and 5 more" in end
+
+
+def test_json_gives_every_late_file(updated):
+    """Given 24 files that came after the snapshot, when a script runs the
+    rollback with `--json`, then `newer_files` holds all 25 paths, newest
+    first, and `data_folder` names the folder they are under."""
+    paths = late_scans(updated, 24)
+
+    ran = rollback(updated)
+
+    assert ran.code == 0, ran.err
+    answer = json.loads(ran.out)
+    assert answer["newer_files"] == paths
+    assert answer["data_folder"] == str(updated.data)
 
 
 # ── Refusals: nothing changes ────────────────────────────────────────────

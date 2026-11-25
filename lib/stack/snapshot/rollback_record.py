@@ -148,7 +148,7 @@ class Plan:
     - `starts`: the ones it starts, which are those that ran.
     - `archives`: their archive sources.
     - `newer`: the files in those sources that are newer than the
-      snapshot.
+      snapshot, by their paths under the data folder.
     - `others`: the running stacklets outside the snapshot.
     - `tags`: the tags it moves.
 
@@ -158,7 +158,7 @@ class Plan:
         Plan(snapshot=Snapshot(name="2026-11-25T2114Z", …),
              stacklets={"docs": Path("stacklets/docs")}, starts=["docs"],
              archives={"docs": ["paperless/media"]},
-             newer={"docs": {"paperless/media": 1}}, others=["photos"])
+             newer=["docs/paperless/media/new-bill.pdf"], others=["photos"])
         plan.version     # "0.4.0-rc.1"
         plan.left        # ["restore docs", "start docs"]
     """
@@ -167,7 +167,7 @@ class Plan:
     stacklets: dict[str, Path]
     starts: list[str]
     archives: dict[str, list[str]]
-    newer: dict[str, dict[str, int]] = field(default_factory=dict)
+    newer: list[str] = field(default_factory=list)
     others: list[str] = field(default_factory=list)
     tags: list[images.TagMove] = field(default_factory=list)
     replaced: Path | None = None
@@ -395,14 +395,18 @@ def _snapshot_gone(folder: Path, record: dict) -> str:
     """The refusal of a start whose snapshot is gone or cannot be read.
     Only the admin knows the checkout's release then. On the snapshot's
     release, every state is whole, so renaming the record and starting
-    the stacklets ends the rollback."""
+    the stacklets ends the rollback. On another release, that start would
+    migrate the restored state with no snapshot of it, so the answer says
+    so and names the command that shows the release."""
     path = folder / RECORD_FILE
     return (f"The rollback to the snapshot {record['snapshot']} stopped in its start, and "
             f"that snapshot is gone or cannot be read, so the stack cannot tell its commit. "
             f"Nothing was started. The state it replaced is in {folder}. Check that the "
-            f"checkout is on the snapshot's release {record.get('version', '')}. Then end "
-            f"the rollback: mv {path} {path}.ended. Then start the stacklets: stack up "
-            f"{' '.join(record['starts'])}")
+            f"checkout is on the snapshot's release {record.get('version', '')}: stack "
+            f"version names the checkout's release. On another release, the start runs "
+            f"that release's migrations on the restored state, one way and without a "
+            f"snapshot. Then end the rollback: mv {path} {path}.ended. Then start the "
+            f"stacklets: stack up {' '.join(record['starts'])}")
 
 
 # ── Writing the record ────────────────────────────────────────────────

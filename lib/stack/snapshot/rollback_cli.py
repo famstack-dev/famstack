@@ -45,6 +45,10 @@ from .volume import Volume
 
 __all__ = ["add_parser", "run"]
 
+# A photo library can get hundreds of files after a snapshot. The text
+# names this many, and `--json` gives every path.
+NEWER_SHOWN = 20
+
 
 def add_parser(sub) -> None:
     """Add `stack rollback` and its options to `sub`, the CLI's subparsers."""
@@ -68,14 +72,15 @@ def run(stck, args, lifecycle: Lifecycle, volume: Volume | None = None) -> None:
         $ stack rollback --yes --json
         {"ok": true, "snapshot": "2026-11-25T2114Z", "version": "0.4.0-rc.1",
          "replaced": ".../.snapshots/replaced/2026-11-25T2203Z", "started": ["docs"],
-         "newer_files": {"docs": {"paperless/media": 3}}, "tags": [], ...}
+         "newer_files": ["docs/paperless/media/new-bill.pdf"],
+         "data_folder": "/Users/homer/famstack-data", "tags": [], ...}
     """
     try:
         planned = rollback.plan(stck, args.snapshot)
     except rollback.RollbackError as error:
         return print_answer({"error": str(error), "problems": error.problems}, args.json, None)
     if not args.json:
-        print("\n".join(_plan_lines(planned)))
+        print("\n".join(_plan_lines(planned, stck.data)))
     if not args.yes:
         if not sys.stdin.isatty():
             return print_answer({"error": "Pass --yes to confirm (no terminal to ask in)"},
@@ -85,7 +90,7 @@ def run(stck, args, lifecycle: Lifecycle, volume: Volume | None = None) -> None:
         except runs.AlreadyRunning as busy:
             return print_answer(busy.as_result(), args.json, None)
         if not confirmed:
-            return print_answer({"ok": False, "declined": True, **_planned(planned)}, args.json,
+            return print_answer({"ok": False, "declined": True, **_planned(stck, planned)}, args.json,
                                 lambda _: [f"  {DIM}Nothing changed.{RESET}", ""])
     try:
         done = rollback.run(stck, planned, stop=lifecycle.down,
@@ -93,7 +98,7 @@ def run(stck, args, lifecycle: Lifecycle, volume: Volume | None = None) -> None:
     except SnapshotError as error:
         return print_answer({"error": str(error), "problems": getattr(error, "problems", [])},
                             args.json, None)
-    print_answer({**_planned(planned), "ok": True, "replaced": str(done.replaced),
+    print_answer({**_planned(stck, planned), "ok": True, "replaced": str(done.replaced),
                   "started": done.started, "cloned": done.cloned, "moved_tags": done.tags},
                  args.json, _rolled_back_lines)
 
@@ -130,19 +135,22 @@ def _confirmed(stck, planned: rollback.Plan, quiet: bool) -> bool:
         return ask("Finish the rollback?" if planned.replaced else "Roll back?", quiet)
 
 
-def _planned(planned: rollback.Plan) -> dict:
-    """The plan, as the answer carries it."""
+def _planned(stck, planned: rollback.Plan) -> dict:
+    """The plan, as the answer carries it. `data_folder` is the folder
+    that the paths of `newer_files` are under."""
     return {"snapshot": planned.snapshot.name, "version": planned.version,
             "stacklets": list(planned.stacklets), "starts": planned.starts,
-            "newer_files": planned.newer, "others": planned.others,
+            "newer_files": planned.newer, "data_folder": str(stck.data),
+            "others": planned.others,
             "tags": [{"name": t.name, "image": t.image_id, "now": t.now,
                       "also_used_by": list(t.also_used_by)} for t in planned.tags],
             "finishes": planned.replaced.name if planned.replaced else None,
             "left": planned.left}
 
 
-def _plan_lines(planned: rollback.Plan) -> list[str]:
-    """What a person reads before the confirmation."""
+def _plan_lines(planned: rollback.Plan, data: Path) -> list[str]:
+    """What a person reads before the confirmation. `data` is the data
+    folder."""
     if planned.replaced is not None:
         lines = ["", f"  {ORANGE}⚠{RESET} The rollback of {planned.replaced.name} to "
                      f"{planned.version} (snapshot {planned.snapshot.name}) stopped halfway.",
@@ -155,19 +163,32 @@ def _plan_lines(planned: rollback.Plan) -> list[str]:
                  f"  Replaces {', '.join(planned.stacklets)}. Their changes since then move to "
                  f"{store.SNAPSHOTS_FOLDER}/{rollback.REPLACED_FOLDER}/,",
                  "  and the stacklets lose them."]
-    lines += _newer_lines(planned.newer) + _tag_lines(planned.tags)
+    lines += _newer_lines(planned.newer, data) + _tag_lines(planned.tags)
     if planned.others:
         lines.append(f"  {DIM}Not in the snapshot, still running: {', '.join(planned.others)}. "
                      f"They keep the newer code until they restart.{RESET}")
     return [*lines, ""]
 
 
-def _newer_lines(newer: dict[str, dict[str, int]]) -> list[str]:
-    """One line for each archive source with files newer than the snapshot."""
-    return [f"  {ORANGE}⚠{RESET} {count} file{'s' if count != 1 else ''} in {sid}/{source} "
-            f"came after the snapshot. {'They stay' if count != 1 else 'It stays'}, "
-            f"and the restored {sid} does not know {'them' if count != 1 else 'it'}."
-            for sid, sources in newer.items() for source, count in sources.items()]
+def _newer_lines(newer: list[str], data: Path | str) -> list[str]:
+    """The files newer than the snapshot, by their paths under the data
+    folder `data`, newest first: one warning that names the folder, then
+    at most `NEWER_SHOWN` paths and how many more there are.
+
+        ⚠ 1 file came after the snapshot. It stays, and the restored
+          state does not know it. Under the data folder /Users/homer/famstack-data:
+            docs/paperless/media/new-bill.pdf
+    """
+    if not newer:
+        return []
+    one = len(newer) == 1
+    lines = [f"  {ORANGE}⚠{RESET} {len(newer)} file{'' if one else 's'} came after the "
+             f"snapshot. {'It stays' if one else 'They stay'}, and the restored state does "
+             f"not know {'it' if one else 'them'}. Under the data folder {data}:"]
+    lines += [f"      {path}" for path in newer[:NEWER_SHOWN]]
+    if len(newer) > NEWER_SHOWN:
+        lines.append(f"      and {len(newer) - NEWER_SHOWN} more")
+    return lines
 
 
 def _tag_lines(tags: list) -> list[str]:
@@ -189,5 +210,5 @@ def _rolled_back_lines(result: dict) -> list[str]:
              f"     {DIM}The state it replaced: {result['replaced']}{RESET}"]
     lines += [f"     {DIM}The tag {name} names the snapshot's image again.{RESET}"
               for name in result["moved_tags"]]
-    lines += _newer_lines(result["newer_files"])
+    lines += _newer_lines(result["newer_files"], result["data_folder"])
     return [*lines, ""]

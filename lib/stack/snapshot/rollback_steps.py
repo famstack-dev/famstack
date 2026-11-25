@@ -46,6 +46,10 @@ Why it works this way:
   Ctrl-C or a power loss can stop it. Each of these leaves the record as
   it was. Nothing starts, and the next `stack rollback` goes on with the
   checkout.
+
+  Such a stop can leave untracked copies of the files that
+  the checkout writes. The step removes these leftovers of git. Any
+  other untracked file stays, and a tracked file is never removed.
 - **It never deletes a state, and never writes over one.** A state moves
   aside by a rename on the same volume. A move that finds the entry in
   the replaced folder already refuses. A restore first moves what is in
@@ -245,12 +249,21 @@ def _retag(planned: Plan, source: ImageSource) -> list[str]:
 
 def _check_out(stck, commit: str) -> None:
     """Move the checkout to `commit` after every state is back, unless it
-    is there. Raises `RollbackError` when git refuses. The record is left
-    as it is. It holds the stacklets until "starting" is written after the
-    move."""
+    is there. Removes git's own leftovers of a checkout to `commit` that
+    stopped (`Checkout.untracked_copies_of`). Raises `RollbackError` when
+    git refuses. The record is left as it is. It holds the stacklets
+    until "starting" is written after the move."""
     checkout = Checkout(stck.root)
     if checkout.commit_of("HEAD") == checkout.commit_of(commit):
         return
+    # A checkout can stop before git writes the index. The files that only
+    # `commit` has are then untracked, and git refuses to write over them.
+    # Each removed file holds exactly what the checkout writes there again.
+    # A file someone made stays, because it differs, and git's refusal
+    # names it. Ignored files (stack.toml, .env), tracked files and links
+    # are never listed.
+    for path in checkout.untracked_copies_of(commit):
+        (Path(stck.root) / path).unlink()
     moved, error = checkout.checkout(commit)
     if not moved:
         raise RollbackError(f"Every state is back, but the checkout cannot move to {commit}: "
