@@ -689,6 +689,9 @@ class MicroBot:
         event = self._media.plain(event)
         if voice.is_voice(event) and not self._wants_voice(room, event):
             return
+        if voice.is_voice(event) and self._transcriber is None:
+            await self._on_voice_unheard(room, event)
+            return
         decoding = voice.is_voice(event)
         if decoding:
             # Transcription can run for minutes and happens before any
@@ -720,23 +723,20 @@ class MicroBot:
         """
         return True
 
+    async def _on_voice_unheard(self, room, event) -> None:
+        """Speech is off: a voice message stays audio. Silent unless one bot says so."""
+
     async def _decode_voice(self, room_id: str, event):
         """Return the text event this voice message decodes to, or None.
 
         None means the words could not be recovered, because whisper is
-        absent, unreachable, or found no speech. The event is then
+        unreachable or found no speech. Without a transcriber the caller
+        never gets here (`_on_voice_unheard`). The event is then
         dispatched to no handler rather than answered with an error: the
         recording remains visible in the room, and every bot present
         reporting the same failure for audio not addressed to it would
         add noise without adding information.
         """
-        if self._transcriber is None:
-            logger.debug(
-                "[{}] voice from {} left as audio (no whisper)",
-                self.name, event.sender,
-            )
-            return None
-
         content = event.source.get("content", {})
         url = content.get("url", "")
         filename = content.get("filename") or content.get("body") or "voice.ogg"

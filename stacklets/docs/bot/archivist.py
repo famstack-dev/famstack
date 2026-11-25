@@ -367,6 +367,27 @@ class ArchivistBot(MicroBot):
             return self.get_thread_root(event) is not None
         return True
 
+    async def _on_voice_unheard(self, room, event) -> None:
+        """Speech is off: say once that a voice message is not read.
+
+        The archivist is the one bot that takes captures, and the
+        framework's hook is silent for every other bot, so the room gets
+        one answer. Without it a person thinks the memo was filed. It
+        answers where it would capture: not for a bot, not in the
+        memories room (a diary card's thread is not a capture), not in
+        another bot's thread, and as the room mode allows.
+        """
+        if self.is_bot_user(event.sender):
+            return
+        if self._diary.is_room(self._room_context(room)):
+            return
+        if not await self._thread_is_ours(room.room_id, event):
+            return
+        ctx = await self._message_context(room)
+        if not self._should_react(ctx, mentioned=False):
+            return
+        await self._answer(room.room_id, self.t("voice_speech_off"), event.event_id)
+
 
 
 

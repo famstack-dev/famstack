@@ -291,6 +291,8 @@ When a mailbox is first connected, the admin can pull in existing mail from a ch
 
 Send a voice message in any capture room. The archivist transcribes it locally (nothing leaves the Mac), cleans up the transcript, echoes it back so you can check it, and files it as a note.
 
+With speech off, the archivist answers a voice memo once: it cannot read voice messages now, and nothing is filed. Your admin turns speech on.
+
 Each voice memo becomes a note of its own. Several voice memos are several notes, also between `(` and `)`. The scan (`(` ... `)`) combines only photos into one document.
 
 Driving home and something crosses your mind: hold the mic button, talk, done. The thought is captured, transcribed and findable. Never miss a thought.
