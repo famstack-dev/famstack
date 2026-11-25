@@ -32,7 +32,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack configure <id>` | yes | no | asks or answers a stacklet's setup questions, installs nothing; `--json` prints the next form or `{"ready": true}` |
 | `./stack down <id>...` | yes | no | stops containers; data preserved. Several ids: spaces or commas |
 | `./stack down all` | yes | no | stops every running stacklet in reverse dep order |
-| `./stack restart [<id>...]` | yes | no | `down` + `up`; several ids as for `down`; with no argument, only the stacklets running stale code |
+| `./stack restart [<id>...]` | yes | no | `down` + `up`; several ids as for `down`; with no argument, only the stacklets running stale code. A stacklet that starts on a new release gets a snapshot in `~/famstack-data/.snapshots/` first, while it is stopped; the newest 3 stay. A snapshot that fails starts nothing on the new release: the stacklet waits, and `stack up` refuses it, until `stack restart <id>` takes the snapshot or `--no-snapshot` skips it |
 | `./stack destroy <id>...` | yes | **YES** | removes containers + `~/famstack-data/<id>/` + secrets; a not set up stacklet's data folder with files only after its own question or `--yes` |
 | `./stack uninstall` | yes | **YES, EVERYTHING** | tears down every stacklet, removes the config; deletes all data and its secrets only when the admin types `delete` |
 | `./stack update [<tag>]` | yes | no | moves the checkout to a release; restarts nothing, prints what to restart |

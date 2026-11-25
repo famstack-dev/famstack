@@ -2094,6 +2094,10 @@ class Stack:
 
         self._setup_done_marker(stacklet_id).unlink(missing_ok=True)
         self._up_stamp(stacklet_id).unlink(missing_ok=True)
+        # A destroyed stacklet starts again as a new install, so it waits
+        # for no snapshot of what it ran before.
+        from .snapshot import pending
+        pending.clear(self.instance_dir, [stacklet_id])
         (stacklet_dir / ".env").unlink(missing_ok=True)
 
         self.write_caddyfile(stopping=stacklet_id)

@@ -225,23 +225,40 @@ def images_of(stacklet_dir: Path, source: ImageSource) -> dict[str, Image]:
     Takes the images of the stacklet's containers when it has any, and
     the images its compose file starts when it has none. A stacklet
     without a compose file (a host stacklet) has no images, and `source`
-    is not asked. Raises `ImageError` when the compose file cannot be
-    read. Changes nothing.
+    is not asked. Raises `ImageError` when the stacklet has no containers
+    and its compose file cannot be read. Changes nothing.
 
         images_of(Path("stacklets/ai"), DockerImages())     # {}
+
+    A stacklet with containers is recorded also when its compose file
+    cannot be read. After `stack update` that file is the new release's,
+    which the running containers never used. The compose file then only
+    cannot say which service builds its image here: such an image is
+    recorded with its local id and without `built` and `base`.
     """
     compose_file = Path(stacklet_dir) / COMPOSE_FILE
     if not compose_file.is_file():
         return {}
-    services = {service.name: service for service in source.services(compose_file)}
     containers = source.containers(Path(stacklet_dir).name)
-    if containers:
-        return {c.service: _image(c.image, c.image_id, _dockerfile(services, c.service), source)
-                for c in containers}
-    return {s.name: _image(s.image, s.image, s.dockerfile, source) for s in services.values()}
+    if not containers:
+        return {s.name: _image(s.image, s.image, s.dockerfile, source)
+                for s in source.services(compose_file)}
+    services = _services_if_readable(compose_file, source)
+    return {c.service: _image(c.image, c.image_id, _dockerfile(services, c.service), source)
+            for c in containers}
 
 
 # ── One image ────────────────────────────────────────────────────────────
+
+def _services_if_readable(compose_file: Path, source: ImageSource) -> dict[str, Service]:
+    """The services of `compose_file` by name, or none when compose cannot
+    read it. Asked only for the Dockerfiles of a stacklet whose containers
+    already name their images."""
+    try:
+        return {service.name: service for service in source.services(compose_file)}
+    except ImageError:
+        return {}
+
 
 def _dockerfile(services: dict[str, Service], name: str) -> Path | None:
     service = services.get(name)

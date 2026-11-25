@@ -353,9 +353,12 @@ def test_a_start_before_the_restart_leaves_core_on_old_code_running(beta1, docke
 @pytest.mark.usefixtures("core_env_left_as_found", "host_api")
 def test_the_restart_after_that_start_recreates_core(beta1, docker_with_projects):
     """Given that start, held back for core, when the admin then runs
-    `stack restart`, then it succeeds and core is recreated."""
+    `stack restart`, then it succeeds and core is recreated. Docker stops
+    core as a real daemon does, because the restart takes the snapshot of
+    a stopped core before it starts it on the new code."""
     docker = core_runs(docker_with_projects, started_from=OLD_CODE)
     assert beta1.stack("up", "ai").code == 0
+    docker.follows_compose()
 
     ran = beta1.stack("restart")
 

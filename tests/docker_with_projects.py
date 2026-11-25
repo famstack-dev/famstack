@@ -33,7 +33,12 @@ The states are the ones `stack list` shows: `running`, `starting`,
     docker info                       exit 0, or 1 after `daemon_down`
     docker context ls --format json   one context, orbstack
     docker network inspect|create     exit 0
-    docker ps ...                     the commits set with `commits`
+    docker ps ...                     the commits set with `commits`, of a
+                                      stopped stacklet only with -a
+    docker ps -a --filter label=com.docker.compose.project=...
+                                      the containers set with `runs_image`
+    docker container inspect | image inspect
+                                      what `runs_image` set
     docker inspect | exec | logs ...  "No such container", exit 1
 
 Anything else exits non-zero and says so, as `docker_with_no_containers`
@@ -86,6 +91,19 @@ class Docker:
     def commits(self, **by_stacklet: str) -> None:
         """Say which commit each stacklet's containers were started from."""
         self._write(commits=by_stacklet)
+
+    def runs_image(self, stacklet: str, service: str, image: str, image_id: str,
+                   digest: str) -> None:
+        """Give `stacklet` a container of `service`, created from `image`
+        (`image_id`, with the registry `digest`), which `ps -a`,
+        `container inspect` and `image inspect` then answer."""
+        state = self._read()
+        containers = state.get("containers_of", {})
+        containers[stacklet] = [*containers.get(stacklet, []),
+                                {"service": service, "name": f"stack-{stacklet}-{service}",
+                                 "image": image, "id": image_id}]
+        images = {**state.get("images", {}), image_id: {"Id": image_id, "RepoDigests": [digest]}}
+        self._write(containers_of=containers, images=images)
 
     def follows_compose(self, follows: bool = True) -> None:
         """Make `compose up` start the stacklet of its compose file and

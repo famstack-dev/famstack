@@ -26,9 +26,23 @@ because of a snapshot.
       2026-11-24T2114Z  2026-11-24 22:14  docs  0.4.0-rc.1
 
 `--json` prints the answer as JSON. The exit code is 1 when the command
-refused or a step failed. This module reads the command line and prints
-the answer. It calls the store for the snapshot, and the CLI to start and
-stop. The snapshot's folder and its rules are in `stack.snapshot.store`.
+refused or a step failed.
+
+The restart that applies a release (`stack restart` in `stack.cli`) takes
+its snapshot through the same module, in three calls around its own stop
+and start. They print what the restart says and exit 1 when no snapshot
+was taken; the decisions are in `stack.snapshot.release`. A fourth call,
+`waiting`, refuses the start of a stacklet whose last snapshot failed:
+
+    before = record_or_exit(stck, ["docs"], no_snapshot=False)   # while docs runs
+    cli.down_many(["docs"])
+    taken = take_or_exit(stck, before)                           # nothing starts without it
+    cli.up_many(["docs"])
+    keep_and_say(stck, taken)                                    # the newest 3 stay
+
+This module reads the command line and prints the answer. It calls the
+store for the snapshot, and the CLI to start and stop. The snapshot's
+folder and its rules are in `stack.snapshot.store`.
 """
 
 from __future__ import annotations
@@ -37,16 +51,16 @@ import json
 import sys
 from pathlib import Path
 
-from .. import docker
 from .. import manifest as manifests
-from .. import runs
+from .. import run_log, runs
 from ..images import DockerImages
 from ..manifest import Manifest, ManifestError
 from ..prompt import DIM, GREEN, RED, RESET
-from . import store
-from .store import SnapshotError, Volume
+from . import pending, release, store
+from .release import Before, anything_up
+from .store import SnapshotError, Taken, Volume
 
-__all__ = ["add_parser", "run"]
+__all__ = ["add_parser", "keep_and_say", "record_or_exit", "run", "take_or_exit", "waiting"]
 
 
 def add_parser(sub) -> None:
@@ -75,6 +89,86 @@ def run(stck, args, volume: Volume | None = None) -> None:
     return _print(_listed(stck), args.json, _list_lines)
 
 
+# ── The snapshot of a restart ────────────────────────────────────────────
+
+def record_or_exit(stck, ids: list[str], no_snapshot: bool) -> Before:
+    """`release.before_stop` for a restart of `ids`, before it stops them.
+    `no_snapshot` is `stack restart --no-snapshot`. Exits 1 with the cause
+    and the two ways on when the record fails; then nothing has stopped.
+    Names each stacklet whose commit is unknown, which gets no snapshot.
+
+        record_or_exit(stck, ["docs"], no_snapshot=False)   # Before(stacklets={"docs": …}, …)
+    """
+    try:
+        before = release.before_stop(stck, ids, skip=no_snapshot)
+    except pending.Unreadable as error:
+        _exit(stck, [error.stacklet], str(error), release.unreadable_lines(error))
+    except SnapshotError as error:
+        _exit(stck, ids, str(error), release.refused_lines(str(error), [], ids))
+    if before.unknown:
+        print("\n".join(release.unknown_lines(before.unknown)), file=sys.stderr)
+    return before
+
+
+def take_or_exit(stck, before: Before) -> Taken | None:
+    """`release.after_stop` between the stop and the start of the
+    stacklets `before` recorded: the snapshot, or None when `before` is
+    empty. Exits 1 with the cause and the two ways on when the take
+    fails; then they stay stopped and wait for their snapshot
+    (`waiting`).
+
+        take_or_exit(stck, before).snapshot.name   # "2026-11-25T2114Z"
+    """
+    stacklets = list(before.stacklets)
+    try:
+        return release.after_stop(stck, before)
+    except release.StillRunning as error:
+        waits = [sid for sid in stacklets if sid not in error.ids]
+        _exit(stck, stacklets, str(error), release.refused_lines(str(error), waits, error.ids))
+    except SnapshotError as error:
+        _exit(stck, stacklets, str(error), release.refused_lines(str(error), stacklets, []))
+
+
+def waiting(stck, stacklet_id: str) -> dict | None:
+    """The answer of a start refused because the stacklet's last snapshot
+    failed (`stack.snapshot.pending`), with the two ways on. None when
+    the stacklet waits for nothing. `stack up` and every restart ask it
+    before they start a stacklet.
+
+        waiting(stck, "docs")
+        # {"error": "docs waits for its snapshot: … stack restart docs …"}
+    """
+    if not pending.waiting(stck.instance_dir, stacklet_id):
+        return None
+    return {"error": (f"{stacklet_id} waits for its snapshot, which failed at the last restart. "
+                      f"Take it with: stack restart {stacklet_id}. Or start without one: "
+                      f"stack restart {stacklet_id} --no-snapshot"),
+            "stacklet": stacklet_id}
+
+
+def keep_and_say(stck, taken: Taken | None) -> None:
+    """After a restart that took the snapshot `taken`: keep the newest
+    snapshots (`release.prune`) and print what was taken and removed.
+    Says nothing without a snapshot.
+
+        keep_and_say(stck, taken)
+        #   ✓ Snapshot 2026-11-25T2114Z: docs
+        #     Removed the snapshot 2026-11-01T0900Z; the newest 3 stay.
+    """
+    if taken is not None:
+        print("\n".join(release.taken_lines(taken, release.prune(stck.data, taken.snapshot.name))))
+
+
+def _exit(stck, ids: list[str], cause: str, lines: list[str]):
+    """Record a restart without a snapshot as the result of each run of
+    `ids`, print `lines` on stderr, and exit 1."""
+    for sid in ids:
+        run_log.record_result(stck.instance_dir, sid,
+                              {"error": f"No snapshot: {cause}", "stacklet": sid})
+    print("\n".join(lines), file=sys.stderr)
+    sys.exit(1)
+
+
 # ── Taking a snapshot ────────────────────────────────────────────────────
 
 def _create(stck, ids: list[str], volume: Volume | None) -> dict:
@@ -88,7 +182,7 @@ def _create(stck, ids: list[str], volume: Volume | None) -> dict:
         return {"error": f"Unknown stacklet: {', '.join(unknown)}"}
     with runs.hold(stck.instance_dir, ids):
         try:
-            record = _record(stck, {sid: known[sid] for sid in ids}, _up(stck))
+            record = _record(stck, {sid: known[sid] for sid in ids}, anything_up(stck))
         except ManifestError as error:
             return {"error": f"The snapshot cannot record what runs: {error}"}
         was_up = [sid for sid in ids if record.stacklets[sid].up]
@@ -101,18 +195,6 @@ def _create(stck, ids: list[str], volume: Volume | None) -> dict:
             # leave the family without a page that ran before it.
             started = _start_again(stck, was_up)
         return {**result, "started": started}
-
-
-def _up(stck):
-    """Whether a stacklet has anything up: a container of any state but
-    stopped, or the host services of a stacklet without containers.
-
-    Wider than `Stack.is_running`, which counts "failing" as not running.
-    A failing stacklet can have a crashed web container and a database
-    server that still writes, so it is stopped before the clone, and
-    started again after it."""
-    with_a_container = docker.ids_with_a_container_up()
-    return lambda sid: sid in with_a_container or stck.is_running(sid)
 
 
 def _record(stck, stacklets: dict[str, Path], up) -> Manifest:
@@ -144,7 +226,7 @@ def _stop_and_take(stck, stacklets: dict[str, Path], record: Manifest, was_up: l
     try:
         # Asked again after the stop, with the same wide answer: a
         # container that did not stop keeps the take from cloning.
-        up = _up(stck)
+        up = anything_up(stck)
         taken = store.take(stck.data, stck.instance_dir, stacklets, record,
                            running=up, volume=volume)
     except SnapshotError as error:

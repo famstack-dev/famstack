@@ -30,7 +30,9 @@ from stack.snapshot.store import (
     SNAPSHOTS_FOLDER,
     SnapshotError,
     ThisVolume,
+    Snapshot,
     archive_paths,
+    remove,
     snapshots,
     take,
 )
@@ -378,3 +380,30 @@ def test_an_unreadable_manifest_is_listed_as_unreadable(mac):
     assert [(s.name, s.manifest is None) for s in listed] == \
         [("2026-11-24T2140Z", False), ("2026-11-24T2114Z", True)]
     assert MANIFEST_FILE in listed[1].unreadable
+
+
+# ── Removing ─────────────────────────────────────────────────────────────
+
+def test_a_removed_snapshot_is_gone_and_the_others_stay(mac):
+    """Given two snapshots, when the store removes the older one, then it
+    is gone from the list and from the disk, the newer one stays, and the
+    data folder is as it was."""
+    mac.take(now=AT_2114)
+    mac.take(now=AT_2140)
+    data_before = mac.files(mac.data / "docs")
+
+    remove(snapshots(mac.data)[-1])
+
+    assert [s.name for s in snapshots(mac.data)] == ["2026-11-24T2140Z"]
+    assert sorted(p.name for p in (mac.data / SNAPSHOTS_FOLDER).iterdir()) == ["2026-11-24T2140Z"]
+    assert mac.files(mac.data / "docs") == data_before
+
+
+def test_a_folder_outside_the_snapshots_is_never_removed(mac):
+    """Given a path that is not a snapshot in `.snapshots/` (the data
+    folder of docs), when the store is asked to remove it, then it refuses
+    and the folder stays."""
+    with pytest.raises(SnapshotError):
+        remove(Snapshot("docs", mac.data / "docs", None))
+
+    assert (mac.data / "docs").is_dir()

@@ -135,6 +135,40 @@ def test_a_running_stacklet_records_the_image_its_container_runs_not_the_compose
         "paperless": Image(name=PAPERLESS_OLD, id=PAPERLESS_OLD_ID, digest=PAPERLESS_OLD_DIGEST)}
 
 
+def test_a_running_stacklet_is_recorded_when_the_new_compose_file_does_not_parse(tmp_path):
+    """Given a running stacklet whose compose file, after `stack update`,
+    is one that compose cannot read, when its images are recorded, then
+    the record holds the image each container runs. The old release never
+    used that file, and the restart takes its snapshot before it stops."""
+
+    class NewFileBroken(ThisMac):
+        def services(self, compose_file: Path) -> list[Service]:
+            raise ImageError(f"{compose_file}: docker compose cannot read it: bad yaml")
+
+    stacklet_dir = a_stacklet(tmp_path, "docs")
+    mac = NewFileBroken(
+        containers_by_stacklet={"docs": [Container("paperless", PAPERLESS_OLD, PAPERLESS_OLD_ID)]},
+        images={PAPERLESS_OLD_ID: ImageFacts(PAPERLESS_OLD_ID, (PAPERLESS_OLD_DIGEST,))})
+
+    assert images_of(stacklet_dir, mac) == {
+        "paperless": Image(name=PAPERLESS_OLD, id=PAPERLESS_OLD_ID, digest=PAPERLESS_OLD_DIGEST)}
+
+
+def test_a_stopped_stacklet_with_an_unreadable_compose_file_fails(tmp_path):
+    """Given a stacklet without containers whose compose file compose
+    cannot read, when its images are recorded, then the record fails and
+    names the file: there is nothing else that says what it would start."""
+
+    class Broken(ThisMac):
+        def services(self, compose_file: Path) -> list[Service]:
+            raise ImageError(f"{compose_file}: docker compose cannot read it: bad yaml")
+
+    stacklet_dir = a_stacklet(tmp_path, "docs")
+
+    with pytest.raises(ImageError, match="docker-compose.yml"):
+        images_of(stacklet_dir, Broken())
+
+
 def test_an_image_the_mac_does_not_hold_is_told_apart_from_one_without_a_digest(tmp_path):
     """Given one image the Mac does not hold and one it holds without a
     registry digest of its name, when they are recorded, then the first

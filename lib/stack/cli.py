@@ -617,7 +617,8 @@ class CLI:
         A requirement not set up that asks nothing is started first
         (`_start_requirements`); `Stack.up` refuses for any other.
         """
-        failed = self._start_requirements(stacklet_id)
+        failed = (snapshot_cli.waiting(self.stack, stacklet_id)
+                  or self._start_requirements(stacklet_id))
         if failed:
             return failed
         result = self.stack.up(stacklet_id, answers)
@@ -2255,8 +2256,9 @@ def handle_restart(stck, args):
 
     # No argument: restart exactly what is running code the checkout has
     # moved past. `all` stays the sledgehammer for when you want the lot.
+    no_snapshot = getattr(args, "no_snapshot", False)
     if not args.stacklet:
-        _restart_stale(stck, cli, yes=getattr(args, "yes", False))
+        _restart_stale(stck, cli, yes=getattr(args, "yes", False), no_snapshot=no_snapshot)
         return
 
     ids = _many_ids(args)
@@ -2265,7 +2267,9 @@ def handle_restart(stck, args):
         # back up against a dependency that is about to go down.
         with _restart_run(stck, cli._known(ids), cli._known(ids)) as unprepared:
             ids = _left(ids, unprepared)
+            before = snapshot_cli.record_or_exit(stck, ids, no_snapshot)
             down_result = cli.down_many(ids)
+            taken = snapshot_cli.take_or_exit(stck, before)
             if not down_result.get("ok"):
                 failed = {"error": down_result.get("error") or "Some stacklets failed to stop",
                           "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
@@ -2273,6 +2277,7 @@ def handle_restart(stck, args):
                 print_error(failed)
                 sys.exit(1)
             up_result = cli.up_many(ids)
+        snapshot_cli.keep_and_say(stck, taken)
         if not up_result.get("ok"):
             _failed_to_start(_counting(up_result, unprepared))
             sys.exit(1)
@@ -2299,7 +2304,9 @@ def handle_restart(stck, args):
         resting = [st["id"] for st in stck.discover() if st["id"] not in touched]
         with runs.reserve(stck.instance_dir, resting), \
                 _restart_run(stck, touched, []) as unprepared:
+            before = snapshot_cli.record_or_exit(stck, _left(installed, unprepared), no_snapshot)
             down_result = cli.down_many(_left(sorted(stck.running_ids()), unprepared))
+            taken = snapshot_cli.take_or_exit(stck, before)
             if not down_result.get("ok"):
                 failed = {"error": "Some stacklets failed to stop",
                           "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
@@ -2307,6 +2314,7 @@ def handle_restart(stck, args):
                 print_error(failed)
                 sys.exit(1)
             up_result = cli.up_many(_left(installed, unprepared))
+        snapshot_cli.keep_and_say(stck, taken)
         if not up_result.get("ok"):
             _failed_to_start(_counting(up_result, unprepared))
             sys.exit(1)
@@ -2318,8 +2326,11 @@ def handle_restart(stck, args):
         return
 
     with _restart_run(stck, [args.stacklet], cli._known([args.stacklet])):
+        before = snapshot_cli.record_or_exit(stck, [args.stacklet], no_snapshot)
         cli.down(args.stacklet)
+        taken = snapshot_cli.take_or_exit(stck, before)
         result = cli.up(args.stacklet)
+    snapshot_cli.keep_and_say(stck, taken)
     if "error" in result:
         print_error(result); sys.exit(1)
     else:
@@ -2335,7 +2346,7 @@ def _restart_failed(stck, stacklet_ids: list[str], failed: dict) -> None:
         run_log.record_result(stck.instance_dir, sid, {**failed, "stacklet": sid})
 
 
-def _restart_stale(stck, cli, yes=False):
+def _restart_stale(stck, cli, yes=False, no_snapshot=False):
     """Restart the stacklets whose containers predate the code on disk.
 
     Only the ones it can prove: a container stamped with the commit it
@@ -2374,8 +2385,11 @@ def _restart_stale(stck, cli, yes=False):
     # the migrations run after every stale stacklet is back, in
     # dependency order.
     with _restart_run(stck, stale, stale) as unprepared:
-        cli.down_many(_left(stale, unprepared))
-        result = _counting(cli.up_many(_left(stale, unprepared)), unprepared)
+        ids = _left(stale, unprepared)
+        before = snapshot_cli.record_or_exit(stck, ids, no_snapshot)
+        cli.down_many(ids)
+        taken = snapshot_cli.take_or_exit(stck, before)
+        result = _counting(cli.up_many(ids), unprepared)
     failed = {e["stacklet"]: e["result"].get("error", "") for e in result["errors"]}
     for sid in stale:
         if sid in failed:
@@ -2384,6 +2398,7 @@ def _restart_stale(stck, cli, yes=False):
             print(f"  {GREEN}\u2713{RESET} {sid}: restarted")
 
     print()
+    snapshot_cli.keep_and_say(stck, taken)
     _tell_how_to_pair(stck, [sid for sid in stale if sid not in failed])
     if failed:
         sys.exit(1)
@@ -2838,6 +2853,8 @@ def _print_restart_plan(targets: list[str], changed: list[str]) -> None:
     from .updater import touches_framework
     scope = "every running stacklet" if touches_framework(changed) else ", ".join(targets)
     print(f"\n  Needs a restart afterwards: {scope or 'nothing'}")
+    if targets:
+        print(snapshot_cli.release.plan_line())
 
 
 def _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets):
@@ -3422,6 +3439,7 @@ def _main():
                    help="Stacklets to restart (space or comma separated), "
                         "'all', or nothing for whatever is running stale code")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation")
+    p.add_argument("--no-snapshot", action="store_true", help="Start without a snapshot first")
     p = sub.add_parser("update")
     p.add_argument("tag", nargs="?", default=None,
                    help="Release to move to (default: the newest release; a pre-release "

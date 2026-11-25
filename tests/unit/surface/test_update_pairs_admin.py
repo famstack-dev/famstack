@@ -325,6 +325,9 @@ def test_the_bare_restart_after_an_update_says_how_to_pair(checkout):
     git("commit", "-q", "-am", "the release the update moved to")
 
     checkout.docker.commits(core=started_from)
+    # Stopped as a real daemon stops it: the restart takes core's snapshot
+    # while it is stopped, before it starts it on the new code.
+    checkout.docker.follows_compose()
     code, printed = checkout.stack("restart")
 
     assert code == 0, printed

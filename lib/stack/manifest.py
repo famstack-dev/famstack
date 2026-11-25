@@ -1,12 +1,13 @@
 """The manifest: the record of what each stacklet runs, kept as MANIFEST.json.
 
 A snapshot before an update keeps one manifest in its folder. A later
-backup keeps one too. The manifest records the checkout's commit and
-version. It holds one stacklet record for each stacklet. A stacklet
-record says whether the stacklet is up and which commit it started from.
-It lists the migrations that ran on the stacklet's data and the image of
-each service. A rollback or a restore reads the manifest to go back to
-the same code, the same images and the same migrations.
+backup keeps one too. The manifest records the commit and the version
+that the stacklets ran. It holds one stacklet record for each stacklet.
+A stacklet record says whether the stacklet is up and which commit it
+started from. It lists the migrations that ran on the stacklet's data
+and the image of each service. A rollback or a restore reads the
+manifest to go back to the same code, the same images and the same
+migrations.
 
     from stack import manifest
     from stack.images import DockerImages
@@ -57,10 +58,12 @@ Why it works this way:
 
 The caller says whether a stacklet is up and which commit it started from
 (`Stack.is_running`, `Stack.started_commits`). The caller also gives the
-checkout's commit and version (`stack.updater.Checkout`,
-`running_version`). This module takes no snapshot and has no command. The
-snapshot store calls it. A release writes the file and a later release
-reads it, so the file's shape is a contract between releases.
+commit and the version they ran (`stack.updater.Checkout`): the checkout's
+for `stack snapshot create`, the release before the update for the
+restart's snapshot (`stack.snapshot.release`). This module takes no
+snapshot and has no command. The snapshot store calls it. A release
+writes the file and a later release reads it, so the file's shape is a
+contract between releases.
 """
 
 from __future__ import annotations
@@ -128,9 +131,11 @@ class Manifest:
     """The record of a snapshot or a backup.
 
     `kind` is "snapshot" or "backup". `name` is the folder's name.
-    `version` and `commit` are the checkout's when the record was taken.
-    A snapshot's `applies` is the release that the restart after it
-    applies. `stacklets` maps each stacklet's id to its record.
+    `version` and `commit` name the release and the commit that the
+    stacklets ran when the record was taken. After `stack update` that is
+    the release before it, not the checkout's. A snapshot's `applies` is
+    the release that the restart after it applies. `stacklets` maps each
+    stacklet's id to its record.
 
         Manifest(kind="snapshot", name="2026-11-24T2300Z",
                  version="0.4.0-rc.1", commit="f5834a67",

@@ -247,6 +247,16 @@ class Checkout:
         code, out, _ = self._run("describe", "--tags", "--always", "--dirty")
         return out if code == 0 else ""
 
+    def describe_of(self, commit: str) -> str:
+        """The position of `commit`, as `describe` says it for HEAD: a
+        tag, a tag plus commits, or the bare SHA. Empty when git does not
+        know the commit.
+
+            checkout.describe_of("f5834a67")   # "v0.4.0-rc.1"
+        """
+        code, out, _ = self._run("describe", "--tags", "--always", commit)
+        return out if code == 0 else ""
+
     def commits_ahead_of(self, ref: str) -> int:
         """How many commits HEAD carries that `ref` does not."""
         code, out, _ = self._run("rev-list", "--count", f"{ref}..HEAD")

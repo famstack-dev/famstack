@@ -2,7 +2,7 @@
 
 A snapshot holds the state of stopped stacklets and the stack's
 configuration, as they were before a change. This module takes a
-snapshot and lists the snapshots. It stops and starts nothing: the caller
+snapshot, lists the snapshots and removes one. It stops and starts nothing: the caller
 stops the stacklets first (`stack.snapshot.cli`, later the restart that
 applies a release).
 
@@ -13,6 +13,7 @@ applies a release).
     taken.snapshot.name        # "2026-11-24T2114Z"
     taken.cloned               # True on APFS, False when the files were copied
     store.snapshots(data_root) # [Snapshot(name="2026-11-24T2114Z", …), …], newest first
+    store.remove(snapshot)     # renamed to `.removing-<name>`, then deleted
 
 One snapshot, on disk:
 
@@ -82,6 +83,7 @@ __all__ = [
     "ThisVolume",
     "Volume",
     "archive_paths",
+    "remove",
     "snapshots",
     "take",
 ]
@@ -99,6 +101,9 @@ _CONFIG_ITEMS = ("stack.toml", "users.toml", ".stack")
 # The prefix of a snapshot that is still being written. It starts with a
 # dot, so `snapshots` never lists it.
 _TAKING = ".taking-"
+
+# The prefix of a snapshot that is being removed, for the same reason.
+_REMOVING = ".removing-"
 
 # A snapshot's name: the time it was taken, in UTC, to the minute. A second
 # snapshot in the same minute gets "-2", "-3", ….
@@ -319,6 +324,30 @@ def snapshots(data_root: Path) -> list[Snapshot]:
         if record is not None:
             found.append(Snapshot(path.name, path, record))
     return sorted(found, key=lambda s: _order_of(s.name), reverse=True)
+
+
+def remove(snapshot: Snapshot) -> None:
+    """Remove `snapshot`, one that `snapshots` listed, with its folder.
+
+    The folder is renamed to `.removing-<name>` first and deleted after,
+    so a removal that stops halfway leaves a folder that `snapshots`
+    never lists, and never half a snapshot under its name. Refuses with
+    `SnapshotError` a path that is not a snapshot's folder in
+    `.snapshots/`, and raises it when the folder cannot be renamed.
+
+        remove(snapshots(Path("~/famstack-data"))[-1])
+    """
+    path = Path(snapshot.path)
+    if path.parent.name != SNAPSHOTS_FOLDER or not _NAME.match(path.name) or not path.is_dir():
+        raise SnapshotError(f"{path}: not a snapshot in {SNAPSHOTS_FOLDER}/, so it is not removed")
+    removing = path.parent / f"{_REMOVING}{path.name}"
+    try:
+        path.rename(removing)
+    except OSError as error:
+        raise SnapshotError(f"the snapshot {path.name} cannot be removed: {error}") from error
+    # Safe to delete: the folder is a snapshot of the store, renamed above,
+    # and holds clones or copies. The data folders are never touched.
+    shutil.rmtree(removing, ignore_errors=True)
 
 
 def archive_paths(stacklet_dir: Path, data_root: Path) -> list[Path]:
