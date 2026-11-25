@@ -24,6 +24,7 @@ from .prompt import (
     heading, banner, rule, Spinner, confirm, kv, status_list,
 )
 from .family import LANGUAGES
+from .install_release import offer_a_release
 from .profile import CHAT_MODELS, Profile, memory_gb, profile_for
 
 
@@ -580,7 +581,9 @@ def unfinished(stck) -> bool:
 def install():
     """`./stack` on a new Mac: the dependency checks, core, then the browser.
 
-    It welcomes, says what it will do and asks to start; after that it asks
+    It welcomes, and on a fresh clone of `main` first offers a release
+    (`install_release`): a pick runs the installer of that release in place
+    of this one. Then it says what it will do and asks to start; after that it asks
     what the checks need (installing OrbStack, starting Docker) and, once,
     how the AI runs (`_ask_the_ai_route`). It writes stack.toml with the time
     zone and the language it detects, makes the admin password, starts
@@ -607,6 +610,11 @@ def install():
     warn(f"{RED}{BOLD}Local network only.{RESET} famstack runs plain HTTP and trusts your LAN.")
     out("   Never install it on a machine reachable from the public internet:")
     out("   no VPS, no forwarded ports. For remote access, use a VPN (e.g. Tailscale).")
+    # The first question: a fresh clone of main is offered a release, and a
+    # pick runs the installer of that release in place of this one. It
+    # comes after the screen is cleared, so its notes stay readable.
+    if not offer_a_release(REPO_ROOT, sys.argv[1:]):
+        return None
     nl()
     # The question holds the welcome on screen: everything after it prints
     # core's start, clears the screen and opens the browser.
