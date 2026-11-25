@@ -19,10 +19,8 @@ module reads the command line and prints. It holds the run locks of the
 entry's stacklets from its plan to its delete, so a rollback cannot
 start on the snapshot while the admin reads the question.
 
-Debt: a question left open keeps the entry's
-stacklets locked: `stack up` and `stack restart` of them refuse until
-the terminal answers or closes. Trigger: a report of a held lock, or a
-question on a page or in a bot.
+A question left open keeps those locks: the debt is in
+`stack.snapshot.answer`.
 """
 
 from __future__ import annotations
@@ -31,9 +29,9 @@ import sys
 
 from .. import runs
 from ..prompt import DIM, GREEN, ORANGE, RED, RESET
-from . import removal, store
+from . import files, removal
 from .answer import ask, print_answer
-from .store import SnapshotError
+from .errors import SnapshotError
 
 RUN_ACTION = "snapshot remove"
 """The action a remove writes into the run locks it holds (`stack.runs`)."""
@@ -80,7 +78,7 @@ def entry_answer(entry: removal.Entry) -> dict:
         #  "version": "0.4.0-rc.1", "stacklets": ["docs"],
         #  "snapshot": "2026-11-25T2114Z", "finished": True}
     """
-    found = {"name": entry.name, "kind": entry.kind, "path": str(entry.path)}
+    found: dict = {"name": entry.name, "kind": entry.kind, "path": str(entry.path)}
     if entry.kind == removal.INCOMPLETE:
         return {**found, **_sized(entry)}
     if entry.unreadable is not None:
@@ -125,7 +123,7 @@ def _removal_lines(entry: removal.Entry) -> list[str]:
         facts = "a stop halfway left it"
     else:
         facts = f"{entry.version}, {', '.join(entry.stacklets)}"
-    size = store.size_text(entry.size_bytes or 0)
+    size = files.size_text(entry.size_bytes or 0)
     lines = ["", f"  Remove {what} {entry.name}: {facts}, {size}"]
     if entry.kind == removal.REPLACED:
         lines.append(f"  {ORANGE}⚠{RESET} It is the only copy of the state from before the "

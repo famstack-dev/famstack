@@ -1,8 +1,9 @@
 """The snapshot store: a stopped stacklet's state, cloned into `.snapshots/`.
 
 A snapshot before a change is the way back when the change breaks a
-stacklet. These tests drive `stack.snapshot.store` through its public
-functions, as `stack snapshot create` and the restart call it.
+stacklet. These tests drive `stack.snapshot.store` and
+`stack.snapshot.files` through their public functions, as
+`stack snapshot create` and the restart call them.
 
 The data folder, the instance folder and the files are real, in the
 test's temporary folder. On this Mac that folder is on APFS, so the real
@@ -25,14 +26,12 @@ from pathlib import Path
 import pytest
 
 from stack.manifest import MANIFEST_FILE, Manifest, StackletRecord
+from stack.snapshot.errors import SnapshotError
+from stack.snapshot.files import CONFIG_FOLDER, archive_paths, clone_back
 from stack.snapshot.store import (
-    CONFIG_FOLDER,
     SNAPSHOTS_FOLDER,
-    SnapshotError,
     Snapshot,
-    archive_paths,
     REPLACED_FOLDER,
-    clone_back,
     discard,
     is_name,
     remove,
@@ -289,7 +288,7 @@ def test_a_clone_back_never_writes_over_a_file_that_is_there(mac, volume):
     live.write_bytes(b"homer's invoices and the parking ticket")
 
     with pytest.raises(SnapshotError, match="base.dat"):
-        clone_back(taken.snapshot, "docs", target, volume)
+        clone_back(taken.snapshot.path, taken.snapshot.name, "docs", target, volume)
 
     assert live.read_bytes() == b"homer's invoices and the parking ticket"
 

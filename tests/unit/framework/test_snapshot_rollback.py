@@ -1,3 +1,4 @@
+# ruff: noqa: F811  (the imported fixtures are the tests' parameters)
 """`stack rollback`, as the admin runs it after an update that broke a page.
 
 The admin ran `stack update` to rc.2 and `stack restart`. The restart took
@@ -9,7 +10,7 @@ their current state aside, clones the snapshot back, checks out the
 snapshot's commit, and starts them on the images they ran before.
 
 The instance, the checkout and the Docker stand-in are those of
-`test_snapshot_at_restart.py`: a git checkout with the releases rc.1 and
+`snapshot_instance.py`, shared by the snapshot tests: a git checkout with the releases rc.1 and
 rc.2, a data folder and an instance folder in the test's folder, and
 `docker_with_projects`, which follows `compose up` and `compose stop` and
 answers `image inspect` and `image tag`. Every `./stack` command is a
@@ -20,92 +21,36 @@ rollback is one more. A test runs three to six of them, about 2 seconds.
 from __future__ import annotations
 
 import json
-import os
-import pty
-import subprocess
-import sys
 
 import pytest
 
-from tests.unit.framework.test_snapshot_at_restart import (
+from tests.unit.framework.snapshot_instance import (  # noqa: F401 (the fixtures)
+    ALBUMS,
+    Checkout,
+    LETTER,
+    NEWER_IMAGE_ID,
+    NEW_ALBUMS,
     OLD_IMAGE,
     OLD_IMAGE_ID,
-    REPO,
-    STACK_SECONDS,
-    Checkout,
-    Ran,
-    _checkout,
+    PHOTOS_IMAGE,
+    PHOTOS_IMAGE_ID,
+    checkout_fails,
+    clone_fails,
+    everything_in,
+    head,
+    in_terminal,
+    move_fails,
+    new_checkout,
+    replaced_folder,
+    replaced_folders,
+    rollback,
+    rolled_back,
+    stopped_at_the_clone_of_docs,
+    tag_fails,
+    tags_set,
+    updated,
 )
 
-# The image that the tag of rc.1 names after Watchtower or a pull moved
-# it: a newer build of the same tag.
-NEWER_IMAGE_ID = "sha256:" + "9" * 64
-
-LETTER = "homer's invoices and the letter from the school"
-
-# The photos' album list in the snapshot, and after the update.
-ALBUMS = '["beach"]'
-NEW_ALBUMS = '["beach", "springfield fair"]'
-
-PHOTOS_IMAGE = "ghcr.io/immich-app/immich-server:v2.1.0"
-PHOTOS_IMAGE_ID = "sha256:" + "5" * 64
-
-
-@pytest.fixture
-def updated(tmp_path, monkeypatch, docker_with_projects) -> Checkout:
-    """The checkout after `stack update` to rc.2 and the restart: one
-    snapshot, docs on rc.2, and the family's changes since."""
-    checkout = _checkout(tmp_path, monkeypatch, docker_with_projects, host=False)
-    (checkout.data / "photos" / "albums.json").write_text(ALBUMS)
-    # Each tag names the image that runs, as after the pull that started it.
-    checkout.docker.tags(**{OLD_IMAGE: OLD_IMAGE_ID, PHOTOS_IMAGE: PHOTOS_IMAGE_ID})
-    ran = checkout.stack("restart")
-    assert ran.code == 0, ran.err
-    (checkout.data / "docs" / "postgres" / "base.dat").write_text(LETTER)
-    (checkout.data / "docs" / "paperless" / "media" / "new-bill.pdf").write_text("%PDF new")
-    (checkout.data / "photos" / "albums.json").write_text(NEW_ALBUMS)
-    checkout.docker.forget()
-    return checkout
-
-
-def rollback(checkout: Checkout, *args: str) -> Ran:
-    """`stack rollback --yes --json <args>`, as a script runs it."""
-    return checkout.stack("rollback", "--yes", "--json", *args)
-
-
-def in_terminal(checkout: Checkout, *args: str, answer: str) -> Ran:
-    """`./stack <args>` from a terminal, with `answer` typed at its question."""
-    typing, terminal = pty.openpty()
-    try:
-        os.write(typing, f"{answer}\n".encode())
-        done = subprocess.run([sys.executable, "-m", "stack", *args], cwd=checkout.root,
-                              stdin=terminal, capture_output=True, text=True,
-                              env={**os.environ, "PYTHONPATH": str(REPO / "lib")},
-                              timeout=STACK_SECONDS)
-    finally:
-        os.close(typing)
-        os.close(terminal)
-    return Ran(done.returncode, done.stdout, done.stderr)
-
-
-def head(checkout: Checkout) -> str:
-    return checkout.git("rev-parse", "--short", "HEAD")
-
-
-def replaced_folders(checkout: Checkout) -> list[str]:
-    folder = checkout.data / ".snapshots" / "replaced"
-    return sorted(p.name for p in folder.iterdir()) if folder.is_dir() else []
-
-
-def everything_in(folder) -> list[str]:
-    """Each path below `folder`, with the content of each file."""
-    return sorted(f"{p.relative_to(folder)}={p.read_text() if p.is_file() else ''}"
-                  for p in folder.rglob("*"))
-
-
-def tags_set(checkout: Checkout) -> list[list[str]]:
-    """Each `docker image tag` the stand-in got."""
-    return [argv for argv in checkout.docker.commands() if argv[:2] == ["image", "tag"]]
 
 
 def nothing_changed(checkout: Checkout, data_before: list[str], head_before: str) -> None:
@@ -240,7 +185,7 @@ def test_without_a_snapshot_it_refuses_and_names_the_list(tmp_path, monkeypatch,
                                                           docker_with_projects):
     """Given no snapshot, when the admin runs `stack rollback`, then it
     refuses, names `stack snapshot list`, and changes nothing."""
-    checkout = _checkout(tmp_path, monkeypatch, docker_with_projects, host=False)
+    checkout = new_checkout(tmp_path, monkeypatch, docker_with_projects, host=False)
     data_before, head_before = everything_in(checkout.data), head(checkout)
     checkout.docker.forget()
 
@@ -361,30 +306,6 @@ def _stop_fails(c: Checkout):
     return lambda: c.docker.fail("stop", "", stacklet="photos")
 
 
-def _checkout_fails(c: Checkout):
-    lock = c.root / ".git" / "index.lock"
-    lock.write_text("")
-    return lock.unlink
-
-
-def _move_fails(c: Checkout):
-    (c.data / "photos").chmod(0o555)
-    return lambda: (c.data / "photos").chmod(0o755)
-
-
-def _clone_fails(c: Checkout):
-    [name] = c.snapshot_folders()
-    unreadable = c.data / ".snapshots" / name / "photos" / "library" / "beach.jpg"
-    unreadable.chmod(0)
-    return lambda: unreadable.chmod(0o644)
-
-
-def _tag_fails(c: Checkout):
-    c.docker.tags(**{OLD_IMAGE: NEWER_IMAGE_ID})
-    c.docker.fail("tag", "Error response from daemon: no space left on device")
-    return lambda: c.docker.fail("tag", "")
-
-
 def _start_fails(c: Checkout):
     c.docker.fail("up", "port is already allocated", stacklet="photos")
     return lambda: c.docker.fail("up", "", stacklet="photos")
@@ -394,35 +315,12 @@ def _start_fails(c: Checkout):
 # the entries of the replaced folder at the end besides docs and photos.
 STOPS = [
     ("stop", _stop_fails, set()),
-    ("checkout", _checkout_fails, set()),
-    ("move aside", _move_fails, set()),
-    ("clone", _clone_fails, {"photos.2"}),
-    ("tag", _tag_fails, set()),
+    ("checkout", checkout_fails, set()),
+    ("move aside", move_fails, set()),
+    ("clone", clone_fails, {"photos.2"}),
+    ("tag", tag_fails, set()),
     ("start", _start_fails, set()),
 ]
-
-
-def replaced_folder(checkout: Checkout):
-    [time] = replaced_folders(checkout)
-    return checkout.data / ".snapshots" / "replaced" / time
-
-
-def rolled_back(checkout: Checkout, extra: set[str]) -> None:
-    """The end state of every rollback: one replaced folder with each
-    stacklet's state whole, the snapshot's state in the data folders, the
-    new scan where it was, the snapshot's commit, both stacklets running."""
-    replaced = replaced_folder(checkout)
-    assert {p.name for p in replaced.iterdir()} == {"ROLLBACK.json", "docs", "photos", *extra}
-    assert (replaced / "docs" / "postgres" / "base.dat").read_text() == LETTER
-    assert (replaced / "photos" / "albums.json").read_text() == NEW_ALBUMS
-    assert (replaced / "photos" / "library" / "beach.jpg").read_text() == "JPEG"
-    assert (checkout.data / "docs" / "postgres" / "base.dat").read_text() == "homer's invoices"
-    assert (checkout.data / "photos" / "albums.json").read_text() == ALBUMS
-    assert (checkout.data / "docs" / "paperless" / "media" / "new-bill.pdf").exists()
-    assert head(checkout) == checkout.rc1
-    assert checkout.docker.state_of("docs") == "running"
-    assert checkout.docker.state_of("photos") == "running"
-    assert "finished" in json.loads((replaced / "ROLLBACK.json").read_text())["done"]
 
 
 def test_a_record_that_cannot_be_written_starts_docs_again_on_its_release(updated):
@@ -497,7 +395,7 @@ def test_a_restore_that_stops_twice_keeps_each_half_state(updated):
     time, then each half restore is in its own entry (`photos.2`,
     `photos.3`) and the rollback ends whole: no run waits for a folder
     the admin has to move by hand."""
-    fixed = _clone_fails(updated)
+    fixed = clone_fails(updated)
     try:
         assert rollback(updated).code == 1
         assert rollback(updated).code == 1
@@ -536,24 +434,12 @@ def test_a_rerun_after_a_failed_start_keeps_what_the_family_did_since(updated):
     assert updated.docker.state_of("photos") == "running"
 
 
-def _stopped_at_the_clone_of_docs(checkout: Checkout) -> None:
-    """Run a rollback that stops at the restore of docs, then fix it."""
-    [name] = checkout.snapshot_folders()
-    unreadable = checkout.data / ".snapshots" / name / "docs" / "postgres" / "base.dat"
-    unreadable.chmod(0)
-    try:
-        assert rollback(checkout).code == 1
-    finally:
-        unreadable.chmod(0o644)
-    checkout.docker.forget()
-
-
 def test_a_rerun_never_moves_a_state_over_one_moved_before(updated):
     """Given a rollback that stopped before it moved photos, and a file
     in the replaced folder where photos' albums would go, when the admin
     runs `stack rollback` again, then it refuses and names the file, and
     both files keep their content."""
-    _stopped_at_the_clone_of_docs(updated)
+    stopped_at_the_clone_of_docs(updated)
     there = replaced_folder(updated) / "photos" / "albums.json"
     there.parent.mkdir()
     there.write_text('["an older copy"]')
@@ -570,7 +456,7 @@ def test_a_rerun_checks_the_images_again_before_it_goes_on(updated):
     """Given a rollback that stopped at a restore, and the image docs ran
     before removed since, when the admin runs `stack rollback` again,
     then it refuses before it goes on and names the image."""
-    _stopped_at_the_clone_of_docs(updated)
+    stopped_at_the_clone_of_docs(updated)
     updated.docker.drops_image(OLD_IMAGE_ID)
     data_before = everything_in(updated.data)
 
@@ -587,7 +473,7 @@ def test_a_rollback_to_another_snapshot_waits_until_the_stopped_one_is_finished(
     snapshot, then it refuses, names the one that waits, and changes
     nothing."""
     [name] = updated.snapshot_folders()
-    _stopped_at_the_clone_of_docs(updated)
+    stopped_at_the_clone_of_docs(updated)
     data_before, head_before = everything_in(updated.data), head(updated)
 
     ran = rollback(updated, "2026-01-01T0000Z")
@@ -601,7 +487,7 @@ def test_the_plan_of_a_rerun_names_the_rollback_it_finishes_and_what_is_left(upd
     """Given a rollback that stopped at the restore of photos, when the
     admin runs `stack rollback --json` in a terminal and declines, then
     the plan names the rollback it finishes and the steps that are left."""
-    fixed = _clone_fails(updated)
+    fixed = clone_fails(updated)
     try:
         assert rollback(updated).code == 1
     finally:
@@ -643,7 +529,7 @@ def test_while_a_rollback_waits_to_finish_stack_up_refuses_and_names_it(updated)
     """Given a rollback that stopped halfway, when the admin runs `stack up
     docs`, then docs does not start on half a state, and the stack names
     `stack rollback`."""
-    _stopped_at_the_clone_of_docs(updated)
+    stopped_at_the_clone_of_docs(updated)
 
     ran = updated.stack("up", "docs")
 

@@ -254,7 +254,8 @@ def test_no_shipped_archive_source_holds_the_snapshots_folder():
     """Given the stacklets the release ships, then no `[[backup.archive]]`
     source is the data folder itself or holds `.snapshots/`: the backup's
     sync copies only those sources, so it never copies a snapshot."""
-    from stack.snapshot.store import SNAPSHOTS_FOLDER, archive_paths
+    from stack.snapshot.files import archive_paths
+    from stack.snapshot.store import SNAPSHOTS_FOLDER
 
     repo = Path(__file__).resolve().parents[3]
     data = Path("/data")
@@ -335,8 +336,10 @@ def test_an_unexpected_error_in_the_take_still_starts_the_stacklet(checkout):
     import argparse
 
     from stack import Stack
+    from stack.cli import CLI, running_version_of
     from stack.output import CollectorOutput
     from stack.snapshot import cli as snapshot_cli
+    from stack.snapshot.lifecycle import Lifecycle
     from stack.snapshot.volume import ThisVolume
 
     class Exploding(ThisVolume):
@@ -351,7 +354,10 @@ def test_an_unexpected_error_in_the_take_still_starts_the_stacklet(checkout):
     args = argparse.Namespace(verb="create", stacklets=["docs"], json=True)
 
     with pytest.raises(RuntimeError, match="went away"):
-        snapshot_cli.run(stck, args, volume=Exploding())
+        cli = CLI(stck)
+        lifecycle = Lifecycle(down=cli.down_many, up=cli.up_many,
+                              version=lambda: running_version_of(stck))
+        snapshot_cli.run(stck, args, lifecycle, volume=Exploding())
 
     assert checkout.docker.compose_steps()[-1] == "up"
     assert checkout.docker.state_of("docs") == "running"

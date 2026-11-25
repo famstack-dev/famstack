@@ -22,7 +22,7 @@ Every `./stack` of a test runs this release's code. How a release without
 the record starts after a stop is proven by the rollback drill, on a build
 of a release without `stack rollback`.
 
-The instance is the one of `test_snapshot_rollback.py`: rc.2 running,
+The instance is the one of `snapshot_instance.py`: rc.2 running,
 the snapshot of rc.1, and the family's changes since. Each test runs
 three to six `./stack` processes, about 2 seconds.
 """
@@ -36,21 +36,22 @@ import pytest
 
 from stack.snapshot import rollback_record
 
-from tests.unit.framework.test_snapshot_rollback import (
+from tests.unit.framework.snapshot_instance import (  # noqa: F401 (the fixtures)
     ALBUMS,
+    Checkout,
     NEWER_IMAGE_ID,
     OLD_IMAGE,
-    Checkout,
-    _checkout_fails,
-    _clone_fails,
-    _move_fails,
-    _tag_fails,
+    checkout_fails,
+    clone_fails,
     head,
+    move_fails,
     replaced_folder,
     rollback,
     rolled_back,
-    updated,  # noqa: F401  (the fixture)
+    tag_fails,
+    updated,
 )
+
 
 # A git hook. It writes one JSON line: the steps the record names as
 # done, the restored files and how many Docker commands ran so far. With
@@ -165,8 +166,8 @@ def test_the_checkout_comes_after_every_restore_and_tag_and_before_the_start(upd
 
 # ── A stop before the checkout ───────────────────────────────────────────
 
-BEFORE_THE_CHECKOUT = [("move aside", _move_fails), ("clone", _clone_fails),
-                       ("tag", _tag_fails)]
+BEFORE_THE_CHECKOUT = [("move aside", move_fails), ("clone", clone_fails),
+                       ("tag", tag_fails)]
 
 
 @pytest.mark.parametrize("step,stops_it", BEFORE_THE_CHECKOUT,
@@ -283,7 +284,7 @@ def test_the_refusal_says_whether_a_state_may_be_half_restored(updated):
     was back, when the admin runs `stack up` for each, then both refuse,
     and the answer says what is true: photos' state may be half restored,
     docs' state is whole and waits only for the rollback to end."""
-    fixed = _clone_fails(updated)
+    fixed = clone_fails(updated)
     try:
         assert rollback(updated).code == 1
     finally:
@@ -299,7 +300,7 @@ def test_a_checkout_git_refuses_after_the_restore_starts_nothing(updated):
     each restore and no later step, the message says to run `stack
     rollback` again, and `stack up` refuses the stacklets until then: the
     new release's code must not start on the old state."""
-    fixed = _checkout_fails(updated)
+    fixed = checkout_fails(updated)
     try:
         ran = rollback(updated)
     finally:

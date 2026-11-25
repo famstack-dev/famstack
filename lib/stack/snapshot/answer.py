@@ -12,6 +12,17 @@ reads one JSON document.
                      lambda result: [f"  Removed {result['removed']}."])
     print_answer({"error": "There is no snapshot 2026-01-01T0000Z."}, False, None)
     # stderr: "  ✗  There is no snapshot 2026-01-01T0000Z.", exit 1
+
+`stack snapshot remove` and `stack rollback` ask while they hold the run
+locks of the stacklets they change (`runs.reserve`), so nothing starts
+one of them between the plan and the answer.
+
+Debt: a question left open keeps those stacklets locked. `stack up` and
+`stack restart` of them, and for a rollback every `stack snapshot
+remove`, refuse until the terminal answers or closes. Trigger: a report
+of a held lock, or a question on a page or in a bot; then `ask` gets a
+timeout, or the lock moves after the answer with the second plan as the
+only guard.
 """
 
 from __future__ import annotations

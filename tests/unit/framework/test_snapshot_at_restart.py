@@ -1,3 +1,4 @@
+# ruff: noqa: F811  (the imported fixtures are the tests' parameters)
 """The snapshot that `stack restart` takes when it applies a release, as the admin runs it.
 
 `stack update` moves the checkout to a release and starts nothing. The
@@ -8,6 +9,7 @@ process of its own (`python -m stack`), from a fabricated git checkout
 with two stacklets, `docs` and `photos`, and two releases: `v0.4.0-rc.1`,
 which both run, and `v0.4.0-rc.2`, which changes both compose files. The
 checkout of `host_checkout` adds `speech`, a stacklet without containers.
+Both come from `snapshot_instance.py`, which the snapshot tests share.
 
 Docker is the stand-in `docker_with_projects`. It follows `compose up` and
 `compose stop` as a real daemon does, says that docs' containers started
@@ -22,194 +24,19 @@ test runs two to four of them and git a few times, one to two seconds.
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from stack import manifest as manifests
 
-REPO = Path(__file__).resolve().parents[3]
-
-# How long one `./stack` command may take here.
-STACK_SECONDS = 60
-
-DOCS_TOML = """
-id = "docs"
-name = "Documents"
-category = "test"
-
-[[backup.archive]]
-name = "media"
-path = "{data_dir}/docs/paperless/media"
-"""
-
-COMPOSE = """
-name: stack-docs
-services:
-  paperless:
-    image: ghcr.io/paperless-ngx/paperless-ngx:{tag}
-    container_name: stack-docs-paperless
-"""
-
-PHOTOS_TOML = """
-id = "photos"
-name = "Photos"
-category = "test"
-"""
-
-PHOTOS_COMPOSE = """
-name: stack-photos
-services:
-  server:
-    image: ghcr.io/immich-app/immich-server:{tag}
-    container_name: stack-photos-server
-"""
-
-SPEECH_TOML = """
-id = "speech"
-name = "Speech"
-category = "test"
-version = "{version}"
-"""
-
-OLD_IMAGE = "ghcr.io/paperless-ngx/paperless-ngx:2.20.1"
-OLD_IMAGE_ID = "sha256:" + "4" * 64
-OLD_DIGEST = "ghcr.io/paperless-ngx/paperless-ngx@sha256:" + "a" * 64
-
-
-@dataclass
-class Ran:
-    code: int
-    out: str
-    err: str
-
-
-class Checkout:
-    """A git checkout on rc.2, with docs set up and running rc.1.
-
-    `stack(...)` runs `./stack` against it, as the admin does.
-    """
-
-    def __init__(self, root: Path, monkeypatch, docker, host: bool = False):
-        self.root = root / "checkout"
-        self.instance = root / "instance"
-        self.data = root / "data"
-        self.docker = docker
-        docs = self.root / "stacklets" / "docs"
-        docs.mkdir(parents=True)
-        (docs / "stacklet.toml").write_text(DOCS_TOML)
-        (docs / "docker-compose.yml").write_text(COMPOSE.format(tag="2.20.1"))
-        photos = self.root / "stacklets" / "photos"
-        photos.mkdir()
-        (photos / "stacklet.toml").write_text(PHOTOS_TOML)
-        (photos / "docker-compose.yml").write_text(PHOTOS_COMPOSE.format(tag="v2.1.0"))
-        speech = self.root / "stacklets" / "speech"
-        if host:
-            speech.mkdir()
-            (speech / "stacklet.toml").write_text(SPEECH_TOML.format(version="1"))
-        (self.root / ".gitignore").write_text(".env\n")
-        self.git("init", "-q", "-b", "main")
-        self.release("v0.4.0-rc.1")
-        self.rc1 = self.git("rev-parse", "--short", "HEAD")
-        (docs / "docker-compose.yml").write_text(COMPOSE.format(tag="2.20.2"))
-        (photos / "docker-compose.yml").write_text(PHOTOS_COMPOSE.format(tag="v2.2.0"))
-        if host:
-            (speech / "stacklet.toml").write_text(SPEECH_TOML.format(version="2"))
-        self.release("v0.4.0-rc.2")
-        self.rc2 = self.git("rev-parse", "--short", "HEAD")
-
-        (self.instance / ".stack").mkdir(parents=True)
-        for sid in ("docs", "photos", *(["speech"] if host else [])):
-            (self.instance / ".stack" / f"{sid}.setup-done").touch()
-        (root / "extensions").mkdir()
-        (self.instance / "stack.toml").write_text(
-            f'[core]\nname = "stack"\ndomain = ""\nhost = "127.0.0.1"\n'
-            f'data_dir = "{self.data}"\nextension_dirs = ["{root / "extensions"}"]\n'
-            'timezone = "America/Chicago"\nlanguage = "en"\n')
-        (self.instance / "users.toml").write_text('[[users]]\nid = "homer"\nrole = "admin"\n')
-        (self.instance / ".stack" / "secrets.toml").write_text('global__ADMIN_PASSWORD = "donuts"\n')
-        live = self.data / "docs"
-        (live / "postgres").mkdir(parents=True)
-        (live / "postgres" / "base.dat").write_text("homer's invoices")
-        (live / "paperless" / "media").mkdir(parents=True)
-        (live / "paperless" / "media" / "dentist-bill.pdf").write_text("%PDF")
-        (self.data / "photos" / "library").mkdir(parents=True)
-        (self.data / "photos" / "library" / "beach.jpg").write_text("JPEG")
-        if host:
-            # A stacklet without containers is up while its stamp holds the
-            # commit it started from, as `stack up` writes it.
-            (self.data / "speech").mkdir()
-            (self.data / "speech" / "voice.onnx").write_text("weights")
-            (self.instance / ".stack" / "speech.up").write_text(self.rc1)
-        monkeypatch.setenv("STACK_DIR", str(self.instance))
-
-        docker.commits(docs=self.rc1, photos=self.rc1)
-        docker.runs_image("docs", "paperless", OLD_IMAGE, OLD_IMAGE_ID, OLD_DIGEST)
-        docker.runs_image("photos", "server", "ghcr.io/immich-app/immich-server:v2.1.0",
-                          "sha256:" + "5" * 64, "ghcr.io/immich-app/immich-server@sha256:" + "b" * 64)
-
-    def git(self, *args: str) -> str:
-        """git in the checkout, without the hooks or the identity of this Mac."""
-        done = subprocess.run(
-            ["git", "-c", "core.hooksPath=/dev/null", "-c", "user.name=Homer",
-             "-c", "user.email=homer@example.com", "-c", "tag.gpgSign=false",
-             "-c", "commit.gpgSign=false", *args],
-            cwd=self.root, capture_output=True, text=True, check=True)
-        return done.stdout.strip()
-
-    def release(self, tag: str) -> None:
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", f"chore: release {tag}")
-        self.git("tag", "-a", tag, "-m", tag)
-
-    def stack(self, *args: str) -> Ran:
-        """`./stack <args>` as a process of its own, from the checkout's
-        folder, with the stand-ins first on `PATH`."""
-        done = subprocess.run([sys.executable, "-m", "stack", *args], cwd=self.root,
-                              env={**os.environ, "PYTHONPATH": str(REPO / "lib")},
-                              capture_output=True, text=True, timeout=STACK_SECONDS)
-        return Ran(done.returncode, done.stdout, done.stderr)
-
-    def snapshot_folders(self) -> list[str]:
-        folder = self.data / ".snapshots"
-        return sorted(p.name for p in folder.iterdir()) if folder.is_dir() else []
-
-    def manifest(self, name: str) -> dict:
-        return json.loads((self.data / ".snapshots" / name / "MANIFEST.json").read_text())
-
-    def older_snapshot(self, name: str) -> None:
-        """A whole snapshot taken before, named for its time."""
-        folder = self.data / ".snapshots" / name
-        (folder / "docs").mkdir(parents=True)
-        manifests.write(folder, manifests.Manifest(kind="snapshot", name=name,
-                                                   version="0.3.0", commit="0ld0ld0"))
-
-
-def _checkout(tmp_path, monkeypatch, docker_with_projects, host: bool) -> Checkout:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "tmutil").write_text(f'#!/bin/sh\necho "$@" >> "{bin_dir / "tmutil.log"}"\n')
-    (bin_dir / "tmutil").chmod(0o755)
-    monkeypatch.setenv("PATH", str(bin_dir), prepend=os.pathsep)
-    docker = docker_with_projects(docs="running", photos="running")
-    docker.follows_compose()
-    return Checkout(tmp_path, monkeypatch, docker, host=host)
-
-
-@pytest.fixture
-def checkout(tmp_path, monkeypatch, docker_with_projects) -> Checkout:
-    return _checkout(tmp_path, monkeypatch, docker_with_projects, host=False)
-
-
-@pytest.fixture
-def host_checkout(tmp_path, monkeypatch, docker_with_projects) -> Checkout:
-    """The checkout with `speech` too, up on rc.1 without containers."""
-    return _checkout(tmp_path, monkeypatch, docker_with_projects, host=True)
+from tests.unit.framework.snapshot_instance import (  # noqa: F401 (the fixtures)
+    Checkout,
+    OLD_DIGEST,
+    OLD_IMAGE,
+    OLD_IMAGE_ID,
+    checkout,
+    host_checkout,
+)
 
 
 def the_new_snapshot(checkout: Checkout, before: list[str]) -> str:

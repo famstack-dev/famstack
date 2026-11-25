@@ -3,7 +3,7 @@
     stack rollback [<snapshot>] [--yes]        back to the snapshot before the last update
 
     rollback_cli.add_parser(sub)    # in lib/stack/cli.py, next to the other commands
-    rollback_cli.run(stck, args)    # what `stack rollback ...` runs
+    rollback_cli.run(stck, args, lifecycle)    # what `stack rollback ...` runs
 
 `stack rollback` shows its plan (`stack.snapshot.rollback`): the
 snapshot, the release it goes back to, the stacklets it replaces, and the
@@ -22,11 +22,8 @@ action `rollback` (`runs.reserve`). A start of one of them refuses
 meanwhile, and so does `stack snapshot remove`, because the plan
 restores one of the snapshots (`stack.snapshot.removal`).
 
-Debt: a question left open keeps the plan's stacklets locked: `stack up`
-and `stack restart` of them, and every `stack snapshot remove`, refuse
-until the terminal answers or closes. Trigger: a report of a held lock,
-or a question on a page or in a bot; then the question gets a timeout,
-or the lock moves after the answer with the recheck as the only guard.
+A question left open keeps those locks: the debt is in
+`stack.snapshot.answer`.
 """
 
 from __future__ import annotations
@@ -40,8 +37,9 @@ from .. import runs
 from ..prompt import DIM, GREEN, ORANGE, RESET
 from . import rollback, store
 from .answer import ask, print_answer
+from .errors import SnapshotError
+from .lifecycle import Lifecycle
 from .rollback_record import RUN_ACTION
-from .store import SnapshotError
 from .volume import Volume
 
 __all__ = ["add_parser", "run"]
@@ -56,13 +54,14 @@ def add_parser(sub) -> None:
     p.add_argument("--json", action="store_true", help="Output as JSON")
 
 
-def run(stck, args, volume: Volume | None = None) -> None:
+def run(stck, args, lifecycle: Lifecycle, volume: Volume | None = None) -> None:
     """`stack rollback [<snapshot>]` on the instance `stck`: show the
     plan, wait for the confirmation, run it. Prints the answer. Exits 1
     when it refused or a step failed. A declined confirmation changes
     nothing and exits 0; with `--json` it prints the plan as JSON, and the
-    question goes to stderr. Without a terminal it needs `--yes`. `volume`
-    is the file system of the data folder, `volume.ThisVolume` by default.
+    question goes to stderr. Without a terminal it needs `--yes`.
+    `lifecycle.down` stops the stacklets it replaces. `volume` is the file
+    system of the data folder, `volume.ThisVolume` by default.
 
         $ stack rollback --yes --json
         {"ok": true, "snapshot": "2026-11-25T2114Z", "version": "0.4.0-rc.1",
@@ -87,7 +86,7 @@ def run(stck, args, volume: Volume | None = None) -> None:
             return print_answer({"ok": False, "declined": True, **_planned(planned)}, args.json,
                                 lambda _: [f"  {DIM}Nothing changed.{RESET}", ""])
     try:
-        done = rollback.run(stck, planned, stop=_stopping(stck),
+        done = rollback.run(stck, planned, stop=lifecycle.down,
                             start=_starting(stck, quiet=args.json), volume=volume)
     except SnapshotError as error:
         return print_answer({"error": str(error), "problems": getattr(error, "problems", [])},
@@ -98,13 +97,6 @@ def run(stck, args, volume: Volume | None = None) -> None:
 
 
 # ── Rolling back ─────────────────────────────────────────────────────────
-
-def _stopping(stck):
-    """The rollback's stop: `CLI.down_many`, dependents first."""
-    from ..cli import CLI
-
-    return lambda ids: CLI(stck).down_many(ids)
-
 
 def _starting(stck, quiet: bool):
     """The rollback's start: `stack up <ids>` as a process of its own, from

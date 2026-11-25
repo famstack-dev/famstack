@@ -9,7 +9,7 @@ them: it shows what it deletes, waits for a confirmation, and deletes
 nothing outside `.snapshots/`. `stack snapshot list` names the replaced
 states and the folders that a stop halfway left.
 
-The instance is the one of `test_snapshot_rollback.py`: the admin
+The instance is the one of `snapshot_instance.py`: the admin
 updated to rc.2 and restarted, which took one snapshot of docs and
 photos, and the family changed both since. Every `./stack` command is a
 process of its own, as the admin runs it. A question is answered in a
@@ -33,16 +33,18 @@ import pytest
 from stack import runs
 from stack.manifest import MANIFEST_FILE
 from stack.snapshot import release, removal
-from stack.snapshot.store import SnapshotError
-from tests.unit.framework.test_snapshot_at_restart import REPO, STACK_SECONDS
-from tests.unit.framework.test_snapshot_rollback import (  # noqa: F401 (the fixture)
+from stack.snapshot.errors import SnapshotError
+
+from tests.unit.framework.snapshot_instance import (  # noqa: F401 (the fixtures)
     Checkout,
+    REPO,
     Ran,
-    _stopped_at_the_clone_of_docs,
+    STACK_SECONDS,
     everything_in,
     in_terminal,
     replaced_folders,
     rollback,
+    stopped_at_the_clone_of_docs,
     updated,
 )
 
@@ -219,7 +221,7 @@ def test_the_snapshot_and_the_replaced_state_of_an_open_rollback_are_refused(upd
     """Given a rollback that stopped halfway, when the admin removes its
     snapshot or its replaced state, then the stack refuses, names `stack
     rollback`, and deletes nothing: the rollback needs both to finish."""
-    _stopped_at_the_clone_of_docs(updated)
+    stopped_at_the_clone_of_docs(updated)
     [time] = replaced_folders(updated)
     before = everything_in(updated.data)
 
@@ -249,7 +251,7 @@ def test_the_restart_keeps_the_snapshot_of_an_open_rollback(updated):
     """Given a rollback that stopped halfway on the oldest of four
     snapshots, when a restart keeps the newest three, then the oldest
     stays too, because the rollback needs it to finish."""
-    _stopped_at_the_clone_of_docs(updated)
+    stopped_at_the_clone_of_docs(updated)
     oldest = the_snapshot(updated)
     for name in ("2027-01-01T0900Z", "2027-01-02T0900Z", "2027-01-03T0900Z"):
         updated.older_snapshot(name)

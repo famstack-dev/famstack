@@ -5,14 +5,14 @@
     stack snapshot remove <name> [--yes]       `stack.snapshot.remove_cli`
 
     add_parser(sub)                # in lib/stack/cli.py, next to the other commands
-    run(stck, args)                # what `stack snapshot ...` runs
+    run(stck, args, lifecycle)     # what `stack snapshot ...` runs
 
 `create` takes a snapshot of the named stacklets in four steps. It holds
 their run locks (`stack.runs`), because no other run may start or stop
 them meanwhile:
 
     record   what each stacklet runs, while it still runs (`stack.manifest`)
-    stop     the stacklets that run (`CLI.down_many`)
+    stop     the stacklets that run (`lifecycle.down`, `stack.snapshot.lifecycle`)
     take     clone their data folders and the configuration (`stack.snapshot.store`)
     start    the stacklets that ran before, also when the take failed
 
@@ -51,10 +51,11 @@ from .. import runs
 from ..images import DockerImages
 from ..manifest import Manifest, ManifestError
 from ..prompt import DIM, GREEN, ORANGE, RED, RESET
-from . import guard, remove_cli, removal, store
+from . import guard, removal, remove_cli, store
 from .answer import print_answer
-from .release import anything_up
-from .store import SnapshotError
+from .errors import SnapshotError
+from .lifecycle import Lifecycle
+from .running import anything_up
 from .volume import Volume
 
 __all__ = ["add_parser", "run"]
@@ -72,10 +73,11 @@ def add_parser(sub) -> None:
     p.add_argument("--json", action="store_true", help="Output as JSON")
 
 
-def run(stck, args, volume: Volume | None = None) -> None:
+def run(stck, args, lifecycle: Lifecycle, volume: Volume | None = None) -> None:
     """`stack snapshot <verb>` on the instance `stck`, with `args` from
     `add_parser`'s parser. Prints the answer. Exits 1 when the command
-    refused or failed. `volume` is the file system of the data folder,
+    refused or failed. `lifecycle` stops and starts the stacklets.
+    `volume` is the file system of the data folder,
     `volume.ThisVolume` by default. A test stands in another one.
 
         $ stack snapshot create docs --json
@@ -83,7 +85,7 @@ def run(stck, args, volume: Volume | None = None) -> None:
          "cloned": true, "started": ["docs"], ...}
     """
     if args.verb == "create":
-        result = _create(stck, _ids(args.stacklets), volume)
+        result = _create(stck, _ids(args.stacklets), lifecycle, volume)
         return print_answer(result, args.json, _created_lines)
     if args.verb == "remove":
         return remove_cli.run(stck, args)
@@ -92,7 +94,7 @@ def run(stck, args, volume: Volume | None = None) -> None:
 
 # ── Taking a snapshot ────────────────────────────────────────────────────
 
-def _create(stck, ids: list[str], volume: Volume | None) -> dict:
+def _create(stck, ids: list[str], lifecycle: Lifecycle, volume: Volume | None) -> dict:
     """Take a snapshot of the stacklets `ids`: record, stop, take, start
     again. The answer, with `error` when it refused or a step failed.
     Refuses, changing nothing, when one of `ids` waits (`guard.waiting`)."""
@@ -107,44 +109,41 @@ def _create(stck, ids: list[str], volume: Volume | None) -> dict:
             if refused := guard.waiting(stck, sid):
                 return refused
         try:
-            record = _record(stck, {sid: known[sid] for sid in ids}, anything_up(stck))
+            record = _record(stck, {sid: known[sid] for sid in ids}, anything_up(stck),
+                             lifecycle.version())
         except ManifestError as error:
             return {"error": f"The snapshot cannot record what runs: {error}"}
         was_up = [sid for sid in ids if record.stacklets[sid].up]
         result: dict = {}
         try:
             result = _stop_and_take(stck, {sid: known[sid] for sid in ids}, record, was_up,
-                                    volume)
+                                    lifecycle, volume)
         finally:
             # On every path out, also an exception: a snapshot must never
             # leave the family without a page that ran before it.
-            started = _start_again(stck, was_up)
+            started = _start_again(lifecycle, was_up)
         return {**result, "started": started}
 
 
-def _record(stck, stacklets: dict[str, Path], up) -> Manifest:
+def _record(stck, stacklets: dict[str, Path], up, version: str) -> Manifest:
     """The manifest of a snapshot of `stacklets`, taken while they still
-    run: the checkout's release and commit, and each stacklet's record.
-    `up(id)` says whether a stacklet has anything up."""
-    from ..cli import running_version_of
-
+    run: the checkout's release (`version`) and commit, and each
+    stacklet's record. `up(id)` says whether a stacklet has anything up."""
     commits = stck.started_commits()
     images = DockerImages()
     records = {sid: manifests.record_stacklet(path, stck.data / sid, up=up(sid),
                                               started_from=commits.get(sid), docker=images)
                for sid, path in stacklets.items()}
-    return Manifest(kind="snapshot", name="", version=running_version_of(stck),
+    return Manifest(kind="snapshot", name="", version=version,
                     commit=stck._git_commit(), stacklets=records)
 
 
 def _stop_and_take(stck, stacklets: dict[str, Path], record: Manifest, was_up: list[str],
-                   volume: Volume | None) -> dict:
+                   lifecycle: Lifecycle, volume: Volume | None) -> dict:
     """Stop the stacklets in `was_up`, then take the snapshot. The answer
     without `started`, which the caller adds."""
-    from ..cli import CLI
-
     if was_up:
-        stopped = CLI(stck).down_many(was_up)
+        stopped = lifecycle.down(was_up)
         if not stopped.get("ok"):
             return {"error": "Some stacklets did not stop, so no snapshot was taken: "
                              + ", ".join(e["stacklet"] for e in stopped.get("errors", []))}
@@ -161,14 +160,12 @@ def _stop_and_take(stck, stacklets: dict[str, Path], record: Manifest, was_up: l
             "version": record.version}
 
 
-def _start_again(stck, was_up: list[str]) -> list[str]:
+def _start_again(lifecycle: Lifecycle, was_up: list[str]) -> list[str]:
     """Start the stacklets in `was_up` again and return those that started.
     A start that fails is said on stderr; the snapshot stays as it was."""
-    from ..cli import CLI
-
     if not was_up:
         return []
-    started = CLI(stck).up_many(was_up)
+    started = lifecycle.up(was_up)
     if not started.get("ok"):
         failed = ", ".join(e["stacklet"] for e in started.get("errors", []))
         print(f"\n  {RED}✗{RESET}  These stacklets did not start again: {failed}. "

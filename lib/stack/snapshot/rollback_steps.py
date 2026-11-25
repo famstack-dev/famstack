@@ -6,7 +6,7 @@ in order:
     stop       the stacklets of the snapshot; one that still runs ends it
     record     .snapshots/replaced/<time>/ROLLBACK.json: what this rollback does
     move       each one's state into replaced/<time>/<id>/; the archive sources stay
-    restore    clone the snapshot's state back (`store.clone_back`)
+    restore    clone the snapshot's state back (`files.clone_back`)
     clear      the record of a failed take (`stack.snapshot.pending`)
     tag        each moved tag names the manifest's image again (`rollback_images`)
     checkout   the snapshot's commit
@@ -67,9 +67,9 @@ from typing import Callable
 from .. import runs
 from ..images import DockerImages, ImageSource
 from ..updater import Checkout
-from . import pending, store
+from . import files, pending, store
 from . import rollback_images as images
-from .release import anything_up
+from .running import anything_up
 from .rollback_record import (
     FINISHED,
     MOVED,
@@ -94,7 +94,7 @@ def run(stck, planned: Plan, *, stop: Callable[[list[str]], dict],
     """Run `planned`: stop, record, move aside, restore, clear, tag, check
     out, start. Finishes a plan that stopped halfway from its record.
 
-    `stop(ids)` stops stacklets (`CLI.down_many`), `start(ids)` starts
+    `stop(ids)` stops stacklets (`Lifecycle.down`), `start(ids)` starts
     them and says whether they started. `volume` is the file system of the
     data folder, `now` names the replaced folder of a new rollback, and
     `source` asks Docker for images. Holds the run locks of the stacklets
@@ -217,7 +217,8 @@ def _replace_states(stck, planned: Plan, folder: Path, done: list[str],
             # files of a restore that stopped) moves aside first.
             if any(_movable(target, {Path(a) for a in archives})):
                 _move_aside(target, _new_entry(folder, sid), archives)
-            cloned = store.clone_back(planned.snapshot, sid, target, volume) and cloned
+            snapshot = planned.snapshot
+            cloned = files.clone_back(snapshot.path, snapshot.name, sid, target, volume) and cloned
             mark(folder, done, f"{RESTORED} {sid}")
     return cloned
 

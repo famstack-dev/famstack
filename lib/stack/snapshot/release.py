@@ -68,8 +68,9 @@ Why it works this way:
   counts as one of the 3, because it is no way back and the admin may
   want to look at it.
 
-This module decides and words; the restart in `stack.cli` stops and
-starts. The snapshot's folder and its rules are in `stack.snapshot.store`.
+This module decides. `stack.snapshot.restart_cli` says what the restart
+did, and the restart in `stack.cli` stops and starts. The snapshot's
+folder and its rules are in `stack.snapshot.store`.
 Out of scope: a stacklet that was stopped before the update and starts
 later with `stack up`, and the images that Watchtower changes at night.
 """
@@ -80,16 +81,15 @@ import dataclasses
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
-from .. import docker
 from .. import manifest as manifests
 from ..images import DockerImages
 from ..manifest import Manifest, ManifestError
-from ..prompt import DIM, GREEN, ORANGE, RED, RESET
 from . import pending, store
+from .errors import SnapshotError
 from .rollback_record import needs
-from .store import SnapshotError, Taken
+from .running import anything_up
+from .store import Taken
 from .volume import Volume
 
 __all__ = [
@@ -98,16 +98,10 @@ __all__ = [
     "Pruned",
     "StillRunning",
     "after_stop",
-    "anything_up",
     "applying",
     "before_stop",
-    "plan_line",
     "prune",
-    "refused_lines",
-    "taken_lines",
     "unknown_commits",
-    "unknown_lines",
-    "unreadable_lines",
 ]
 
 KEEP = 3
@@ -282,21 +276,6 @@ def prune(data_root: Path, taken: str) -> Pruned:
     return pruned
 
 
-def anything_up(stck) -> Callable[[str], bool]:
-    """Whether a stacklet has anything up: a container of any state but
-    stopped, or the host services of a stacklet without containers.
-
-    Wider than `Stack.is_running`, which counts "failing" as not running.
-    A failing stacklet can have a crashed web container and a database
-    server that still writes, so the snapshot waits for it to stop.
-
-        up = anything_up(stck)
-        up("docs")    # True while Paperless restarts and Postgres runs
-    """
-    with_a_container = docker.ids_with_a_container_up()
-    return lambda sid: sid in with_a_container or stck.is_running(sid)
-
-
 def unknown_commits(stck, ids: list[str]) -> list[str]:
     """The stacklets among `ids` that run, but with no commit label, or
     with a commit git does not know: whether they apply a release cannot
@@ -311,89 +290,6 @@ def unknown_commits(stck, ids: list[str]) -> list[str]:
         return []
     return [sid for sid in ids
             if up(sid) and not (sid in commits and checkout.describe_of(commits[sid]))]
-
-
-# ── What the restart says ────────────────────────────────────────────────
-
-def plan_line() -> str:
-    """The line of `stack update`'s plan that names the snapshot, under
-    "Needs a restart afterwards: docs".
-
-        The restart takes a snapshot of each first, in .snapshots/ of the data folder.
-        To restart without one: stack restart --no-snapshot
-    """
-    return (f"  The restart takes a snapshot of each first, in {store.SNAPSHOTS_FOLDER}/ "
-            f"of the data folder.\n  {DIM}To restart without one: "
-            f"stack restart --no-snapshot{RESET}")
-
-
-def refused_lines(cause: str, waiting: list[str], running: list[str]) -> list[str]:
-    """What the restart says when it took no snapshot: the cause, which
-    stacklets are stopped and wait for their snapshot (`waiting`), which
-    still run the release they ran (`running`), and the two ways on.
-
-        refused_lines("the disk is full", ["docs"], [])
-        #   ✗  No snapshot: the disk is full
-        #      docs did not start on the new release, because …
-        #      Free space or fix the cause, then: stack restart docs
-        #      Or restart without a snapshot:    stack restart docs --no-snapshot
-    """
-    held = " ".join([*waiting, *running])
-    states = []
-    if waiting:
-        states.append(f"{', '.join(waiting)} did not start on the new release")
-    if running:
-        states.append(f"{', '.join(running)} still runs the release it ran")
-    return [f"\n  {RED}✗{RESET}  No snapshot: {cause}",
-            f"     {'; '.join(states)}, because a migration of a release cannot be undone without one.",
-            f"     Free space or fix the cause, then: stack restart {held}",
-            f"     Or restart without a snapshot:    stack restart {held} --no-snapshot\n"]
-
-
-def unreadable_lines(error: pending.Unreadable) -> list[str]:
-    """What the restart says when the kept record of a failed snapshot
-    cannot be read: the file, and the two ways on.
-
-        unreadable_lines(Unreadable("docs", Path(".stack/snapshot-pending/docs/MANIFEST.json"), …))
-        #   ✗  No snapshot: the record of the failed snapshot of docs cannot be read: …
-        #      Restore the file, then:            stack restart docs
-        #      Or restart without a snapshot:     stack restart docs --no-snapshot
-    """
-    return [f"\n  {RED}✗{RESET}  No snapshot: {error}",
-            f"     {error.stacklet} waits for that snapshot and did not start.",
-            f"     Restore the file from a backup, then: stack restart {error.stacklet}",
-            f"     Or restart without a snapshot:        stack restart {error.stacklet} --no-snapshot\n"]
-
-
-def unknown_lines(ids: list[str]) -> list[str]:
-    """What the restart says of the stacklets that run a commit nobody
-    knows (`unknown_commits`): it takes no snapshot of them.
-
-        unknown_lines(["photos"])
-        #   ⚠ No snapshot of photos: the commit it runs is unknown, so the
-        #     stack cannot tell whether this restart applies a release.
-    """
-    return [f"  {ORANGE}⚠{RESET} No snapshot of {sid}: the commit it runs is unknown, so the\n"
-            f"    stack cannot tell whether this restart applies a release." for sid in ids]
-
-
-def taken_lines(taken: Taken, pruned: Pruned) -> list[str]:
-    """What the restart says after a snapshot: its name, whether it was
-    copied, and each older snapshot it removed or could not remove.
-
-        taken_lines(taken, Pruned(removed=["2026-11-01T0900Z"]))
-        #   ✓ Snapshot 2026-11-25T2114Z: docs
-        #     Removed the snapshot 2026-11-01T0900Z; the newest 3 stay.
-    """
-    stacklets = ", ".join(taken.snapshot.manifest.stacklets) if taken.snapshot.manifest else ""
-    lines = [f"  {GREEN}✓{RESET} Snapshot {taken.snapshot.name}: {stacklets}"]
-    if not taken.cloned:
-        lines.append(f"    {DIM}The data folder is not on APFS, so the files were copied.{RESET}")
-    for name in pruned.removed:
-        lines.append(f"    {DIM}Removed the snapshot {name}; the newest {KEEP} stay.{RESET}")
-    for name, why in pruned.failed.items():
-        lines.append(f"    {ORANGE}⚠{RESET} The snapshot {name} was not removed: {why}")
-    return [*lines, ""]
 
 
 # ── The record ───────────────────────────────────────────────────────────

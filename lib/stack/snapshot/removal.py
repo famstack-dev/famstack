@@ -68,8 +68,9 @@ from .. import runs
 from ..manifest import ManifestError
 from ..manifest import read as read_manifest
 from . import store
+from .errors import SnapshotError
 from .rollback_record import RUN_ACTION, RollbackError, needs, read_record
-from .store import REPLACED_FOLDER, SnapshotError
+from .store import REPLACED_FOLDER
 
 __all__ = [
     "INCOMPLETE",

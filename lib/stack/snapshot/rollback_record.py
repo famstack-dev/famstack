@@ -62,7 +62,8 @@ from pathlib import Path
 from ..manifest import Manifest
 from . import rollback_images as images
 from . import store
-from .store import REPLACED_FOLDER, Snapshot, SnapshotError
+from .errors import SnapshotError
+from .store import REPLACED_FOLDER, Snapshot
 
 __all__ = [
     "FINISHED",

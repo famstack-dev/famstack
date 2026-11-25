@@ -45,7 +45,7 @@ from pathlib import Path
 
 from .. import manifest as manifests
 from ..manifest import Manifest, ManifestError
-from .store import SnapshotError
+from .errors import SnapshotError
 
 __all__ = ["PENDING_FOLDER", "Unreadable", "clear", "keep", "read", "waiting"]
 

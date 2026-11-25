@@ -30,7 +30,7 @@ True}` that names the command that goes on. The guards change nothing,
 and nothing failed: a caller that reports a failed start (the Server
 room's notice) leaves a refusal out by its `refused` key.
 
-Debt (epic review): the guard fails open. `docker ps` that times out or
+Debt: the guard fails open. `docker ps` that times out or
 fails, a container without the `stack.commit` label, and a commit git
 cannot diff (one the checkout no longer has) all leave a stacklet out of
 `release.applying`, and `stack up` then applies a release without a
@@ -38,7 +38,7 @@ snapshot and says nothing. Trigger: the first report of a release applied
 without a snapshot, or the `unknown` list of `stack restart` growing past
 the containers of old installs.
 
-Debt (epic review): any commit under `lib/` makes every running stacklet
+Debt: any commit under `lib/` makes every running stacklet
 stale, so on a development checkout `stack up <id>` after a change of
 `stack.toml` is refused until `stack restart <id>`. Trigger: a second
 complaint from a developer or a bot that edits the configuration; then

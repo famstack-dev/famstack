@@ -17,7 +17,7 @@ rules in docs/stack-reference.md § CLI Commands: named for what the
 admin wants, nouns with verbs, one meaning per flag, apply by default,
 wait with progress, return a dict.
 
-Debt (epic review): this module is past 800 code lines. It holds the
+Debt: this module is past 800 code lines. It holds the
 argument parsing, the lifecycle commands and their output, and it grows
 with each command. The restart's snapshot is wired the same way at four
 sites in `handle_restart` and `_restart_stale` (record, take, keep and
@@ -54,8 +54,7 @@ from . import run_log
 from .removal import handle_destroy, handle_uninstall
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .devices import cli as devices_cli
-from .snapshot import (cli as snapshot_cli, guard as snapshot_guard, release as snapshot_release,
-                       restart_cli, rollback_cli)
+from .snapshot import cli as snapshot_cli, guard as snapshot_guard, lifecycle, restart_cli, rollback_cli
 from .config_file import StackTomlUnreadable, configured_data_dir, read_stack_toml
 from .stack import Stack
 
@@ -2866,7 +2865,7 @@ def _print_restart_plan(targets: list[str], changed: list[str]) -> None:
     scope = "every running stacklet" if touches_framework(changed) else ", ".join(targets)
     print(f"\n  Needs a restart afterwards: {scope or 'nothing'}")
     if targets:
-        print(snapshot_release.plan_line())
+        print(restart_cli.plan_line())
 
 
 def _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets):
@@ -3224,6 +3223,15 @@ def handle_version(stck, args):
     print(f"{stck.product_name()} {running_version_of(stck)}")
 
 
+def _lifecycle(stck) -> lifecycle.Lifecycle:
+    """The stop, the start and the version that `stack snapshot` and
+    `stack rollback` get from the command line, because no module of
+    `stack.snapshot` imports this one. Asks nothing until a command calls it."""
+    cli = CLI(stck)
+    return lifecycle.Lifecycle(down=cli.down_many, up=cli.up_many,
+                               version=lambda: running_version_of(stck))
+
+
 # ── Main ──────────────────────────────────────────────────────────────────
 
 DISPATCH = {
@@ -3231,8 +3239,8 @@ DISPATCH = {
     "uninstall": handle_uninstall,
     "family": handle_family,
     "devices": devices_cli.run,
-    "snapshot": snapshot_cli.run,
-    "rollback": rollback_cli.run,
+    "snapshot": lambda s, a: snapshot_cli.run(s, a, _lifecycle(s)),
+    "rollback": lambda s, a: rollback_cli.run(s, a, _lifecycle(s)),
     "init": handle_init,
     "up": handle_up,
     "down": handle_down,

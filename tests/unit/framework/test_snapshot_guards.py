@@ -10,7 +10,7 @@ become the newest snapshot of a state that is not whole, so `stack
 snapshot create` refuses it with the text `stack up` gives.
 
 The tests run `./stack` as a process of its own against the fabricated
-checkout of `test_snapshot_at_restart`: `docs` and `photos` run rc.1, the
+checkout of `snapshot_instance`: `docs` and `photos` run rc.1, the
 checkout is on rc.2, and Docker is the stand-in `docker_with_projects`.
 Each test runs one to four `./stack` commands, one to two seconds.
 """
@@ -26,19 +26,18 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.framework.test_snapshot_at_restart import (  # noqa: F401 (the fixtures)
-    REPO,
-    STACK_SECONDS,
+from tests.unit.framework.snapshot_instance import (  # noqa: F401 (the fixtures)
     Checkout,
+    REPO,
     Ran,
+    STACK_SECONDS,
     checkout,
+    clone_fails,
     host_checkout,
-)
-from tests.unit.framework.test_snapshot_rollback import (  # noqa: F401 (the fixture)
-    _clone_fails,
     rollback,
     updated,
 )
+
 
 
 def error_of(ran) -> str:
@@ -170,7 +169,7 @@ def test_create_refuses_a_stacklet_a_stopped_rollback_holds(updated):
     then no new snapshot exists and the error is the one `stack up photos`
     gives. A half-restored state as the newest snapshot would be where
     the next rollback goes."""
-    stops = _clone_fails(updated)
+    stops = clone_fails(updated)
     assert rollback(updated).code != 0
     stops()
     before = updated.snapshot_folders()
@@ -571,3 +570,20 @@ def test_a_restart_of_several_whose_stop_fails_says_so_and_starts_nothing(checko
     assert ran.code == 1
     assert "up" not in checkout.docker.compose_steps()
     assert "  ✗  Some stacklets failed to stop\n\n      docs: container is busy\n" in ran.err
+
+
+# ── The run that holds a stacklet ────────────────────────────────────────
+
+def test_a_run_refused_by_a_snapshot_command_names_what_holds_it():
+    """Given a stacklet held by a rollback or by `stack snapshot remove`,
+    when another run of it is refused, then the message names that
+    command's action, not a bare "busy". The action's name belongs to its
+    command, so a rename there must not leave the message behind."""
+    from stack import runs
+    from stack.snapshot import remove_cli, rollback_record
+
+    for action in (rollback_record.RUN_ACTION, remove_cli.RUN_ACTION):
+        refused = str(runs.AlreadyRunning("docs", {"action": action}))
+
+        assert refused.startswith("docs is already "), action
+        assert "busy" not in refused, action

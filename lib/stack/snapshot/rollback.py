@@ -68,8 +68,9 @@ from pathlib import Path
 from ..images import DockerImages, ImageSource
 from ..manifest import MANIFEST_FILE, Manifest
 from ..updater import Checkout
+from . import files, store
 from . import rollback_images as images
-from . import store
+from .errors import SnapshotError
 from .rollback_record import (
     RECORD_FILE,
     REPLACED_FOLDER,
@@ -83,7 +84,7 @@ from .rollback_record import (
     why_held,
 )
 from .rollback_steps import run
-from .store import Snapshot, SnapshotError
+from .store import Snapshot
 
 __all__ = [
     "RECORD_FILE",
@@ -191,7 +192,7 @@ def _known(stck, snapshot: Snapshot, ids: list[str]) -> dict[str, Path]:
 def _archives(stacklet_dir: Path, data_root: Path) -> list[str]:
     """The stacklet's archive sources, relative to its data folder."""
     try:
-        return [str(path) for path in store.archive_paths(stacklet_dir, data_root)]
+        return [str(path) for path in files.archive_paths(stacklet_dir, data_root)]
     except SnapshotError as error:
         raise RollbackError(str(error)) from error
 
