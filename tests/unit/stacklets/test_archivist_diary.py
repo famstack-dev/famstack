@@ -409,3 +409,79 @@ class TestAQuietDiaryGetsOneNudge:
     @pytest.mark.asyncio
     async def test_an_empty_diary_is_not_nudged(self, diary):
         assert await diary(_day(9, 15), []) == []
+
+
+# ── The card's title links to its page ────────────────────────────────
+
+
+class TestTheCardsTitleLinksToItsPage:
+    """Every filing reply links its title to the card's page in the
+    memory. A diary card's notice does the same, new or corrected."""
+
+    @staticmethod
+    def _report_cli(monkeypatch, card):
+        import json as _json
+
+        async def cli(*args, timeout):
+            return 0, _json.dumps({"room_id": ROOM_ID, "cards": [card]}) + "\n", ""
+
+        monkeypatch.setattr(diary_room, "_diary_cli", cli)
+
+    @pytest.mark.asyncio
+    async def test_a_new_card_links_its_title(self, bot, monkeypatch):
+        self._report_cli(monkeypatch, _card("a", at=2_000_000_000_000,
+                                            card_id="diary-1a2b3c4d5e"))
+        bot.link_base_url = "https://home.example/go"
+        await bot._diary.run_job(datetime(2026, 9, 24, 7, 30, tzinfo=timezone.utc))
+
+        first_line = bot.sent[0][1].split("\n\n")[0]
+        assert first_line == ("📔 [Sandcastle at the lake](https://home.example/go/card/"
+                              "diary-1a2b3c4d5e) · Sunday, 20 September 2026")
+
+    @pytest.mark.asyncio
+    async def test_a_card_without_its_own_id_links_by_its_entry(self, bot, monkeypatch):
+        self._report_cli(monkeypatch, _card("a", at=2_000_000_000_000))
+        bot.link_base_url = "https://home.example/go"
+        await bot._diary.run_job(datetime(2026, 9, 24, 7, 30, tzinfo=timezone.utc))
+
+        assert bot.sent[0][1].startswith(
+            "📔 [Sandcastle at the lake](https://home.example/go/diary/a) · ")
+
+    @pytest.mark.asyncio
+    async def test_a_corrected_card_links_its_title(self, bot, monkeypatch):
+        import json as _json
+
+        async def cli(*args, timeout):
+            return 0, _json.dumps(_card(card_id="diary-1a2b3c4d5e")) + "\n", ""
+
+        monkeypatch.setattr(diary_room, "_diary_cli", cli)
+        bot.link_base_url = "https://home.example/go"
+        fix = _message("$fix", MARGE, "It was the 21st.",
+                       content=_thread_relation("$memo", falls_back_to="$card"))
+        await bot._diary.correct(ROOM_ID, fix, {"data": {"entry_id": "e1", "root": "$memo"}},
+                                 "It was the 21st.")
+
+        notice = next(s[1] for s in bot.sent if s[0] == ROOM_ID)
+        assert notice.startswith(
+            "✏️ [Sandcastle at the lake](https://home.example/go/card/diary-1a2b3c4d5e)"
+            " · Sunday, 20 September 2026 (corrected)")
+
+    @pytest.mark.asyncio
+    async def test_without_a_home_address_the_title_stays_bold(self, bot, monkeypatch):
+        self._report_cli(monkeypatch, _card("a", at=2_000_000_000_000,
+                                            card_id="diary-1a2b3c4d5e"))
+        bot.link_base_url = ""
+        await bot._diary.run_job(datetime(2026, 9, 24, 7, 30, tzinfo=timezone.utc))
+
+        assert bot.sent[0][1].startswith("📔 **Sandcastle at the lake** · ")
+
+    def test_a_card_with_no_id_keeps_its_bold_title(self):
+        assert diary_room.card_text(_card(), _t_en, link="").startswith(
+            "📔 **Sandcastle at the lake** · ")
+
+    @pytest.mark.parametrize("corrected", [False, True])
+    def test_german_reads_the_same(self, corrected):
+        text = diary_room.card_text(_card(), lambda key, **kw: _t("de", key, **kw),
+                                    link="https://h/go/diary/e1", corrected=corrected)
+        assert "[Sandcastle at the lake](https://h/go/diary/e1) · Sunday" in text.split("\n")[0]
+        assert "**" not in text.split("\n")[0]

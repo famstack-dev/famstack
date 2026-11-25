@@ -40,7 +40,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from loguru import logger
 
-from stack.links import go_topic, public
+from stack.links import go_card, go_topic, public
 from .reply_presenter import card_in_reply
 from .text_utils import strip_reply_fallback
 
@@ -137,22 +137,33 @@ def to_announce(report: dict, *, since_ms: int) -> tuple[list[dict], int]:
     return fresh, older
 
 
-def card_text(card: dict, t, *, corrected: bool = False, hint: bool = False) -> str:
+def card_text(card: dict, t, *, link: str = "", corrected: bool = False,
+              hint: bool = False) -> str:
     """The notice that shows a card in its thread.
 
     Shaped like the archivist's other filing replies (`reply_presenter`):
     a first line with the title and the day in words, then the diary card
-    as its type renders it (the people, the summary, the facts). `t` is
-    the archivist's translator, bound to the household language.
+    as its type renders it (the people, the summary, the facts). The title
+    links to `link`, the card's page (`card_link`); with no link it stands
+    in bold. `t` is the archivist's translator, bound to the household
+    language.
     """
     head = "diary_card_corrected" if corrected else "diary_card"
-    blocks = [t(head, title=card.get("title", ""), date=card.get("date_label")
+    title = card.get("title", "")
+    title = f"[{title}]({link})" if link else f"**{title}**"
+    blocks = [t(head, title=title, date=card.get("date_label")
                 or card.get("date", "")),
               # The first line says the day already.
               card_in_reply({"type": "diary", "persons": card.get("persons") or []}, card)]
     if hint:
         blocks.append(t("diary_card_hint"))
     return "\n\n".join(b for b in blocks if b)
+
+
+def card_link(card: dict, base: str) -> str:
+    """The absolute link to a card's page, or "" with no home address or
+    no id. `base` is the bot's `link_base_url`."""
+    return public(go_card(card), base)
 
 
 def summary_text(count: int, *, link: str, t) -> str:
@@ -271,7 +282,8 @@ class DiaryRoom:
                                    event.event_id, msgtype="m.notice")
             return
         await self.bot._send(
-            room_id, card_text(card, self._t, corrected=True),
+            room_id, card_text(card, self._t, corrected=True,
+                      link=card_link(card, self.bot.link_base_url)),
             reply_to=event.event_id, thread_root_event_id=root or card.get("root"),
             metadata={self.bot.FAMSTACK_EVENT_KEY: envelope(
                 card, CARD_RECLASSIFIED, actor=self.bot.user_id)},
@@ -326,7 +338,8 @@ class DiaryRoom:
             explain = int(state.get("explained", 0)) < EXPLAIN_TIMES
             for card in fresh:
                 await self.bot._send(
-                    room_id, card_text(card, self._t, hint=explain),
+                    room_id, card_text(card, self._t, hint=explain,
+                              link=card_link(card, self.bot.link_base_url)),
                     reply_to=card["root"], thread_root_event_id=card["root"],
                     metadata={self.bot.FAMSTACK_EVENT_KEY: envelope(
                         card, CARD_FILED, actor=self.bot.user_id)},
