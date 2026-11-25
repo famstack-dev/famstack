@@ -11,7 +11,7 @@ It is the way back after a change that broke a stacklet.
     stack.snapshot.release  the snapshot a restart takes before it applies a release
     stack.snapshot.pending  the record of a restart, kept until its snapshot is whole
     stack.snapshot.rollback          the plan of a rollback to a snapshot
-    stack.snapshot.rollback_steps    its steps: stop, check out, move, restore, tag, start
+    stack.snapshot.rollback_steps    its steps: stop, move, restore, tag, check out, start
     stack.snapshot.rollback_record   its record, which finishes a stopped one and holds its stacklets
     stack.snapshot.rollback_images   its images: the check before the stop, the tags
     stack.snapshot.cli      `stack snapshot create|list`

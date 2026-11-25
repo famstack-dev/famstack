@@ -792,9 +792,10 @@ refuses the snapshot and the replaced state of a rollback that has not ended, be
 finishes from them. A record that cannot be read keeps every snapshot, because the stack cannot tell which one it
 needs.
 
-A rollback holds the run locks of its stacklets from its question until their state is restored, with the action
-`rollback`. Meanwhile `stack snapshot remove` refuses every snapshot and replaced state, because the lock does not name
-the snapshot. After the restore, the rollback's record keeps its snapshot and its replaced state until it ends.
+A rollback holds the run locks of its stacklets from its question until the checkout is on the snapshot's release,
+with the action `rollback`. Meanwhile `stack snapshot remove` refuses every snapshot and replaced state, because the
+lock does not name the snapshot. After the checkout, the rollback's record keeps its snapshot and its replaced state
+until it ends.
 
 `stack snapshot remove` holds the locks of the entry's stacklets from its plan to its delete. Thus a rollback that
 starts during the remove's question is refused. Under

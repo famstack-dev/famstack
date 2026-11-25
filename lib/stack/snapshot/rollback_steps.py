@@ -4,12 +4,12 @@
 in order:
 
     stop       the stacklets of the snapshot; one that still runs ends it
-    checkout   the snapshot's commit
     record     .snapshots/replaced/<time>/ROLLBACK.json: what this rollback does
     move       each one's state into replaced/<time>/<id>/; the archive sources stay
     restore    clone the snapshot's state back (`store.clone_back`)
     clear      the record of a failed take (`stack.snapshot.pending`)
     tag        each moved tag names the manifest's image again (`rollback_images`)
+    checkout   the snapshot's commit
     start      the stacklets that ran, by the old release's own `stack up`
 
     done = run(stck, planned, stop=cli.down_many, start=start_in_a_process)
@@ -17,41 +17,40 @@ in order:
 
 Why it works this way:
 
+- **The checkout is the last step before the start.** Until every state
+  is back, the new release's code stays on disk. A rollback that stops
+  there (a power loss, a file it cannot read) is finished by that
+  release's `stack rollback`, and its `stack up` refuses the stacklets
+  meanwhile. After the checkout every state is whole. A release that
+  knows the record still holds the stacklets until its `stack rollback`
+  writes "starting"; a release that has no `stack rollback` does not know
+  the record, and its own `stack up` starts them safely.
 - **The snapshot is checked again under the run locks,** before the
   stop. A remove may have deleted it while the admin read the plan; then
   the run ends before anything stops. From there on, a remove refuses
   every snapshot while the rollback holds its locks
   (`stack.snapshot.removal`).
 - **Nothing of the family's moves before the record.** A stop that
-  fails, a checkout that git refuses (an untracked file in the way, a
-  lock) or a record that cannot be written (a full disk) ends the run
-  with each state where it was and no record. The stacklets it stopped
-  start again on the code they ran: a checkout that moved goes back to
-  the commit it had first, because the old release's code would start
-  over a state that the new release migrated. When it cannot go back,
-  nothing starts, and the message says so.
-- **The record names each step that is done.** A stop halfway (a power
-  loss, a file it cannot read) leaves it, and the next `stack rollback`
-  goes on from there. A stop between the checkout and the record leaves
-  the stacklets stopped on the old commit without a record; the next run
-  then starts the rollback again, and its checkout has nothing to do.
+  fails, or a record that cannot be written (a full disk), ends the run
+  with each state where it was and no record. The checkout has not
+  moved yet, so the stacklets it stopped start again on the code they
+  ran.
+- **The record names each step that is done.** A stop halfway leaves it,
+  and the next `stack rollback` goes on from there. It writes "starting"
+  only after git moved the checkout, so the record holds the stacklets
+  until then (`stack.snapshot.rollback_record`). A checkout that git
+  refuses (a lock, an untracked file in the way), a Ctrl-C or a power
+  loss inside it leaves the record as it was: nothing starts, and the
+  next `stack rollback` goes on with the checkout.
 - **It never deletes a state, and never writes over one.** A state moves
   aside by a rename on the same volume. A move that finds the entry in
   the replaced folder already refuses. A restore first moves what is in
   the data folder now into a new entry (`<id>.2`, `<id>.3`), so a restore
   that runs a second time, or the files of one that stopped halfway,
   replace nothing: the clone refuses to write over a file.
-- **A stacklet waits while its state is not whole.** The record
-  (`stack.snapshot.rollback_record`) names it until the start, and `stack
-  up` refuses it meanwhile.
 - **The old release starts its own stacklets.** After the checkout, the
   hooks and the framework on disk are the old release's, so the start is
   a `stack up` process of its own, after the run locks are released.
-
-Debt: after the checkout, a `stack rollback` that finishes a stopped run
-is the old release's command. A release before this command has none,
-and its `stack up` does not know the record. Trigger: a snapshot of a
-release without `stack rollback`, while it is still kept.
 
 Debt: after the checkout this process may import a module of the old
 release. Every module of the run imports at its top, and nothing checks
@@ -92,16 +91,17 @@ __all__ = ["run"]
 def run(stck, planned: Plan, *, stop: Callable[[list[str]], dict],
         start: Callable[[list[str]], bool], volume: Volume | None = None,
         now: datetime | None = None, source: ImageSource | None = None) -> Done:
-    """Run `planned`: stop, check out, record, move aside, restore, clear,
-    tag, start. Finishes a plan that stopped halfway from its record.
+    """Run `planned`: stop, record, move aside, restore, clear, tag, check
+    out, start. Finishes a plan that stopped halfway from its record.
 
     `stop(ids)` stops stacklets (`CLI.down_many`), `start(ids)` starts
     them and says whether they started. `volume` is the file system of the
     data folder, `now` names the replaced folder of a new rollback, and
     `source` asks Docker for images. Holds the run locks of the stacklets
-    until their state is restored, and lets them go before the start. Raises `RollbackError` when a step fails: before the
-    record, each stacklet it stopped is started again; after it, the
-    record keeps what is done for the next `stack rollback`.
+    until the checkout moved, and lets them go before the start. Raises
+    `RollbackError` when a step fails: before the record, each stacklet it
+    stopped is started again; after it, nothing starts, and the record
+    keeps what is done for the next `stack rollback`.
 
         run(stck, plan(stck), stop=cli.down_many, start=start_in_a_process)
         # Done(snapshot="2026-11-25T2114Z", version="0.4.0-rc.1", …)
@@ -122,7 +122,7 @@ def run(stck, planned: Plan, *, stop: Callable[[list[str]], dict],
                 cloned, moved)
 
 
-# ── Stop, check out, replace ─────────────────────────────────────────────
+# ── Stop, replace, check out ─────────────────────────────────────────────
 
 class _Undo(RollbackError):
     """A refusal before the record: nothing of the family's moved, and
@@ -140,7 +140,7 @@ def _replace(stck, planned: Plan, stop, start, volume, now, source):
     ids = list(planned.stacklets)
     with runs.hold(stck.instance_dir, ids):
         try:
-            folder = _stopped_and_checked_out(stck, planned, stop, now)
+            folder = _stopped_and_recorded(stck, planned, stop, now)
         except _Undo as undo:
             refused = undo
         else:
@@ -148,6 +148,7 @@ def _replace(stck, planned: Plan, stop, start, volume, now, source):
             cloned = _replace_states(stck, planned, folder, done, volume)
             pending.clear(stck.instance_dir, ids)
             moved = _retag(planned, source)
+            _check_out(stck, planned.manifest.commit)
             mark(folder, done, STARTING)
             return folder, done, cloned, moved
     if planned.replaced is None and refused.stopped and not start(refused.stopped):
@@ -156,22 +157,18 @@ def _replace(stck, planned: Plan, stop, start, volume, now, source):
     raise RollbackError(str(refused), refused.problems)
 
 
-def _stopped_and_checked_out(stck, planned: Plan, stop, now: datetime | None) -> Path:
-    """Check the snapshot again, stop, check out, and make the record of
-    a new rollback. Returns the replaced folder. Raises `_Undo` before the
-    record."""
+def _stopped_and_recorded(stck, planned: Plan, stop, now: datetime | None) -> Path:
+    """Check the snapshot again, stop, and make the record of a new
+    rollback. Returns the replaced folder. Raises `_Undo` before the
+    record, with the stacklets it stopped."""
     _refuse_a_snapshot_that_went(stck, planned)
     running = _stop(stck, list(planned.stacklets), stop)
-    try:
-        previous = _check_out(stck, planned.manifest.commit)
-    except RollbackError as error:
-        raise _Undo(str(error), running if planned.replaced is None else []) from error
     if planned.replaced is not None:
         return planned.replaced
     try:
         return begin(stck.data, planned, now or datetime.now(timezone.utc))
     except RollbackError as error:
-        raise _Undo(*_back_to(stck, previous, str(error), running)) from error
+        raise _Undo(str(error), running) from error
 
 
 def _refuse_a_snapshot_that_went(stck, planned: Plan) -> None:
@@ -204,36 +201,6 @@ def _stop(stck, ids: list[str], stop: Callable[[list[str]], dict]) -> list[str]:
     return running
 
 
-def _check_out(stck, commit: str) -> str | None:
-    """Move the checkout to `commit`, unless it is there. Returns what it
-    was on before (its branch, or its commit when detached), or None when
-    it did not move."""
-    checkout = Checkout(stck.root)
-    if checkout.commit_of("HEAD") == checkout.commit_of(commit):
-        return None
-    previous = checkout.branch() or checkout.commit_of("HEAD")
-    moved, error = checkout.checkout(commit)
-    if not moved:
-        raise RollbackError(f"The checkout cannot move to {commit}: {error}. Run "
-                            f"`stack rollback` again once the cause is fixed.")
-    return previous
-
-
-def _back_to(stck, previous: str | None, message: str,
-             running: list[str]) -> tuple[str, list[str]]:
-    """Move the checkout back to `previous` after a refusal, and return
-    the message and the stacklets to start again. When git refuses, none
-    starts, because the old release's code would meet the new state."""
-    if previous is None:
-        return message, running
-    moved, error = Checkout(stck.root).checkout(previous)
-    if moved:
-        return message, running
-    then = f", then `stack up {' '.join(running)}`." if running else "."
-    return (f"{message} The checkout cannot go back to {previous}: {error}. Run "
-            f"`git checkout {previous}`{then}"), []
-
-
 def _replace_states(stck, planned: Plan, folder: Path, done: list[str],
                     volume: Volume | None) -> bool:
     """Move each stacklet's state aside and clone the snapshot's back,
@@ -262,6 +229,21 @@ def _retag(planned: Plan, source: ImageSource) -> list[str]:
         raise RollbackError(f"Docker refused to tag an image again: {'; '.join(failed)}. "
                             f"Run `stack rollback` again once the cause is fixed.", failed)
     return moved
+
+
+def _check_out(stck, commit: str) -> None:
+    """Move the checkout to `commit` after every state is back, unless it
+    is there. Raises `RollbackError` when git refuses. The record is left
+    as it is, so it holds the stacklets until "starting" is written after
+    the move."""
+    checkout = Checkout(stck.root)
+    if checkout.commit_of("HEAD") == checkout.commit_of(commit):
+        return
+    moved, error = checkout.checkout(commit)
+    if not moved:
+        raise RollbackError(f"Every state is back, but the checkout cannot move to {commit}: "
+                            f"{error}. Nothing was started. Run `stack rollback` again once "
+                            f"the cause is fixed: it checks out and starts.")
 
 
 # ── Moving a state aside ─────────────────────────────────────────────────

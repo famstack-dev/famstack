@@ -27,7 +27,7 @@ On disk, after a rollback of docs:
 The rollback is four modules, one topic each:
 
     rollback          the plan: which snapshot, and the refusals before any change
-    rollback_steps    the steps: stop, check out, move, restore, tag, start
+    rollback_steps    the steps: stop, move, restore, tag, check out, start
     rollback_record   the record of each rollback, and which stacklets it holds
     rollback_images   the images: the check before the stop, the tags before the start
 
@@ -80,6 +80,7 @@ from .rollback_record import (
     holding,
     read_record,
     unfinished,
+    why_held,
 )
 from .rollback_steps import run
 from .store import Snapshot, SnapshotError
@@ -94,6 +95,7 @@ __all__ = [
     "plan",
     "read_record",
     "run",
+    "why_held",
 ]
 
 

@@ -425,12 +425,12 @@ def rolled_back(checkout: Checkout, extra: set[str]) -> None:
     assert "finished" in json.loads((replaced / "ROLLBACK.json").read_text())["done"]
 
 
-def test_a_record_that_cannot_be_written_puts_the_checkout_back_before_the_start(updated):
+def test_a_record_that_cannot_be_written_starts_docs_again_on_its_release(updated):
     """Given a replaced folder the rollback cannot write into (a full
-    disk), when the rollback runs, then it refuses after the checkout
-    moved, moves the checkout back to the release it was on, and only then
-    starts docs again: the old release's code never starts over the state
-    the new release migrated."""
+    disk), when the rollback runs, then it refuses before any state moves,
+    the checkout stays on the release it was on, and docs starts again on
+    it: the old release's code never starts over the state the new release
+    migrated."""
     replaced = updated.data / ".snapshots" / "replaced"
     replaced.mkdir()
     data_before, head_before = everything_in(updated.data), head(updated)
@@ -469,15 +469,13 @@ def test_a_rollback_stopped_at_any_step_is_finished_by_the_next_run(updated, ste
     rolled_back(updated, extra)
 
 
-@pytest.mark.parametrize("step,stops_it", [STOPS[0][:2], STOPS[1][:2]], ids=["stop", "checkout"])
-def test_a_refusal_before_the_first_state_moves_changes_nothing_and_holds_nothing(updated, step,
-                                                                                  stops_it):
-    """Given a stop that fails for photos, or a checkout git refuses, when
-    the rollback runs, then each state stays where it was, the checkout
-    stays on its release, there is no record, docs runs again, and
-    `stack up docs` starts it: nothing waits for a rollback."""
+def test_a_refusal_before_the_first_state_moves_changes_nothing_and_holds_nothing(updated):
+    """Given a stop that fails for photos, when the rollback runs, then
+    each state stays where it was, the checkout stays on its release,
+    there is no record, docs runs again, and `stack up docs` starts it:
+    nothing waits for a rollback."""
     data_before, head_before = everything_in(updated.data), head(updated)
-    fixed = stops_it(updated)
+    fixed = _stop_fails(updated)
     try:
         ran = rollback(updated)
     finally:

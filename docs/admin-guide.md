@@ -1979,10 +1979,13 @@ until you answer. A remove of a snapshot refuses too, because the rollback can r
 The rollback does these steps:
 
 1. It stops the stacklets of the snapshot.
-2. It checks out the commit of the snapshot's release.
-3. It moves the current state of each stacklet to `.snapshots/replaced/<time>/`.
-4. It clones the snapshot's state back into the data folders.
+2. It moves the current state of each stacklet to `.snapshots/replaced/<time>/`.
+3. It clones the snapshot's state back into the data folders.
+4. It checks out the commit of the snapshot's release.
 5. It starts the stacklets on the images that they ran before the update.
+
+The checkout comes after the restore. Until each state is back, the code of the current release stays on disk. Thus
+`./stack rollback` is there to finish a rollback that stopped.
 
 To go back to an older snapshot, name it: `./stack rollback 2026-11-01T0900Z`. To skip the question in a script, add
 `--yes`.
@@ -2003,8 +2006,42 @@ The rollback refuses before it stops anything in these cases:
 ### What if a rollback stopped halfway?
 
 **Run `./stack rollback` again.** The rollback writes each step that it did into `ROLLBACK.json` in its replaced
-folder. The next run finishes from there, and never moves a state aside twice. Until the rollback ends, `./stack up`
-refuses its stacklets. Their state may be half restored.
+folder. The next run finishes from there, and never moves a state aside twice.
+
+What you find depends on where the rollback stopped:
+
+| Where it stopped | What is on disk | What to do |
+|---|---|---|
+| Before the checkout | The current release's code. A state may be half restored. | Run `./stack rollback`. |
+| At the checkout, because git refused it | The current release's code. Each state is back. | Fix the cause that the message names, for example a git lock. Then run `./stack rollback`. |
+| Inside the checkout, for example at a power loss | Git names the current release, but it wrote the files of the snapshot's release. It left the lock `.git/HEAD.lock`. Each state is back. | See [After a stop inside the checkout](#after-a-stop-inside-the-checkout). |
+| After the checkout | The code of the snapshot's release. Each state is back. | Run `./stack rollback`, if that release has it. If it does not have it, run `./stack up <id>` for each stacklet. |
+
+Until `./stack rollback` ends the run, `./stack up` refuses its stacklets. This is true for each release that has
+`./stack rollback`. The message tells what is true of the state. Before its restore ends, the state may be half
+restored. After it, the state is whole, and only the checkout and the start wait. The new release's code must not
+start on the old state.
+
+A release without `./stack rollback` does not know the record, and its `./stack up` starts the stacklets. The start is
+safe, because each state is whole before the checkout moves. The record stays open until a release with `./stack
+rollback` runs it once. Until then, the stack keeps its snapshot and its replaced state.
+
+#### After a stop inside the checkout
+
+The files on disk are of the snapshot's release. Thus `./stack` runs the code of that release:
+
+- When that release has `./stack rollback`, the command refuses with "local edits". The edits are the files that git
+  wrote before it stopped. The rollback refused your own edits before it began.
+- When that release does not have `./stack rollback`, the command is unknown.
+
+In both cases, do these steps:
+
+1. Remove the lock: `rm .git/HEAD.lock`. Also remove `.git/index.lock` if it is there.
+2. Check out the release you came from: `git checkout --force v0.4.0-rc.2`. The `MANIFEST.json` of the snapshot
+   names it as `applies`.
+3. Run `./stack rollback`. It finishes the rollback.
+
+`git checkout --force` deletes no edit of yours, because the rollback refused local edits before it began.
 
 ### How to remove a snapshot or a replaced state
 

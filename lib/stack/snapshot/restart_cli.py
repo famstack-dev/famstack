@@ -79,13 +79,7 @@ def waiting(stck, stacklet_id: str) -> dict | None:
     """
     held = rollback.holding(stck.data, stacklet_id)
     if held is not None:
-        try:
-            rollback.read_record(held)
-        except rollback.RollbackError as unreadable:
-            return {"error": str(unreadable), "stacklet": stacklet_id}
-        return {"error": (f"A rollback of {stacklet_id} stopped halfway, so its state may be "
-                          f"half restored ({held}). Finish it with: stack rollback"),
-                "stacklet": stacklet_id}
+        return rollback.why_held(held, stacklet_id)
     if not pending.waiting(stck.instance_dir, stacklet_id):
         return None
     return {"error": (f"{stacklet_id} waits for its snapshot, which failed at the last restart. "

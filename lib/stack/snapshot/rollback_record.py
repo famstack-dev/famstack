@@ -13,6 +13,7 @@ each step there once it is done:
     unfinished(data_root)          # [Path(".../replaced/2026-11-25T2203Z")]
     holding(data_root, "photos")   # that folder: photos must not start yet
     holding(data_root, "docs")     # that folder too, until "starting" is done
+    why_held(folder, "docs")       # {"error": "…", "stacklet": "docs", "state": "whole"}
     needs(data_root, snapshot.path)  # that folder: the rollback needs the snapshot
 
 Why it works this way:
@@ -21,9 +22,15 @@ Why it works this way:
   rollback` after a stop halfway goes on from there and never runs a done
   step a second time. It is written beside the old one and renamed over
   it, so a stop while it is written leaves the old record or the new one.
-- **A stacklet waits while its state is not whole.** While a record has
-  not reached "starting", `holding` names it, and `stack up` refuses its
-  stacklets. A finished record holds nothing.
+- **A stacklet waits until the checkout is done.** Until the record
+  names "starting", `holding` names it, and `stack up` refuses its
+  stacklets: their state may be half restored, or the checkout may still
+  be the new release's, whose code must not start on the old state. The
+  rollback writes "starting" only after git moved the checkout. A stop
+  before that, inside the checkout too, keeps the hold until the next
+  `stack rollback`. A release that does not know the record ignores the
+  hold; it starts on whole states, because the checkout is the last step
+  before the start. A finished record holds nothing.
 - **A rollback that has not ended keeps its way back.** `needs` names it
   for its snapshot and for its replaced state, so no remove and no
   prune deletes what the next `stack rollback` finishes from.
@@ -34,6 +41,14 @@ Why it works this way:
 The types a rollback passes between its plan and its steps (`Plan`,
 `Done`, `RollbackError`) live here too, because each of them describes
 what the record holds.
+
+Debt: a rollback that stopped after the checkout, whose stacklets a
+release without the record then started, stays unfinished: it names
+"starting" but not "finished". `needs` keeps its snapshot and its
+replaced state, so `stack snapshot remove` and the prune refuse them,
+until a release with `stack rollback` runs it once and finishes the
+record. Trigger: an admin rolls back to a release without `stack
+rollback` and then wants the disk space back.
 """
 
 from __future__ import annotations
@@ -66,12 +81,13 @@ __all__ = [
     "needs",
     "read_record",
     "unfinished",
+    "why_held",
 ]
 
 
 RUN_ACTION = "rollback"
 """The action a rollback writes into the run locks it holds (`stack.runs`),
-from its question until the state is restored. A remove reads it
+from its question until the checkout moved. A remove reads it
 (`stack.snapshot.removal`)."""
 
 RECORD_FILE = "ROLLBACK.json"
@@ -84,7 +100,7 @@ MOVED = "moved"
 RESTORED = "restored"
 """The snapshot's state of a stacklet is back in its data folder."""
 STARTING = "starting"
-"""Every state is back and the tags are moved; only the start is left."""
+"""The checkout is on the snapshot's commit; only the start is left."""
 FINISHED = "finished"
 """The rollback ended: its stacklets started."""
 
@@ -175,8 +191,10 @@ class Done:
 
 def holding(data_root: Path, stacklet_id: str) -> Path | None:
     """The folder of a rollback that holds the stacklet: its state may be
-    moved aside or half restored, so it must not start until `stack
-    rollback` finished the state. None when no rollback holds it.
+    moved aside or half restored, or the checkout may still be the new
+    release's, so it must not start until `stack rollback` has brought
+    every state back and moved the checkout. None when no rollback holds
+    it.
 
         holding(Path("~/famstack-data"), "docs")
         # Path(".../.snapshots/replaced/2026-11-25T2203Z") after a power loss in the restore
@@ -191,6 +209,37 @@ def holding(data_root: Path, stacklet_id: str) -> Path | None:
         if stacklet_id in record["stacklets"] and STARTING not in record["done"]:
             return folder
     return None
+
+
+def why_held(folder: Path, stacklet_id: str) -> dict:
+    """The answer of a start that the rollback in `folder` holds: the
+    message, the stacklet, and what is true of its state. `state` is
+    "half restored" while the record does not name its restore, and
+    "whole" once it does: then only the end of the rollback is left (the
+    checkout, when it has not moved, and the start). `stack up` and every
+    restart return it.
+
+        why_held(folder, "photos")
+        # {"error": "A rollback of photos stopped halfway, before its state was back. …",
+        #  "stacklet": "photos", "state": "half restored"}
+
+    A record that cannot be read gives its own message, and no `state`:
+    the stack cannot tell how far the rollback got.
+    """
+    try:
+        done = read_record(folder)["done"]
+    except RollbackError as unreadable:
+        return {"error": str(unreadable), "stacklet": stacklet_id}
+    if f"{RESTORED} {stacklet_id}" not in done:
+        return {"error": (f"A rollback of {stacklet_id} stopped halfway, before its state was "
+                          f"back, so the state may be half restored ({folder}). Finish it with: "
+                          f"stack rollback"),
+                "stacklet": stacklet_id, "state": "half restored"}
+    return {"error": (f"A rollback of {stacklet_id} stopped halfway. Its state is whole again, "
+                      f"but the rollback has not ended ({folder}). Finish it with: stack "
+                      f"rollback. It moves the checkout to the snapshot's release, unless it "
+                      f"is there, and starts {stacklet_id}."),
+            "stacklet": stacklet_id, "state": "whole"}
 
 
 def needs(data_root: Path, folder: Path) -> Path | None:
