@@ -691,6 +691,8 @@ On first setup, famstack seeds Paperless with common document categories and typ
 
 **Memory vault.** With the `code` stacklet up, every filed document and every captured URL or pasted note also lands as a Markdown file in your Forgejo repo `family/memory`. Documents and correspondents live under the shared bucket (`family/` by default, configurable via `stack.toml [core] shared_bucket`). Personal captures route to the sender's own bucket: Homer's pastes end up under `homer/notes/` or `homer/bookmarks/`, Marge's under hers. Paperless stays the canonical store; the memory vault is the browsable, git-versioned human view. Install the [`memory` stacklet](#memory-memory-optional) to seed the ontology and render the vault as the family wiki.
 
+**Which address opens Paperless.** In port mode, open the address that `./stack up docs` prints. Paperless answers 400 to other names of the Mac.
+
 | | |
 |---|---|
 | Port | `42020` |

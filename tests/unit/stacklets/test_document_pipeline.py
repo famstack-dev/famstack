@@ -406,3 +406,39 @@ class TestTheRoomsLanguageReachesTheClassifier:
         assert out.classification["title"] == "Urlaub Valencia"
         assert out.link.endswith("/go/docs/5")
         assert out.date == "2026-03-15"
+
+
+class TestRefusedUpload:
+    """A refused upload leaves one error line that names the status.
+
+    Paperless refusing every call (a Host check, a wrong token) shows in
+    the chat only as "upload failed". The status in the bot's log is what
+    tells the admin which of the two it is.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_refused_upload_logs_one_error_with_the_status(self, httpserver):
+        """Given Paperless answers 400 to the upload, when the pipeline files
+        a letter, then the outcome is upload_failed and the log holds one
+        error line with the status 400."""
+        import aiohttp
+        from loguru import logger
+
+        from stacklets.docs.bot.pipeline import PaperlessAPI
+
+        httpserver.expect_request(
+            "/api/documents/post_document/", method="POST",
+        ).respond_with_data("Bad Request (400)", status=400)
+        errors: list = []
+        sink = logger.add(lambda m: errors.append(m.record), level="ERROR")
+        try:
+            async with aiohttp.ClientSession() as http:
+                paperless = PaperlessAPI(http, httpserver.url_for(""), "token")
+                out = await _process(_pipeline(paperless), filename="letter.pdf",
+                                     data=b"%PDF-1.4 not really")
+        finally:
+            logger.remove(sink)
+
+        assert out.status == "upload_failed"
+        assert len(errors) == 1
+        assert "400" in errors[0]["message"]
