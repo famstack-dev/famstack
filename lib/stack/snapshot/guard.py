@@ -47,6 +47,7 @@ complaint from a developer or a bot that edits the configuration; then
 
 from __future__ import annotations
 
+from .. import runs
 from . import pending, release, rollback
 
 __all__ = ["refusals", "split", "starting", "waiting"]
@@ -76,9 +77,15 @@ def split(stck, stacklet_ids: list[str]) -> tuple[dict[str, dict], list[str]]:
     """`refusals` of `stacklet_ids`, and the stacklets among them that may
     start, in their order. `stack up` starts the second and names the first.
 
+    `stack up` asks it before it claims anything, so a run lock that is
+    held belongs to another run. Such a stacklet is not asked about: that
+    run may be the restart that applies the release, and the run lock
+    refuses the start with its own answer (exit 75).
+
         split(stck, ["docs", "photos"])   # ({"docs": {...}}, ["photos"])
     """
-    refused = refusals(stck, stacklet_ids)
+    free = [sid for sid in stacklet_ids if not runs.is_held(stck.instance_dir, sid)]
+    refused = refusals(stck, free)
     return refused, [sid for sid in stacklet_ids if sid not in refused]
 
 
