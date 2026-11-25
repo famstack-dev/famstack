@@ -99,6 +99,7 @@ en:
   capture_not_filed: "\u274C Not filed: {reason}."
   capture_not_changed: "\u274C The card was not changed: {reason}."
   correction_unknown_persons: "\u2753 I do not know {names}, so they are not on the card."
+  voice_speech_off: "\U0001F399 I cannot read voice messages now, so nothing was filed. Your admin can turn speech on: set `speech = true` under `[ai]` in `stack.toml`, then run `./stack up ai`."
   correction_no_filing: "\u2753 I could not find the filing this thread is about, so nothing was changed. Reply to my card to correct it."
   # Why a filing or a correction was not written, one line per reason
   # code (`failure_reason`): the memory's (`stack.memory.why_not_written`),
@@ -366,6 +367,7 @@ de:
   capture_not_filed: "\u274C Nicht abgelegt: {reason}."
   capture_not_changed: "\u274C Die Karte wurde nicht geändert: {reason}."
   correction_unknown_persons: "\u2753 Ich kenne {names} nicht, darum stehen sie nicht auf der Karte."
+  voice_speech_off: "\U0001F399 Ich kann gerade keine Sprachnachrichten lesen, darum wurde nichts abgelegt. Dein Admin kann die Sprache einschalten: `speech = true` unter `[ai]` in `stack.toml` setzen, dann `./stack up ai` ausführen."
   correction_no_filing: "\u2753 Ich finde die Ablage nicht, um die es in diesem Thread geht, daher wurde nichts geändert. Antworte auf meine Karte, um sie zu korrigieren."
   why_changed: "die Karte hat sich geändert, während ich sie geschrieben habe, versuch es noch einmal"
   why_invalid: "ein Feld der Karte passt nicht zu ihrer Art, korrigier es zuerst in der Karte"

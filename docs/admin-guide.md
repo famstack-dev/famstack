@@ -104,6 +104,8 @@ The oMLX app and an AI server on another computer keep their own settings, becau
 
 With speech off, the stack keeps voice messages but does not transcribe them. The stack also gives no spoken answers.
 
+A voice message in a room of the archivist gets one answer: the archivist cannot read voice messages now, and names the setting below.
+
 To turn speech on, set `speech` under `[ai]` in `stack.toml`:
 
 ```toml
