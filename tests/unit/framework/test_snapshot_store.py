@@ -29,14 +29,17 @@ from stack.snapshot.store import (
     CONFIG_FOLDER,
     SNAPSHOTS_FOLDER,
     SnapshotError,
-    ThisVolume,
     Snapshot,
     archive_paths,
+    REPLACED_FOLDER,
     clone_back,
+    discard,
+    is_name,
     remove,
     snapshots,
     take,
 )
+from stack.snapshot.volume import ThisVolume
 
 AT_2114 = datetime(2026, 11, 24, 21, 14, 5, tzinfo=timezone.utc)
 AT_2140 = datetime(2026, 11, 24, 21, 40, tzinfo=timezone.utc)
@@ -412,7 +415,7 @@ def test_a_removed_snapshot_is_gone_and_the_others_stay(mac):
     mac.take(now=AT_2140)
     data_before = mac.files(mac.data / "docs")
 
-    remove(snapshots(mac.data)[-1])
+    remove(mac.data, snapshots(mac.data)[-1])
 
     assert [s.name for s in snapshots(mac.data)] == ["2026-11-24T2140Z"]
     assert sorted(p.name for p in (mac.data / SNAPSHOTS_FOLDER).iterdir()) == ["2026-11-24T2140Z"]
@@ -424,6 +427,144 @@ def test_a_folder_outside_the_snapshots_is_never_removed(mac):
     folder of docs), when the store is asked to remove it, then it refuses
     and the folder stays."""
     with pytest.raises(SnapshotError):
-        remove(Snapshot("docs", mac.data / "docs", None))
+        remove(mac.data, Snapshot("docs", mac.data / "docs", None))
 
     assert (mac.data / "docs").is_dir()
+
+
+# ── The one delete: `discard` and its refusals ───────────────────────────
+#
+# `discard` is the only function that deletes a folder of the snapshots.
+# Each test below gives it one path that it must refuse, and each one
+# fails when the check for that case is taken out: the others let the
+# path through. "Kept" means the path and what it points at are as before.
+
+def a_copy_of_a_snapshot(mac: Mac, folder: Path) -> Path:
+    """A folder outside `.snapshots/` that looks like a snapshot: a
+    manifest and a stacklet's state, as a person's own copy has."""
+    (folder / "docs").mkdir(parents=True)
+    (folder / "docs" / "base.dat").write_text("homer's invoices")
+    (folder / MANIFEST_FILE).write_text("{}")
+    return folder
+
+
+def refused(mac: Mac, path: Path, kept: Path | None = None) -> None:
+    """`discard` refuses `path`, and `kept` (the path by default) and
+    everything in it is as before."""
+    kept = kept or path
+    before = mac.files(kept) if kept.is_dir() else kept.read_bytes()
+    with pytest.raises(SnapshotError):
+        discard(mac.data, path)
+    assert (mac.files(kept) if kept.is_dir() else kept.read_bytes()) == before
+
+
+def test_a_folder_with_a_snapshots_name_outside_the_snapshots_is_kept(mac):
+    """Given a folder with a snapshot's name directly in the data folder,
+    when `discard` is asked to delete it, then it refuses: an entry's
+    parent is `.snapshots/` or `replaced/` of this data folder."""
+    mac.take()
+    refused(mac, a_copy_of_a_snapshot(mac, mac.data / "2026-11-24T2114Z"))
+
+
+def test_a_path_through_dot_dot_is_kept(mac):
+    """Given `.snapshots/replaced/../../<name>`, which is the data folder's
+    `<name>`, when `discard` is asked to delete it, then it refuses."""
+    mac.take()
+    outside = a_copy_of_a_snapshot(mac, mac.data / "2026-11-24T2114Z")
+    (mac.data / SNAPSHOTS_FOLDER / REPLACED_FOLDER).mkdir()
+    path = mac.data / SNAPSHOTS_FOLDER / REPLACED_FOLDER / ".." / ".." / "2026-11-24T2114Z"
+    refused(mac, path, kept=outside)
+
+
+def test_the_replaced_folder_itself_is_kept(mac):
+    """Given `.snapshots/replaced/` with the states of two rollbacks, when
+    `discard` is asked to delete the folder itself, then it refuses: its
+    name is no entry's name."""
+    mac.take()
+    for name in ("2026-11-25T2203Z", "2026-11-26T0800Z"):
+        a_copy_of_a_snapshot(mac, mac.data / SNAPSHOTS_FOLDER / REPLACED_FOLDER / name)
+    refused(mac, mac.data / SNAPSHOTS_FOLDER / REPLACED_FOLDER)
+
+
+def test_the_snapshots_folder_itself_is_kept(mac):
+    """Given `.snapshots/` with a snapshot, when `discard` is asked to
+    delete it, then it refuses."""
+    mac.take()
+    refused(mac, mac.data / SNAPSHOTS_FOLDER)
+
+
+def test_a_stacklets_folder_in_a_snapshot_is_kept(mac):
+    """Given a snapshot, when `discard` is asked to delete one stacklet's
+    folder in it, then it refuses: the snapshot goes whole or not at all."""
+    name = mac.take().snapshot.name
+    refused(mac, mac.data / SNAPSHOTS_FOLDER / name / "docs")
+
+
+def test_a_link_with_a_snapshots_name_is_kept_and_so_is_its_target(mac):
+    """Given a link in `.snapshots/` with a snapshot's name that points at
+    a copy of a snapshot outside, when `discard` is asked to delete it,
+    then it refuses, and the link and the copy stay."""
+    mac.take()
+    outside = a_copy_of_a_snapshot(mac, mac.root / "keepsake")
+    link = mac.data / SNAPSHOTS_FOLDER / "2026-11-01T0900Z"
+    link.symlink_to(outside)
+    refused(mac, link, kept=outside)
+    assert link.is_symlink()
+
+
+def test_an_entry_below_a_linked_snapshots_folder_is_kept(mac):
+    """Given `.snapshots/` that is a link to a folder elsewhere, when
+    `discard` is asked to delete an entry in it, then it refuses, because
+    the entry is not in this data folder."""
+    elsewhere = mac.root / "elsewhere"
+    a_copy_of_a_snapshot(mac, elsewhere / "2026-11-24T2114Z")
+    (mac.data / SNAPSHOTS_FOLDER).symlink_to(elsewhere)
+    refused(mac, mac.data / SNAPSHOTS_FOLDER / "2026-11-24T2114Z",
+            kept=elsewhere / "2026-11-24T2114Z")
+
+
+def test_an_entry_below_a_linked_replaced_folder_is_kept(mac):
+    """Given `replaced/` that is a link to a folder elsewhere, when
+    `discard` is asked to delete a replaced state in it, then it refuses."""
+    mac.take()
+    elsewhere = mac.root / "elsewhere"
+    a_copy_of_a_snapshot(mac, elsewhere / "2026-11-25T2203Z")
+    (mac.data / SNAPSHOTS_FOLDER / REPLACED_FOLDER).symlink_to(elsewhere)
+    refused(mac, mac.data / SNAPSHOTS_FOLDER / REPLACED_FOLDER / "2026-11-25T2203Z",
+            kept=elsewhere / "2026-11-25T2203Z")
+
+
+def test_a_file_with_a_snapshots_name_is_kept_under_its_name(mac):
+    """Given a file in `.snapshots/` with a snapshot's name, when `discard`
+    is asked to delete it, then it refuses, and the file keeps its name
+    and content."""
+    mac.take()
+    stray = mac.data / SNAPSHOTS_FOLDER / "2026-11-01T0900Z"
+    stray.write_text("a note")
+    refused(mac, stray)
+
+
+def test_a_half_folder_and_a_replaced_state_are_deleted(mac):
+    """Given a `.taking-` folder and a replaced state, when `discard`
+    deletes each, then both are gone, and the snapshot and the data
+    folder stay."""
+    name = mac.take().snapshot.name
+    snapshots_folder = mac.data / SNAPSHOTS_FOLDER
+    half = a_copy_of_a_snapshot(mac, snapshots_folder / ".taking-2026-11-24T2140Z")
+    state = a_copy_of_a_snapshot(mac, snapshots_folder / REPLACED_FOLDER / "2026-11-25T2203Z")
+    data_before = mac.files(mac.data / "docs")
+
+    discard(mac.data, half)
+    discard(mac.data, state)
+
+    assert sorted(p.name for p in snapshots_folder.iterdir()) == [name, REPLACED_FOLDER]
+    assert list((snapshots_folder / REPLACED_FOLDER).iterdir()) == []
+    assert mac.files(mac.data / "docs") == data_before
+
+
+@pytest.mark.parametrize("name", ["2026-11-24T2114Z\n", "../2026-11-24T2114Z", "replaced",
+                                  "2026-11-24T2114Z/docs", ""])
+def test_a_name_has_exactly_the_form_of_a_snapshots_name(name):
+    """Given a name with a trailing newline, a path or another word, when
+    the store checks its form, then it is no snapshot's name."""
+    assert not is_name(name)

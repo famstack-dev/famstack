@@ -88,7 +88,9 @@ from ..images import DockerImages
 from ..manifest import Manifest, ManifestError
 from ..prompt import DIM, GREEN, ORANGE, RED, RESET
 from . import pending, store
-from .store import SnapshotError, Taken, Volume
+from .rollback_record import needs
+from .store import SnapshotError, Taken
+from .volume import Volume
 
 __all__ = [
     "KEEP",
@@ -234,7 +236,7 @@ def after_stop(stck, before: Before, *, volume: Volume | None = None) -> Taken |
     snapshot is written, and the record that `before_stop` kept waits
     until a snapshot is whole (`stack.snapshot.pending`). The record goes
     once the snapshot is whole. `volume` is the file system of the data folder,
-    `store.ThisVolume` by default.
+    `volume.ThisVolume` by default.
 
         after_stop(stck, before).snapshot.name    # "2026-11-25T2114Z"
     """
@@ -258,19 +260,22 @@ def prune(data_root: Path, taken: str) -> Pruned:
 
     `taken` always stays, also when the clock made it sort below an older
     one. A snapshot with an unreadable manifest is never removed and not
-    counted. Removes nothing when `taken` is not among the snapshots. A
-    removal that fails is named in `failed`, and the others go on.
+    counted. Nor is the snapshot of a rollback that has not ended
+    (`rollback_record.needs`), because that rollback finishes from it.
+    Removes nothing when `taken` is not among the snapshots. A removal
+    that fails is named in `failed`, and the others go on.
 
         prune(Path("~/famstack-data"), "2026-11-25T2114Z")
         # Pruned(removed=["2026-11-01T0900Z"], failed={})
     """
-    readable = [s for s in store.snapshots(data_root) if s.manifest is not None]
+    readable = [s for s in store.snapshots(data_root)
+                if s.manifest is not None and needs(data_root, s.path) is None]
     if not any(s.name == taken for s in readable):
         return Pruned()
     pruned = Pruned()
     for snapshot in [s for s in readable if s.name != taken][KEEP - 1:]:
         try:
-            store.remove(snapshot)
+            store.remove(data_root, snapshot)
             pruned.removed.append(snapshot.name)
         except SnapshotError as error:
             pruned.failed[snapshot.name] = str(error)

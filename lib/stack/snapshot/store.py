@@ -13,7 +13,8 @@ applies a release).
     taken.snapshot.name        # "2026-11-24T2114Z"
     taken.cloned               # True on APFS, False when the files were copied
     store.snapshots(data_root) # [Snapshot(name="2026-11-24T2114Z", …), …], newest first
-    store.remove(snapshot)     # renamed to `.removing-<name>`, then deleted
+    store.remove(data_root, snapshot)   # renamed to `.removing-<name>`, then deleted
+    store.discard(data_root, folder)    # the same for any entry of `.snapshots/`
     store.clone_back(snapshot, "docs", data_root / "docs")   # the rollback's restore
 
 One snapshot, on disk:
@@ -52,8 +53,9 @@ Why it works this way:
 - **`.snapshots/` starts with a dot.** A stacklet's id never does, so no
   part of the stack reads the folder as a stacklet's data folder.
 
-The file system is behind the port `Volume` (`ThisVolume` is the real
-one), so a test can stand in a volume that does not clone or is full. The
+The file system is behind the port `Volume` (`stack.snapshot.volume`,
+`ThisVolume` is the real one), so a test can stand in a volume that does
+not clone or is full. The
 manifest's records come from `stack.manifest`; the caller makes them while
 the stacklets still run, because a running container names the image it
 runs.
@@ -61,38 +63,46 @@ runs.
 
 from __future__ import annotations
 
-import ctypes
+import contextlib
 import errno
 import os
 import re
 import shutil
-import subprocess
 import tomllib
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable
 
 from .. import manifest as manifests
 from ..manifest import Manifest, ManifestError
+from .volume import ThisVolume, Volume
 
 __all__ = [
     "CONFIG_FOLDER",
+    "REMOVING",
+    "REPLACED_FOLDER",
     "SNAPSHOTS_FOLDER",
+    "TAKING",
     "Snapshot",
     "SnapshotError",
     "Taken",
-    "ThisVolume",
-    "Volume",
     "archive_paths",
     "clone_back",
+    "discard",
+    "is_entry_name",
+    "is_name",
     "remove",
+    "size_text",
     "snapshots",
     "take",
 ]
 
 SNAPSHOTS_FOLDER = ".snapshots"
 """The folder of the snapshots, in the data folder (`~/famstack-data/.snapshots/`)."""
+
+REPLACED_FOLDER = "replaced"
+"""The folder in `.snapshots/` that holds the state each rollback replaced."""
 
 CONFIG_FOLDER = "stack"
 """The folder in a snapshot that holds the stack's configuration."""
@@ -101,17 +111,17 @@ CONFIG_FOLDER = "stack"
 # that the instance does not have is left out.
 _CONFIG_ITEMS = ("stack.toml", "users.toml", ".stack")
 
-# The prefix of a snapshot that is still being written. It starts with a
-# dot, so `snapshots` never lists it.
-_TAKING = ".taking-"
+TAKING = ".taking-"
+"""The prefix of a snapshot that is still being written. It starts with a
+dot, so `snapshots` never lists it."""
 
-# The prefix of a snapshot that is being removed, for the same reason.
-_REMOVING = ".removing-"
+REMOVING = ".removing-"
+"""The prefix of a folder that is being removed, for the same reason."""
 
 # A snapshot's name: the time it was taken, in UTC, to the minute. A second
 # snapshot in the same minute gets "-2", "-3", ….
 _NAME_TIME = "%Y-%m-%dT%H%MZ"
-_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{4}Z)(?:-(\d+))?$")
+_NAME = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{4}Z)(?:-(\d+))?")
 
 
 # ── The records ──────────────────────────────────────────────────────────
@@ -160,99 +170,6 @@ class Taken:
 
     snapshot: Snapshot
     cloned: bool
-
-
-class Volume(Protocol):
-    """The file system of the data folder, as the store uses it.
-
-    `ThisVolume` is the real one. A test stands in a volume that does not
-    clone, that is full, or whose clone fails:
-
-        class CopyOnly(ThisVolume):            # a disk that is not APFS
-            def can_clone(self, folder): return False
-            def free_bytes(self, folder): return 100
-
-        take(…, volume=CopyOnly())             # SnapshotError: "… needs 1240 bytes and the disk has 100 bytes free"
-    """
-
-    def can_clone(self, folder: Path) -> bool:
-        """Whether a file in `folder` can be cloned. May write and remove a
-        probe file in `folder`."""
-        ...
-
-    def clone(self, source: Path, target: Path) -> None:
-        """Clone the file `source` as `target`, with its mode and times.
-        Raises `OSError` when it cannot."""
-        ...
-
-    def free_bytes(self, folder: Path) -> int:
-        """The free space on the volume of `folder`, in bytes."""
-        ...
-
-    def exclude_from_backups(self, folder: Path) -> None:
-        """Tell Time Machine to skip `folder`. Never raises."""
-        ...
-
-
-class ThisVolume:
-    """`Volume` over the file system of this Mac.
-
-        volume = ThisVolume()
-        volume.can_clone(Path("~/famstack-data/.snapshots"))   # True on APFS
-        volume.clone(Path("a"), Path("b"))                     # b is a clone of a
-
-    A clone is `clonefile(2)`, the call that `cp -c` makes. On a system
-    without it (Linux) or a volume that does not support it, `can_clone`
-    is False and the store copies. `exclude_from_backups` runs
-    `tmutil addexclusion`; without `tmutil` it does nothing.
-    """
-
-    def can_clone(self, folder: Path) -> bool:
-        """Whether `clonefile(2)` works in `folder`: clones a probe file
-        there and removes both files again."""
-        if _clonefile() is None:
-            return False
-        probe, copy = Path(folder) / ".clone-probe", Path(folder) / ".clone-probe-copy"
-        try:
-            probe.write_bytes(b"")
-            self.clone(probe, copy)
-            return True
-        except OSError:
-            return False
-        finally:
-            probe.unlink(missing_ok=True)
-            copy.unlink(missing_ok=True)
-
-    def clone(self, source: Path, target: Path) -> None:
-        """Clone `source` as `target` with `clonefile(2)`. Raises `OSError`
-        with the system's reason when the call fails."""
-        clonefile = _clonefile()
-        if clonefile is None:
-            raise OSError(f"{source}: this system cannot clone files")
-        if clonefile(os.fsencode(source), os.fsencode(target), ctypes.c_uint32(0)) != 0:
-            errno = ctypes.get_errno()
-            raise OSError(errno, os.strerror(errno), str(source))
-
-    def free_bytes(self, folder: Path) -> int:
-        """The free space on the volume of `folder`, in bytes."""
-        return shutil.disk_usage(folder).free
-
-    def exclude_from_backups(self, folder: Path) -> None:
-        """`tmutil addexclusion <folder>`. A failure is ignored: the
-        snapshot is whole without it, and Time Machine then only holds
-        the clone a second time."""
-        tmutil = shutil.which("tmutil")
-        if tmutil is None:
-            return
-        try:
-            subprocess.run([tmutil, "addexclusion", str(folder)],
-                           capture_output=True, timeout=_TMUTIL_SECONDS, check=False)
-        except (OSError, subprocess.SubprocessError):
-            pass
-
-
-# How long `tmutil addexclusion` may take. It only sets an attribute.
-_TMUTIL_SECONDS = 30
 
 
 # ── Taking and listing ───────────────────────────────────────────────────
@@ -317,7 +234,7 @@ def snapshots(data_root: Path) -> list[Snapshot]:
         return []
     found = []
     for path in folder.iterdir():
-        if not (path.is_dir() and _NAME.match(path.name)):
+        if not (path.is_dir() and _NAME.fullmatch(path.name)):
             continue
         try:
             record = manifests.read(path)
@@ -329,28 +246,98 @@ def snapshots(data_root: Path) -> list[Snapshot]:
     return sorted(found, key=lambda s: _order_of(s.name), reverse=True)
 
 
-def remove(snapshot: Snapshot) -> None:
-    """Remove `snapshot`, one that `snapshots` listed, with its folder.
+def remove(data_root: Path, snapshot: Snapshot) -> None:
+    """Remove `snapshot`, one that `snapshots(data_root)` listed, with its
+    folder. Refuses and raises as `discard` does.
 
-    The folder is renamed to `.removing-<name>` first and deleted after,
-    so a removal that stops halfway leaves a folder that `snapshots`
-    never lists, and never half a snapshot under its name. Refuses with
-    `SnapshotError` a path that is not a snapshot's folder in
-    `.snapshots/`, and raises it when the folder cannot be renamed.
-
-        remove(snapshots(Path("~/famstack-data"))[-1])
+        remove(Path("~/famstack-data"), snapshots(Path("~/famstack-data"))[-1])
     """
-    path = Path(snapshot.path)
-    if path.parent.name != SNAPSHOTS_FOLDER or not _NAME.match(path.name) or not path.is_dir():
-        raise SnapshotError(f"{path}: not a snapshot in {SNAPSHOTS_FOLDER}/, so it is not removed")
-    removing = path.parent / f"{_REMOVING}{path.name}"
-    try:
-        path.rename(removing)
-    except OSError as error:
-        raise SnapshotError(f"the snapshot {path.name} cannot be removed: {error}") from error
-    # Safe to delete: the folder is a snapshot of the store, renamed above,
-    # and holds clones or copies. The data folders are never touched.
-    shutil.rmtree(removing, ignore_errors=True)
+    discard(data_root, snapshot.path)
+
+
+def discard(data_root: Path, folder: Path) -> None:
+    """Delete `folder`, one entry of `<data_root>/.snapshots/`, with
+    everything in it. This is the one function of the package that
+    deletes a folder: every remove goes through its checks.
+
+    An entry is a folder directly in `.snapshots/` or in
+    `.snapshots/replaced/`, with a snapshot's name (`is_name`) or that
+    name after `.taking-` or `.removing-`. Refuses with `SnapshotError`,
+    before anything changes:
+
+    - a folder outside those two folders, also after `..` or a link;
+    - `.snapshots/` itself, `replaced/` itself, and any other name;
+    - a link: the entry, `.snapshots/` or `replaced/`, because a link
+      leads out of `.snapshots/`;
+    - a path that is not a folder.
+
+    A folder with a name that does not start with a dot is renamed to
+    `.removing-<name>` first and deleted after, so a removal that stops
+    halfway leaves a folder that no list takes for whole. A folder whose
+    name starts with a dot is not whole anyway, and is deleted where it
+    is. Raises `SnapshotError` when the folder cannot be renamed, or when
+    a file in it cannot be deleted: then it names the folder that stays.
+
+        discard(Path("~/famstack-data"),
+                Path("~/famstack-data/.snapshots/replaced/2026-11-25T2203Z"))
+        discard(Path("~/famstack-data"), Path("~/famstack-data/.snapshots/replaced"))
+        # SnapshotError: …/.snapshots/replaced: not an entry of .snapshots/, so it is not removed
+    """
+    folder = Path(folder)
+    if not _is_entry(Path(data_root), folder):
+        raise SnapshotError(f"{folder}: not an entry of {SNAPSHOTS_FOLDER}/, so it is not removed")
+    if not folder.name.startswith("."):
+        removing = folder.parent / f"{REMOVING}{folder.name}"
+        try:
+            folder.rename(removing)
+        except OSError as error:
+            raise SnapshotError(f"{folder} cannot be removed: {error}") from error
+        folder = removing
+    # Safe to delete: the folder is in `.snapshots/` and is no link, so it
+    # holds clones, copies or a state a rollback moved aside. rmtree
+    # deletes a link inside it, never what the link points at.
+    shutil.rmtree(folder, ignore_errors=True)
+    if folder.exists():
+        left = next((str(p) for p in folder.rglob("*")), str(folder))
+        raise SnapshotError(f"{folder} stays, because a file in it cannot be deleted: {left}. "
+                            f"It is not whole any more.")
+
+
+def is_name(name: str) -> bool:
+    """Whether `name` has the form of a snapshot's name. A replaced
+    state's folder has the same form.
+
+        >>> is_name("2026-11-24T2114Z-2"), is_name("../docs")
+        (True, False)
+    """
+    return _NAME.fullmatch(name) is not None
+
+
+def is_entry_name(name: str) -> bool:
+    """Whether `name` is the name of an entry of `.snapshots/`: a
+    snapshot's name, or that name after `.taking-` or `.removing-`.
+
+        >>> is_entry_name(".taking-2026-11-25T2300Z"), is_entry_name(".removing-2026-11-25T2300Z")
+        (True, True)
+        >>> is_entry_name("replaced"), is_entry_name(".taking-../docs")
+        (False, False)
+    """
+    for prefix in (TAKING, REMOVING):
+        if name.startswith(prefix):
+            return is_name(name[len(prefix):])
+    return is_name(name)
+
+
+def size_text(count: int) -> str:
+    """A size in bytes for a person.
+
+        >>> size_text(1_500_000_000), size_text(300_000_000), size_text(512)
+        ('1.5 GB', '300.0 MB', '512 bytes')
+    """
+    for unit, factor in (("GB", 10**9), ("MB", 10**6)):
+        if count >= factor:
+            return f"{count / factor:.1f} {unit}"
+    return f"{count} bytes"
 
 
 def clone_back(snapshot: Snapshot, stacklet_id: str, target: Path,
@@ -471,7 +458,7 @@ def _check_room(parts: list[_Part], folder: Path, volume: Volume) -> None:
     free = volume.free_bytes(folder)
     if needed > free:
         raise SnapshotError(f"the data folder is not on APFS, so the snapshot is a copy. "
-                            f"The copy needs {_size(needed)} and the disk has {_size(free)} free")
+                            f"The copy needs {size_text(needed)} and the disk has {size_text(free)} free")
 
 
 # ── Writing a snapshot ───────────────────────────────────────────────────
@@ -496,7 +483,7 @@ def _write(folder: Path, name: str, parts: list[_Part], record: Manifest,
     copies when it is None. Any failure, also Ctrl-C, removes the
     `.taking-` folder. The manifest comes before the rename, so a folder
     with a snapshot's name always holds its manifest."""
-    partial, final = folder / f"{_TAKING}{name}", folder / name
+    partial, final = folder / f"{TAKING}{name}", folder / name
     renamed = False
     try:
         partial.mkdir()
@@ -509,9 +496,10 @@ def _write(folder: Path, name: str, parts: list[_Part], record: Manifest,
         raise SnapshotError(f"the snapshot {name} stopped halfway and was removed: {error}") from error
     finally:
         if not renamed:
-            # Safe to delete: this folder was made by this take, above, and
-            # holds only what it wrote. The data folders are never touched.
-            shutil.rmtree(partial, ignore_errors=True)
+            # This folder was made by this take, above, and holds only what
+            # it wrote. A file that stays is listed as not whole.
+            with contextlib.suppress(SnapshotError):
+                discard(folder.parent, partial)
     return Snapshot(name, final, record)
 
 
@@ -571,7 +559,7 @@ def _free_name(folder: Path, now: datetime) -> str:
     "-2", "-3", … when a snapshot of that minute exists."""
     base = now.astimezone(timezone.utc).strftime(_NAME_TIME)
     name, number = base, 1
-    while (folder / name).exists() or (folder / f"{_TAKING}{name}").exists():
+    while (folder / name).exists() or (folder / f"{TAKING}{name}").exists():
         number += 1
         name = f"{base}-{number}"
     return name
@@ -579,13 +567,35 @@ def _free_name(folder: Path, now: datetime) -> str:
 
 # ── Names and sizes ──────────────────────────────────────────────────────
 
+def _is_entry(data_root: Path, folder: Path) -> bool:
+    """Whether `folder` is an entry of `<data_root>/.snapshots/` that
+    `discard` may delete: a folder, no link, with an entry's name, whose
+    parent is `.snapshots/` or `.snapshots/replaced/` of this data folder.
+
+    The parent is compared after `resolve`, so `..` and a link above the
+    data folder lead to the same answer as the plain path. `.snapshots/`
+    and `replaced/` must be no links themselves, because `resolve` follows
+    them, and then the parent compares equal wherever the link points.
+    """
+    snapshots = data_root / SNAPSHOTS_FOLDER
+    replaced = snapshots / REPLACED_FOLDER
+    parent = folder.parent.resolve()
+    if parent not in (snapshots.resolve(), replaced.resolve()):
+        return False
+    if snapshots.is_symlink() or (parent == replaced.resolve() and replaced.is_symlink()):
+        return False
+    if folder.is_symlink() or not folder.is_dir():
+        return False
+    return is_entry_name(folder.name)
+
+
 def _time_of(name: str) -> datetime:
     """The time in a snapshot's name.
 
         >>> _time_of("2026-11-24T2114Z-2")
         datetime.datetime(2026, 11, 24, 21, 14, tzinfo=datetime.timezone.utc)
     """
-    match = _NAME.match(name)
+    match = _NAME.fullmatch(name)
     if match is None:
         raise ValueError(f"not a snapshot's name: {name}")
     return datetime.strptime(match.group(1), _NAME_TIME).replace(tzinfo=timezone.utc)
@@ -593,31 +603,7 @@ def _time_of(name: str) -> datetime:
 
 def _order_of(name: str) -> tuple[datetime, int]:
     """The sort key of a snapshot's name: its time, then its number."""
-    match = _NAME.match(name)
+    match = _NAME.fullmatch(name)
     return _time_of(name), int(match.group(2) or 1) if match else 1
 
 
-def _size(count: int) -> str:
-    """A size in bytes for a person.
-
-        >>> _size(1_500_000_000), _size(300_000_000), _size(512)
-        ('1.5 GB', '300.0 MB', '512 bytes')
-    """
-    for unit, factor in (("GB", 10**9), ("MB", 10**6)):
-        if count >= factor:
-            return f"{count / factor:.1f} {unit}"
-    return f"{count} bytes"
-
-
-_LIBC: list = []
-
-
-def _clonefile():
-    """`clonefile(2)` from the C library, or None on a system without it."""
-    if not _LIBC:
-        try:
-            libc = ctypes.CDLL(None, use_errno=True)
-            _LIBC.append(getattr(libc, "clonefile", None))
-        except OSError:
-            _LIBC.append(None)
-    return _LIBC[0]

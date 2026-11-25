@@ -17,6 +17,11 @@ in order:
 
 Why it works this way:
 
+- **The snapshot is checked again under the run locks,** before the
+  stop. A remove may have deleted it while the admin read the plan; then
+  the run ends before anything stops. From there on, a remove refuses
+  every snapshot while the rollback holds its locks
+  (`stack.snapshot.removal`).
 - **Nothing of the family's moves before the record.** A stop that
   fails, a checkout that git refuses (an untracked file in the way, a
   lock) or a record that cannot be written (a full disk) ends the run
@@ -77,7 +82,7 @@ from .rollback_record import (
     begin,
     mark,
 )
-from .store import Volume
+from .volume import Volume
 
 __all__ = ["run"]
 
@@ -94,7 +99,7 @@ def run(stck, planned: Plan, *, stop: Callable[[list[str]], dict],
     them and says whether they started. `volume` is the file system of the
     data folder, `now` names the replaced folder of a new rollback, and
     `source` asks Docker for images. Holds the run locks of the stacklets
-    until the start. Raises `RollbackError` when a step fails: before the
+    until their state is restored, and lets them go before the start. Raises `RollbackError` when a step fails: before the
     record, each stacklet it stopped is started again; after it, the
     record keeps what is done for the next `stack rollback`.
 
@@ -152,8 +157,10 @@ def _replace(stck, planned: Plan, stop, start, volume, now, source):
 
 
 def _stopped_and_checked_out(stck, planned: Plan, stop, now: datetime | None) -> Path:
-    """Stop, check out, and make the record of a new rollback. Returns
-    the replaced folder. Raises `_Undo` before the record."""
+    """Check the snapshot again, stop, check out, and make the record of
+    a new rollback. Returns the replaced folder. Raises `_Undo` before the
+    record."""
+    _refuse_a_snapshot_that_went(stck, planned)
     running = _stop(stck, list(planned.stacklets), stop)
     try:
         previous = _check_out(stck, planned.manifest.commit)
@@ -165,6 +172,18 @@ def _stopped_and_checked_out(stck, planned: Plan, stop, now: datetime | None) ->
         return begin(stck.data, planned, now or datetime.now(timezone.utc))
     except RollbackError as error:
         raise _Undo(*_back_to(stck, previous, str(error), running)) from error
+
+
+def _refuse_a_snapshot_that_went(stck, planned: Plan) -> None:
+    """Raise `_Undo` when the planned snapshot is no longer whole in the
+    store: a `stack snapshot remove` deleted it after the plan, while the
+    admin read the plan, before this run held the locks. Under the locks
+    a remove refuses it, so the snapshot this finds stays until the end."""
+    name = planned.snapshot.name
+    if any(s.name == name and s.manifest is not None for s in store.snapshots(stck.data)):
+        return
+    raise _Undo(f"The snapshot {name} is gone since the plan. Nothing was stopped or moved. "
+                f"stack snapshot list shows the snapshots.", [])
 
 
 def _stop(stck, ids: list[str], stop: Callable[[list[str]], dict]) -> list[str]:

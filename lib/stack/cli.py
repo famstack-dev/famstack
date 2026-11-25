@@ -46,7 +46,7 @@ from . import run_log
 from .removal import handle_destroy, handle_uninstall
 from .prompt import ORANGE, TEAL, GREEN, RED, DIM, BOLD, RESET
 from .devices import cli as devices_cli
-from .snapshot import cli as snapshot_cli
+from .snapshot import cli as snapshot_cli, release as snapshot_release, restart_cli, rollback_cli
 from .config_file import StackTomlUnreadable, configured_data_dir, read_stack_toml
 from .stack import Stack
 
@@ -617,7 +617,7 @@ class CLI:
         A requirement not set up that asks nothing is started first
         (`_start_requirements`); `Stack.up` refuses for any other.
         """
-        failed = (snapshot_cli.waiting(self.stack, stacklet_id)
+        failed = (restart_cli.waiting(self.stack, stacklet_id)
                   or self._start_requirements(stacklet_id))
         if failed:
             return failed
@@ -2267,9 +2267,9 @@ def handle_restart(stck, args):
         # back up against a dependency that is about to go down.
         with _restart_run(stck, cli._known(ids), cli._known(ids)) as unprepared:
             ids = _left(ids, unprepared)
-            before = snapshot_cli.record_or_exit(stck, ids, no_snapshot)
+            before = restart_cli.record_or_exit(stck, ids, no_snapshot)
             down_result = cli.down_many(ids)
-            taken = snapshot_cli.take_or_exit(stck, before)
+            taken = restart_cli.take_or_exit(stck, before)
             if not down_result.get("ok"):
                 failed = {"error": down_result.get("error") or "Some stacklets failed to stop",
                           "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
@@ -2277,7 +2277,7 @@ def handle_restart(stck, args):
                 print_error(failed)
                 sys.exit(1)
             up_result = cli.up_many(ids)
-        snapshot_cli.keep_and_say(stck, taken)
+        restart_cli.keep_and_say(stck, taken)
         if not up_result.get("ok"):
             _failed_to_start(_counting(up_result, unprepared))
             sys.exit(1)
@@ -2304,9 +2304,9 @@ def handle_restart(stck, args):
         resting = [st["id"] for st in stck.discover() if st["id"] not in touched]
         with runs.reserve(stck.instance_dir, resting), \
                 _restart_run(stck, touched, []) as unprepared:
-            before = snapshot_cli.record_or_exit(stck, _left(installed, unprepared), no_snapshot)
+            before = restart_cli.record_or_exit(stck, _left(installed, unprepared), no_snapshot)
             down_result = cli.down_many(_left(sorted(stck.running_ids()), unprepared))
-            taken = snapshot_cli.take_or_exit(stck, before)
+            taken = restart_cli.take_or_exit(stck, before)
             if not down_result.get("ok"):
                 failed = {"error": "Some stacklets failed to stop",
                           "problems": [e["stacklet"] for e in down_result.get("errors", [])]}
@@ -2314,7 +2314,7 @@ def handle_restart(stck, args):
                 print_error(failed)
                 sys.exit(1)
             up_result = cli.up_many(_left(installed, unprepared))
-        snapshot_cli.keep_and_say(stck, taken)
+        restart_cli.keep_and_say(stck, taken)
         if not up_result.get("ok"):
             _failed_to_start(_counting(up_result, unprepared))
             sys.exit(1)
@@ -2326,11 +2326,11 @@ def handle_restart(stck, args):
         return
 
     with _restart_run(stck, [args.stacklet], cli._known([args.stacklet])):
-        before = snapshot_cli.record_or_exit(stck, [args.stacklet], no_snapshot)
+        before = restart_cli.record_or_exit(stck, [args.stacklet], no_snapshot)
         cli.down(args.stacklet)
-        taken = snapshot_cli.take_or_exit(stck, before)
+        taken = restart_cli.take_or_exit(stck, before)
         result = cli.up(args.stacklet)
-    snapshot_cli.keep_and_say(stck, taken)
+    restart_cli.keep_and_say(stck, taken)
     if "error" in result:
         print_error(result); sys.exit(1)
     else:
@@ -2386,9 +2386,9 @@ def _restart_stale(stck, cli, yes=False, no_snapshot=False):
     # dependency order.
     with _restart_run(stck, stale, stale) as unprepared:
         ids = _left(stale, unprepared)
-        before = snapshot_cli.record_or_exit(stck, ids, no_snapshot)
+        before = restart_cli.record_or_exit(stck, ids, no_snapshot)
         cli.down_many(ids)
-        taken = snapshot_cli.take_or_exit(stck, before)
+        taken = restart_cli.take_or_exit(stck, before)
         result = _counting(cli.up_many(ids), unprepared)
     failed = {e["stacklet"]: e["result"].get("error", "") for e in result["errors"]}
     for sid in stale:
@@ -2398,7 +2398,7 @@ def _restart_stale(stck, cli, yes=False, no_snapshot=False):
             print(f"  {GREEN}\u2713{RESET} {sid}: restarted")
 
     print()
-    snapshot_cli.keep_and_say(stck, taken)
+    restart_cli.keep_and_say(stck, taken)
     _tell_how_to_pair(stck, [sid for sid in stale if sid not in failed])
     if failed:
         sys.exit(1)
@@ -2854,7 +2854,7 @@ def _print_restart_plan(targets: list[str], changed: list[str]) -> None:
     scope = "every running stacklet" if touches_framework(changed) else ", ".join(targets)
     print(f"\n  Needs a restart afterwards: {scope or 'nothing'}")
     if targets:
-        print(snapshot_cli.release.plan_line())
+        print(snapshot_release.plan_line())
 
 
 def _print_restart_advice(targets, changed, running, touches_framework, touched_stacklets):
@@ -3220,7 +3220,7 @@ DISPATCH = {
     "family": handle_family,
     "devices": devices_cli.run,
     "snapshot": snapshot_cli.run,
-    "rollback": snapshot_cli.run_rollback,
+    "rollback": rollback_cli.run,
     "init": handle_init,
     "up": handle_up,
     "down": handle_down,
@@ -3481,7 +3481,7 @@ def _main():
     p.add_argument("--json", action="store_true", help="Output as JSON")
     devices_cli.add_parser(sub)
     snapshot_cli.add_parser(sub)
-    snapshot_cli.add_rollback_parser(sub)
+    rollback_cli.add_parser(sub)
     p = sub.add_parser("family")
     p.add_argument("verb", nargs="?", default=None, help="set")
     p.add_argument("--from", dest="source", metavar="FILE",

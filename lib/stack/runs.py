@@ -598,7 +598,8 @@ def _message(stacklet: str, holder: dict) -> str:
 # What the holder's action does to the stacklet, as the message says it.
 _DOING = {"up": "starting", "down": "stopping", "restart": "restarting",
           "destroy": "being removed", "prepare": "being prepared",
-          "uninstall": "being removed", "switch": "switching to another server"}
+          "uninstall": "being removed", "switch": "switching to another server",
+          "rollback": "rolling back", "snapshot remove": "held while a snapshot is removed"}
 
 
 def _clock(started: str) -> str:

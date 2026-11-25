@@ -220,7 +220,8 @@ def test_list_shows_each_snapshot_newest_first(checkout):
 def test_list_without_snapshots_says_so(checkout):
     """Given no snapshot, when the admin runs `stack snapshot list`, then
     the list is empty, and the person reads that there are none yet."""
-    assert checkout.stack("snapshot", "list", "--json").json() == {"snapshots": []}
+    assert checkout.stack("snapshot", "list", "--json").json() == {
+        "snapshots": [], "replaced": [], "incomplete": []}
     assert "No snapshots yet." in checkout.stack("snapshot", "list").out
 
 
@@ -230,7 +231,7 @@ def test_a_half_snapshot_is_not_listed(checkout):
     (checkout.data / ".snapshots" / "2026-11-24T2114Z" / "docs").mkdir(parents=True)
     (checkout.data / ".snapshots" / ".taking-2026-11-24T2120Z" / "docs").mkdir(parents=True)
 
-    assert checkout.stack("snapshot", "list", "--json").json() == {"snapshots": []}
+    assert checkout.stack("snapshot", "list", "--json").json()["snapshots"] == []
 
 
 # ── `.snapshots/` is nobody's data ───────────────────────────────────────
@@ -336,7 +337,7 @@ def test_an_unexpected_error_in_the_take_still_starts_the_stacklet(checkout):
     from stack import Stack
     from stack.output import CollectorOutput
     from stack.snapshot import cli as snapshot_cli
-    from stack.snapshot.store import ThisVolume
+    from stack.snapshot.volume import ThisVolume
 
     class Exploding(ThisVolume):
         def can_clone(self, folder):

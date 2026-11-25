@@ -12,8 +12,9 @@ record waits, the stacklet does not start on the new release:
     pending.keep(instance_dir, record)          # before the stop
     pending.waiting(instance_dir, "docs")       # True: `stack up docs` refuses
     pending.read(instance_dir, ["docs"])        # the record, for the next take
-    pending.clear(instance_dir, ["docs"])       # the snapshot is whole, or
-                                                # the admin said --no-snapshot
+    pending.clear(instance_dir, ["docs"])       # the snapshot is whole, the admin
+                                                # said --no-snapshot, or a rollback
+                                                # restored the stacklet
 
 Why it works this way:
 
@@ -27,9 +28,11 @@ Why it works this way:
   record, in the format of `stack.manifest`.
 - **Kept before the stop.** A record that cannot be kept (a full disk)
   stops nothing, so no stacklet is left stopped without one.
-- **A whole snapshot, `--no-snapshot` or `stack destroy` ends the wait.**
-  A stacklet that did not stop still runs what it ran, so its record
-  goes too. Nothing else removes it.
+- **A whole snapshot, `--no-snapshot`, `stack destroy` or a rollback
+  ends the wait.** A stacklet that did not stop still runs what it ran,
+  so its record goes too. A rollback restores the state of a snapshot,
+  so the record of the newer release no longer applies. Nothing else
+  removes it.
 
 This module keeps and reads the records; `stack.snapshot.release` decides
 when, and `stack.cli` refuses the start while one waits.
@@ -108,8 +111,9 @@ def read(instance_dir: Path, ids: list[str]) -> Manifest | None:
 
 
 def clear(instance_dir: Path, ids: list[str]) -> None:
-    """Remove the kept records of `ids`: a snapshot is whole, or the admin
-    restarts without one. A stacklet with no record is left as it is.
+    """Remove the kept records of `ids`: a snapshot is whole, the admin
+    restarts without one, or a rollback restored them. A stacklet with no
+    record is left as it is.
 
         clear(Path("~/famstack"), ["docs"])
     """

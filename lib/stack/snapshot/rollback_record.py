@@ -13,6 +13,7 @@ each step there once it is done:
     unfinished(data_root)          # [Path(".../replaced/2026-11-25T2203Z")]
     holding(data_root, "photos")   # that folder: photos must not start yet
     holding(data_root, "docs")     # that folder too, until "starting" is done
+    needs(data_root, snapshot.path)  # that folder: the rollback needs the snapshot
 
 Why it works this way:
 
@@ -23,6 +24,9 @@ Why it works this way:
 - **A stacklet waits while its state is not whole.** While a record has
   not reached "starting", `holding` names it, and `stack up` refuses its
   stacklets. A finished record holds nothing.
+- **A rollback that has not ended keeps its way back.** `needs` names it
+  for its snapshot and for its replaced state, so no remove and no
+  prune deletes what the next `stack rollback` finishes from.
 - **A record that cannot be read is named, never guessed.** `stack
   rollback` refuses and names its file. It holds each stacklet that has a
   folder beside it, because that state may be half moved, and no other.
@@ -43,7 +47,7 @@ from pathlib import Path
 from ..manifest import Manifest
 from . import rollback_images as images
 from . import store
-from .store import Snapshot, SnapshotError
+from .store import REPLACED_FOLDER, Snapshot, SnapshotError
 
 __all__ = [
     "FINISHED",
@@ -51,6 +55,7 @@ __all__ = [
     "RECORD_FILE",
     "REPLACED_FOLDER",
     "RESTORED",
+    "RUN_ACTION",
     "STARTING",
     "Done",
     "Plan",
@@ -58,12 +63,16 @@ __all__ = [
     "begin",
     "holding",
     "mark",
+    "needs",
     "read_record",
     "unfinished",
 ]
 
-REPLACED_FOLDER = "replaced"
-"""The folder in `.snapshots/` that holds the state each rollback replaced."""
+
+RUN_ACTION = "rollback"
+"""The action a rollback writes into the run locks it holds (`stack.runs`),
+from its question until the state is restored. A remove reads it
+(`stack.snapshot.removal`)."""
 
 RECORD_FILE = "ROLLBACK.json"
 """The record of one rollback, in its folder in `replaced/`."""
@@ -181,6 +190,31 @@ def holding(data_root: Path, stacklet_id: str) -> Path | None:
             continue
         if stacklet_id in record["stacklets"] and STARTING not in record["done"]:
             return folder
+    return None
+
+
+def needs(data_root: Path, folder: Path) -> Path | None:
+    """The folder of a rollback that has not ended and needs `folder`: its
+    snapshot (`.snapshots/<name>/`) or its own replaced folder. None when
+    no rollback needs it, so it may go.
+
+    A record that cannot be read needs every snapshot, because the stack
+    cannot tell which one it goes back to.
+
+        needs(Path("~/famstack-data"), Path(".../.snapshots/2026-11-25T2114Z"))
+        # Path(".../.snapshots/replaced/2026-11-25T2203Z") after a stop halfway
+    """
+    folder = Path(folder)
+    a_snapshot = folder.parent == Path(data_root) / store.SNAPSHOTS_FOLDER
+    for rollback in unfinished(data_root):
+        if folder == rollback:
+            return rollback
+        try:
+            if a_snapshot and read_record(rollback)["snapshot"] == folder.name:
+                return rollback
+        except RollbackError:
+            if a_snapshot:
+                return rollback
     return None
 
 

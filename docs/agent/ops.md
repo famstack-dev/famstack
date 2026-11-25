@@ -10,7 +10,7 @@ the compact decision layer; the admin guide is the manual.
 ## Mental model in 3 lines
 
 1. `stack.toml` (per-host config) + each stacklet's `stacklet.toml` → render `.env` on every `stack up`. `.env` is **derived**, never edit it.
-2. Every stacklet lives under `stacklets/<id>/`, or under `~/famstack-extensions/<id>/` if it does not ship with famstack. All persistent data lives under `~/famstack-data/<id>/`. No exceptions.
+2. Every stacklet lives under `stacklets/<id>/`, or under `~/famstack-extensions/<id>/` if it does not ship with famstack. All persistent data lives under `~/famstack-data/<id>/`. No exceptions, except `~/famstack-data/.snapshots/`: the snapshots of the stacklets' state and the state a rollback replaced.
 3. State is **derived**, not stored. Container existence == "running"; container absence + data dir absence == "available". There is no enabled-list. A stacklet without containers is running while `.stack/<id>.up` exists, which `stack up` writes and `stack down` deletes.
 
 ## Hardware preconditions
@@ -35,6 +35,10 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 | `./stack restart [<id>...]` | yes | no | `down` + `up`; several ids as for `down`; with no argument, only the stacklets running stale code. A stacklet that starts on a new release gets a snapshot in `~/famstack-data/.snapshots/` first, while it is stopped; the newest 3 stay. A snapshot that fails starts nothing on the new release: the stacklet waits, and `stack up` refuses it, until `stack restart <id>` takes the snapshot or `--no-snapshot` skips it |
 | `./stack destroy <id>...` | yes | **YES** | removes containers + `~/famstack-data/<id>/` + secrets; a not set up stacklet's data folder with files only after its own question or `--yes` |
 | `./stack uninstall` | yes | **YES, EVERYTHING** | tears down every stacklet, removes the config; deletes all data and its secrets only when the admin types `delete` |
+| `./stack snapshot create <id>...` | no | no | Stops the stacklets and takes a snapshot of their data in `~/famstack-data/.snapshots/<time>/`. Then it starts them again. |
+| `./stack snapshot list` | yes | no | Lists the snapshots, newest first. It also lists the states a rollback replaced and the folders that are not whole. |
+| `./stack snapshot remove <name>` | refuses a second time | **YES** | Deletes one entry of the list after a confirmation, or with `--yes`. It refuses any other name and what an open rollback needs. |
+| `./stack rollback [<snapshot>]` | yes | no | Goes back to the newest snapshot, or the named one, after a confirmation. The current state moves to `.snapshots/replaced/<time>/`. It refuses local edits in the checkout. It also refuses when the Mac no longer holds an image of the snapshot. After a rollback that stopped halfway, `stack up` refuses its stacklets. Run the rollback again to finish it. |
 | `./stack update [<tag>]` | yes | no | moves the checkout to a release; restarts nothing, prints what to restart |
 | `./stack extensions list` | yes | no | the catalog's extensions and what is installed; creates no extension dir |
 | `./stack extensions add <id\|git-url> [<id>]` | refuses a second time | no | copies one extension into the first extension dir and starts nothing; warns first for any repo but the catalog (`--yes` skips only the question) |
@@ -78,6 +82,7 @@ If a precondition is missing, `./stack` prints exactly what to do. Don't improvi
 - `.stack/secrets.toml` is **gitignored** and contains generated passwords + tokens. Treat as a password export.
 - **The memory curator is the family memory's one writer.** Every change (a filing, `stack memory write`, a card edit, a migration) goes through it, into its clone at `~/famstack-data/memory/vault`, and on to Forgejo. A change made while Forgejo is down waits in the clone and is pushed when Forgejo is back. Never commit, pull or reset in that clone by hand; people edit in Forgejo or their own clone.
 - Data lives **outside the repo** at `~/famstack-data/<id>/`. That's the only mandatory backup.
+- **Snapshots are not a backup.** `~/famstack-data/.snapshots/` stays on the same disk, and Time Machine skips it. Only `stack snapshot remove` deletes one by name, and the restart that applies a release keeps the newest 3.
 - `~/.omlx/models/` holds LLM model files. Re-downloadable; not in `data_dir`.
 - **Extension stacklets are source code, and nothing backs them up.** `~/famstack-extensions/<id>/` holds stacklets famstack does not ship. Only `stack extensions add` creates it, nothing deletes it, and it is outside the data dir the backup rule covers. Push it to a remote. `[core] extension_dirs` (a list, first entry wins a clash and is the one mounted into the bot runner) adds or moves search paths.
 - **A stage is a claim, not a fault.** `stack list` and `stack status` group extensions in their own section and show a stage that is not stable. The warning on `stack up` means the stacklet can change or disappear between releases. Do not put anything irreplaceable in it.
@@ -91,6 +96,7 @@ Refuse without explicit, scoped human approval:
 |---|---|
 | `./stack destroy <id>` | Deletes `~/famstack-data/<id>/` permanently. No undo. |
 | `./stack uninstall` | Wipes every stacklet's data, secrets, runtime state, and config. |
+| `./stack snapshot remove <name>` | Deletes the way back to a release, or the only copy of the state a rollback replaced. |
 | `rm -rf ~/famstack-data/...` | Bypasses the CLI's safety prompts. |
 | Editing `.env` directly | Will be silently overwritten next `stack up`. |
 | Editing `.stack/secrets.toml` | Breaks every stacklet that depends on the changed secret. |
