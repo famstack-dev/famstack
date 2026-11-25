@@ -61,6 +61,12 @@ services:
       PAPERLESS_ADMIN_USER: ${ADMIN_USER}
       PAPERLESS_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       PAPERLESS_URL: ${PAPERLESS_URL}
+      # Paperless answers 400 to a Host header it does not know. With
+      # PAPERLESS_URL set it allows localhost, that URL's host and this
+      # list. The stack's own services (the archivist, the tools server)
+      # call it by its container name, so the name is listed here. Never
+      # `*`: the Host check keeps every other name out.
+      PAPERLESS_ALLOWED_HOSTS: stack-docs-paperless
       # Single sign-on through the stack's OIDC provider. PAPERLESS_APPS
       # is set only when a client id exists, so without a provider none
       # of this is active. The provider decides who exists, so a first
