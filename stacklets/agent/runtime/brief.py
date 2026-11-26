@@ -211,6 +211,19 @@ def when_sent(now: datetime) -> str:
     return f"Sent {now:%A, %Y-%m-%d %H:%M} ({now.tzname()})."
 
 
+def this_room(msg) -> str:
+    """The room this message came from, as its Matrix id, or "" when it has none.
+
+    nanobot names no room anywhere in the prompt, and its `my` tool, which
+    would, is off. A reminder is a message sent later into this room
+    (`skills/reminders`), so the model reads the id from this line.
+
+        this_room(msg)  # "This room: !UAFrMyKitchen:simpson."
+    """
+    room = str(getattr(msg, "chat_id", "") or "")
+    return f"This room: {room}." if room else ""
+
+
 # Stated with every message, next to it: the room's history in another
 # language outweighs a rule at the top of the prompt.
 ANSWER_LANGUAGE = "Answer in the language this message is written in."

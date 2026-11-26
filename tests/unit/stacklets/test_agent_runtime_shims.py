@@ -96,6 +96,25 @@ def test_the_briefing_is_one_of_nanobots_runtime_context_providers(nanobot):
     assert block.content.startswith("[Runtime Context")
 
 
+def test_the_briefing_names_the_room_the_message_came_from(nanobot):
+    """Given a message in a room, when nanobot asks for the briefing, then it
+    carries the room's Matrix id. A reminder is a message sent later into
+    that room, and nanobot's own context names no room: without this line
+    the model copied a room id from an example and the reminder went nowhere.
+    """
+    import asyncio
+    import types as _types
+
+    loop = nanobot()["nanobot.agent.loop"].AgentLoop()
+    request = _types.SimpleNamespace(sender_id="@marge:simpson", chat_id="!UAFrMyKitchen:simpson",
+                                     metadata={})
+
+    [provider] = loop._runtime_context_providers
+    block = asyncio.run(provider(request))
+
+    assert "!UAFrMyKitchen:simpson" in block.content
+
+
 def test_the_message_list_stays_nanobots_own(nanobot):
     mods = nanobot()
     assert mods["nanobot.agent.context"].ContextBuilder.build_messages.__name__ == "build_messages"

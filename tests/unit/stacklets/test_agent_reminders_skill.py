@@ -24,20 +24,27 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from stack.schedule import parse_when
+from stack.schedule import parse_when, split_command
+from stacklets.messages.cli.send import parse_request
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SKILL = REPO_ROOT / "stacklets" / "agent" / "workspace" / "skills" / "reminders" / "SKILL.md"
 SPOKEN = "-say"
 TZ = ZoneInfo("Europe/Berlin")
+# The examples name the room by a placeholder, which the model fills in from
+# the brief's "This room: ..." line; a real-looking id there was copied once.
+ROOM_PLACEHOLDER = "<room>"
+ROOM = "!UAFrMyKitchen:simpson"
 
 
 # ── reading the skill ──────────────────────────────────────────────────────
 
 def examples() -> list[list[str]]:
-    """Every example: the `stack core schedule` lines under one `example:` head.
+    """Every example: the `stack core schedule` lines under one `example:` head,
+    with this room's id where the example has its placeholder.
 
-    Lines with a `<placeholder>` are the rule, not an example, and are left out.
+    The rule lines above the examples come before any `example:` head and are
+    left out: their `<placeholders>` are no command.
     """
     groups: list[list[str]] = []
     for line in SKILL.read_text().splitlines():
@@ -45,7 +52,7 @@ def examples() -> list[list[str]]:
         if line.startswith("example:"):
             groups.append([])
         elif line.startswith("stack core schedule") and groups:
-            groups[-1].append(line.removeprefix("stack "))
+            groups[-1].append(line.removeprefix("stack ").replace(ROOM_PLACEHOLDER, ROOM))
     return groups
 
 
@@ -91,21 +98,27 @@ def test_each_example_line_passes_the_api(api, group):
 @pytest.mark.parametrize("group", [g for g in examples() if adds(g)],
                          ids=lambda g: shlex.split(g[0])[3])
 def test_each_reminder_is_a_message_and_its_spoken_half_at_one_time(group):
-    """Given an example that sets a reminder, then it adds the message as the
-    agent, mentioning the person, and the `-say` entry that speaks it, both at a
-    time the scheduler reads. One entry runs one command, so the house hears the
-    reminder only through its second entry."""
-    entries = adds(group)
+    """Given an example that sets a reminder, then it adds the message, sent by
+    the agent into this room and mentioning the person, and the `-say` entry
+    that speaks it, both at a time the scheduler reads. Each line is read as
+    `core schedule add` reads it, and the message as `messages send` reads it.
+    One entry runs one command, so the house hears the reminder only through
+    its second entry."""
+    entries = {name: split_command(args[5:]) for name, args in adds(group).items()}
+    whens = {name: args[4] for name, args in adds(group).items()}
     [name] = [n for n in entries if not n.endswith(SPOKEN)]
-    message, spoken = entries[name], entries[name + SPOKEN]
+    (options, command), (spoken_options, spoken) = entries[name], entries[name + SPOKEN]
 
-    assert message[4] == spoken[4]
-    parse_when(message[4], TZ, datetime(2026, 11, 26, 12, 0, tzinfo=TZ))
-    command = message[message.index("--") + 1:]
+    assert whens[name] == whens[name + SPOKEN]
+    parse_when(whens[name], TZ, datetime(2026, 11, 26, 12, 0, tzinfo=TZ))
+    for opts in (options, spoken_options):
+        assert {"--title", "--by", "--for"} <= opts.keys()
+        assert opts["--for"] == options["--for"]
     assert command[:2] == ["messages", "send"]
-    assert command[command.index("--as") + 1] == "agent"
-    assert command[command.index("--mention") + 1] == message[message.index("--for") + 1]
-    assert spoken[spoken.index("--") + 1:][:2] == ["ai", "say"]
+    request, error = parse_request(command[2:])
+    assert error is None, error
+    assert (request.room, request.sender, request.mentions) == (ROOM, "agent", [options["--for"]])
+    assert spoken[:2] == ["ai", "say"]
 
 
 def test_a_cancel_removes_both_entries_of_a_reminder():
