@@ -21,6 +21,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.unit.stacklets.nanobot_agent import START_STEPS
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 AGENT_DIR = REPO_ROOT / "stacklets" / "agent"
 
@@ -64,3 +66,16 @@ def test_with_speech_on_the_voice_message_goes_to_the_speech_server(
 
     assert said == "Milch kaufen"
     assert len(httpserver.log) == 1
+
+
+def test_the_entrypoint_runs_each_start_step_before_nanobot_in_order():
+    """The switch only keeps voice messages in the house if the container
+    runs it. The agent harness runs the same steps (`START_STEPS`), so a
+    step missing from the entrypoint fails here, not in a family's chat."""
+    entrypoint = (AGENT_DIR / "entrypoint.sh").read_text()
+
+    places = [entrypoint.index(f"/app/runtime/{script}") for script, *_ in START_STEPS]
+
+    assert START_STEPS[0][0] == "agent_config.py"
+    assert places == sorted(places)
+    assert places[-1] < entrypoint.index("exec nanobot gateway")

@@ -55,6 +55,7 @@ STACK_RAN = "stack ran:"
 # The start steps of entrypoint.sh that prepare the agent's home, in order,
 # with the arguments the entrypoint gives them ({home} is $NB).
 START_STEPS = (
+    ("agent_config.py", "{home}/config.json"),
     ("dream_aside.py", "{home}", str(AGENT_DIR / "workspace"), "Stacky"),
     ("chat_aside.py", "{home}", str(AGENT_DIR / "workspace")),
 )
