@@ -116,6 +116,7 @@ You need two values:
 | Save a link, note or PDF for later | [Capture rooms](#save-anything-capture-rooms) |
 | Collect everything about one project | [Topic rooms](#topic-rooms) |
 | Keep the shopping list, or what is still to do | [Lists](#lists) |
+| Be reminded of something | [Reminders](#reminders) |
 | Get email into the family chat | [Email](#email) |
 | Capture a thought without typing | [Voice memos](#voice-memos) |
 | Fix a wrong tag or title | [Correct bot mistakes](#correct-bot-mistakes) |
@@ -265,94 +266,37 @@ Every list is a page in the [family wiki](#the-family-wiki) and a plain Markdown
 
 > Needs the `agent` stacklet (Stacky) and the `core` stacklet.
 
-A reminder is a message that Stacky sends at the time you name. It mentions the person, and their phone rings. The house also says it aloud on the server Mac. A reminder is not a calendar entry: the calendar holds dates to read, and a reminder interrupts.
+A reminder is a message that Stacky sends at the time you name. A reminder is not a calendar entry: the calendar holds dates to read, and a reminder interrupts.
 
 **Ask for a reminder.** Say it in any room Stacky is in, starting with its name. Name a time or a wait:
 
-- "Stacky, remind me in 10 minutes to take the cake out."
+- "Stacky, remind me in 3 minutes to call grandpa."
 - "Stacky, remind Homer tomorrow at 17:00 to take out the trash."
-- "Stacky, remind me every day at 08:00 to take my pills."
-- "Stacky, remind us every Tuesday at 17:00 to water the plants."
+- "Stacky, every day at 08:00, remind me to take my pills."
+- "Stacky, every Tuesday at 17:00, remind Bart about football."
 
-Stacky answers with what it set and when the reminder is due. If a time is missing, Stacky asks for one.
+Stacky answers with what it set and the time. If you give no time, Stacky asks for one: "When should I remind you to buy milk?" It sets nothing until you answer.
 
-**What comes back.** At the time, Stacky writes the reminder text in the room where you asked. It mentions the person:
+**What comes back.** At the time, Stacky writes the reminder text in the room where you asked. It mentions the person, and their phone rings:
 
-> **Stacky**: @homer Take out the trash
+> **Stacky**: @you Call grandpa
 
-At the same time, the house says it aloud in the family's language:
+At the same time, the server Mac says it aloud:
 
-- For the person who asked: "Reminder: Take out the trash".
+- For the person who asked: "Reminder: Call grandpa".
 - For someone else: "Reminder for Homer: Take out the trash".
 
-A repeating reminder comes back at each time until you remove it.
+A repeating reminder comes back at each time until you cancel it.
 
-**List your reminders.** Ask "Stacky, what reminders are set?" Stacky lists them. Each line has the text, the person, the next time and the last run. Add "for Homer" to list only his.
+**List your reminders.** Ask "Stacky, which reminders are set?" Stacky names each reminder once, with the person and the next time. For example: "One reminder is set: Take out the trash, for Homer, tomorrow at 17:00".
 
-**Remove a reminder.** Say "Stacky, cancel the reminder about the trash". Stacky removes the message and the spoken reminder together. A reminder that ran once is gone after it ran.
+**Cancel a reminder.** Say "Stacky, cancel the trash reminder". Stacky answers "Trash reminder cancelled." The spoken reminder goes with it. A reminder that ran once is gone after it ran.
 
 **Limits.**
 
 - A reminder says only what you wrote. It reads no notes, because it runs later when nobody is in the room.
-- Stacky removes only reminders that it set. A reminder that the admin set up by hand stays.
+- Stacky cancels only reminders that it set. A reminder that the admin set up by hand stays.
 - A reminder that is due while the Mac is off runs when the Mac is back, if the time passed less than 15 minutes ago. A later one is skipped.
-
----
-
-## Email
-
-> Needs the `core` stacklet, plus `docs` and `code` to file what arrives. Connected by the admin (see the admin guide).
-
-famstack can watch an email account and deliver new mail into a chat room. Once the admin points a mailbox at a room, the family sees each new email as a message, and the archivist files it like anything else you capture.
-
-Each email arrives as a tidy message: subject, sender, date, and the text. Links are shown as plain text, never as something you can tap, so a phishing email can't trick anyone into opening a bad address. The real address is still there to read; it just isn't clickable.
-
-Attachments come in right under the email: a PDF, a photo, a form. Each one is filed the way a document or photo you drop yourself would be: read, summarized, tagged, findable later.
-
-Where mail gets filed depends on who is in the room:
-
-- **A family email room** (more than one person in it) files under the shared family archive.
-- **Your own mail** (a private room, or a direct message with the bot, where you are the only person) files under your name.
-- **A `Topic: ...` room** files under that subject, like any other topic room.
-
-So you separate work from family, or one person's mail from everyone's, just by choosing which room a mailbox delivers to. When the mail bot joins a room it says which mailbox feeds it; type `help` to read that again.
-
-Newsletters, marketing blasts, and automated noreply mail are filtered out by default, so the brain stays personal and isn't buried in mailing-list noise. (The admin can turn that off if you want everything.)
-
-When a mailbox is first connected, the admin can pull in existing mail from a chosen date (the last week, the whole year) so your history is there from the start, not just new messages.
-
----
-
-## Voice memos
-
-> Needs the `ai` stacklet.
-
-Send a voice message in any capture room. The archivist transcribes it locally (nothing leaves the Mac), cleans up the transcript, echoes it back so you can check it, and files it as a note.
-
-With speech off, the archivist answers a voice memo once: it cannot read voice messages now, and nothing is filed. Your admin turns speech on.
-
-Each voice memo becomes a note of its own. Several voice memos are several notes, also between `(` and `)`. The scan (`(` ... `)`) combines only photos into one document.
-
-Driving home and something crosses your mind: hold the mic button, talk, done. The thought is captured, transcribed and findable. Never miss a thought.
-
----
-
-## Correct bot mistakes
-
-The archivist gets things wrong sometimes. Wrong family member, too generic a tag, a title that misses the point. You fix it by replying.
-
-Reply to the bot's filing confirmation with what's off:
-
-> **archivist**: ✅ Filed: Letter from school (#57) ...
-> **you** (in the thread): this is Bart's, and it's about the field trip payment
-
-The archivist re-reads the document with your correction, re-files it, and confirms again. Corrections chain: if the second attempt is still off, reply to the new confirmation. Each reply carries the whole conversation back to the original document, so you never start over.
-
-Anything you write in the filing's thread counts as a correction, so you can also just type in the thread the bot answered in, or reply to your own original message. You do not have to quote the confirmation.
-
-This works for captures too: reply to a bookmark or note confirmation and it gets re-filed with your hint.
-
-Memories work the same way, in the thread under each memory: see [Put a memory right](#put-a-memory-right).
 
 ---
 
