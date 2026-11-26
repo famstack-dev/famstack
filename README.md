@@ -38,7 +38,7 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 > **New in 0.5**
 > - **Reminders.** Tell Stacky, the family agent, to remind you or someone else at a time. The phone rings and the house says it aloud. [How reminders work](docs/user-guide.md#reminders).
 > - **The same people and topics on every card.** A note, a letter and a diary card name a person or a topic the same way. One search finds them all.
-> - **Filing that keeps every message.** A capture sent twice stays one card, and a correction keeps every message you wrote.
+> - **Filing that keeps every message.** A message that reaches the archivist twice stays one card, and a correction keeps every message you wrote.
 > - **Stacky reads only what the room may read.** In a room with other people, it answers only from what the family shares.
 > - **Snapshots and rollback.** Take a snapshot on request and go back to it with `./stack rollback`.
 >

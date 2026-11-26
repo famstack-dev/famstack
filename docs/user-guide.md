@@ -181,8 +181,8 @@ Archivist captures your notes, thoughts and links for you. The bot
 creates summaries, tags them so you can find them again and starts to build your 
 personal knowledge base.
 
-> 🔒 **Encrypted rooms and the bots.** The chat server does not encrypt rooms by default. A room is encrypted only when someone turns encryption on in it. Inviting a bot (the archivist, Stacky) is your choice to let famstack work with that room. The bot reads it on your own Mac, encrypted or not.
-
+> 🔒 **Encrypted rooms and the bots.** The chat server does not turn encryption on. Your chat app may: Element X encrypts direct chats on its own. Inviting a bot (the archivist, Stacky) is your choice to let famstack work with that room. The bot reads the room on your own Mac, encrypted or not.
+>
 > A bot may answer "I couldn't read that message". Then your app had not given it the room's key yet. Send the message again. If it keeps happening, remove the bot and invite it again.
 
 What you can drop there:
@@ -350,6 +350,8 @@ The archivist re-reads the document with your correction, re-files it, and confi
 
 Anything you write in the filing's thread counts as a correction, so you can also just type in the thread the bot answered in, or reply to your own original message. You do not have to quote the confirmation.
 
+This works for captures too: reply to a bookmark or note confirmation and it gets re-filed with your hint.
+
 Memories work the same way, in the thread under each memory: see [Put a memory right](#put-a-memory-right).
 
 ---
@@ -362,9 +364,9 @@ Every card names a person the way your family names them, and a topic the way yo
 
 A topic that one person keeps stays private. A room with other people never shows it.
 
-Send a capture twice, and the archivist keeps one card. This happens when the phone was offline and you tried again.
+A restart or a retry can make the same message reach the archivist twice. It keeps one card. The same words sent as two messages stay two cards.
 
-A correction keeps every message you wrote. The history of the card shows each one with its time. A later correction does not replace an earlier one.
+A correction keeps every message you wrote. A later correction does not replace an earlier one.
 
 ---
 
