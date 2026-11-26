@@ -66,6 +66,9 @@ if [ -d /app/workspace-seed/skills ]; then
     cp -r /app/workspace-seed/skills/. "$NB/workspace/skills/"
 fi
 
+# Speech off: a reminder is the chat message only, without its spoken twin.
+python3 /app/runtime/speech_off.py "$NB/workspace/skills" "${AGENT_SPEECH_OFF:-}"
+
 # nanobot transcribes only with a key set; a Whisper on this Mac needs none and
 # ignores whatever it is sent.
 export AGENT_WHISPER_KEY="${AGENT_WHISPER_KEY:-none}"
