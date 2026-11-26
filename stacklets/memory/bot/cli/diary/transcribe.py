@@ -122,7 +122,10 @@ async def decode_room(messages, *, session, homeserver, token, transcriber, llm,
     words, and a recording that cannot be decoded should drop out before
     the model is asked to interpret its filename. A recording whisper
     heard nothing in is dropped; one whose words the gate refused keeps
-    its place and its audio, with no words.
+    its place and its audio, with no words. Without a `transcriber`
+    (speech off) a recording keeps the words it was decoded to before;
+    one never decoded is left out of this run, and a later run with
+    speech on decodes it.
     """
     vocabulary = household_vocabulary()
     people = known_names()
@@ -144,6 +147,10 @@ async def decode_room(messages, *, session, homeserver, token, transcriber, llm,
             decoded.append(msg)
             continue
         heard += 1
+        if transcriber is None:
+            if TRANSCRIPTS.read(msg.event_id) is None:
+                continue
+            retranscribe = False
         if TRANSCRIPTS.read(msg.event_id) is None:
             err(f"  [{heard}/{len(recordings)}] decoding {msg.sender}, "
                  f"{_length(msg.duration_ms)}")
