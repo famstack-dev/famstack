@@ -26,10 +26,21 @@ def remove(ctx) -> None:
     """Remove the old speech container and its image, when Docker says the
     container belongs to the ai stacklet's compose project. A container of
     that name in another project stays. Without it, nothing is printed.
-    An image Docker does not remove is named and stays."""
-    if not any(c["name"] == CONTAINER for c in docker.containers_for("ai")):
+    Raises `RuntimeError` when Docker still lists the container after the
+    removal, because a container left up keeps the AI counted as up. An
+    image Docker does not remove is named and stays."""
+    if not _listed():
         return
     ctx.step("Removing the old speech container")
     image = docker.remove_container(CONTAINER)
+    # `remove_container` does not report a failed `docker rm`, so Docker,
+    # the owner of the container, is asked again.
+    if _listed():
+        raise RuntimeError(f"Docker did not remove {CONTAINER}")
     if image and not docker.remove_image(image):
         dim(f"Its image {image} stays: Docker did not remove it.")
+
+
+def _listed() -> bool:
+    """Whether Docker lists the container in the ai stacklet's project."""
+    return any(c["name"] == CONTAINER for c in docker.containers_for("ai"))

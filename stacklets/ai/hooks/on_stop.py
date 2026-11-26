@@ -40,9 +40,10 @@ NAMES = {host_services.OMLX: "oMLX", host_services.WHISPER: "Whisper"}
 
 
 def run(ctx):
-    """Stop famstack's oMLX and Whisper, and what an earlier release
-    started, and 0.4's speech container; each one that was up is named. Raises `RuntimeError` naming
-    each service that did not stop, after trying them all."""
+    """Stop famstack's oMLX and Whisper, what an earlier release started,
+    and 0.4's speech container; each one that was up is named. Raises
+    `RuntimeError` naming each service that did not stop, after trying
+    them all."""
     still_running: list[str] = []
     for label in host_services.LABELS:
         try:
@@ -58,7 +59,12 @@ def run(ctx):
             still_running.append(f"oMLX (Homebrew's service): {e}")
     if (homebrew_service.STATE_DIR / LM_STUDIO_MARKER).exists():
         stop_lm_studio(ctx)
-    old_speech.remove(ctx)
+    try:
+        old_speech.remove(ctx)
+    except Exception as e:
+        # Docker failing or timing out names the container, and the
+        # services above that did not stop are still named.
+        still_running.append(f"the old speech container: {e}")
     if still_running:
         raise RuntimeError("did not stop: " + "; ".join(still_running))
 

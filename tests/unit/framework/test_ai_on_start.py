@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from tests.unit.stacklets.launchd_stand_in import launchd as launchd_stand_in
+from tests.unit.stacklets.old_speech_docker import old_speech_docker
 
 REPO = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(REPO / "lib"))
@@ -64,21 +65,6 @@ def _engine_installed(monkeypatch):
     monkeypatch.setattr(homebrew_omlx, "LIST_COMMAND", ("true",))
 
 
-# `docker` with one container, `stack-ai-speech`, in the compose project
-# `$PROJECT`. It answers `ps` only for a filter on that project, as the
-# real client does, and writes every other command it runs to `$CALLS`.
-DOCKER = """#!/bin/sh
-[ "$1" = "--context" ] && shift 2
-case "$1" in
-  ps)      [ "$4" = "label=com.docker.compose.project=$PROJECT" ] &&
-             printf 'stack-ai-speech\\t%s\\trunning\\tUp 2 hours\\n' "$PROJECT" ;;
-  inspect) echo "sha256:0ld1mage" ;;
-  rm|image) echo "$*" >> "$CALLS" ;;
-  *)       echo "unexpected: docker $*" >&2; exit 125 ;;
-esac
-"""
-
-
 @pytest.fixture(autouse=True)
 def launchd(tmp_path, monkeypatch):
     """A launchd first on PATH that starts with nothing loaded and
@@ -91,18 +77,9 @@ def launchd(tmp_path, monkeypatch):
 
 @pytest.fixture
 def docker(tmp_path, monkeypatch):
-    """The stand-in first on PATH; the commands it was asked to run.
-    launchd's stand-in writes to the same `$CALLS`, its lines start with
-    `launchctl` and are left out."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    (bin_dir / "docker").write_text(DOCKER)
-    (bin_dir / "docker").chmod(0o755)
-    calls = tmp_path / "calls"
-    monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
-    monkeypatch.setenv("CALLS", str(calls))
-    return lambda: [line for line in (calls.read_text().splitlines() if calls.exists() else [])
-                    if not line.startswith("launchctl ")]
+    """The docker stand-in first on PATH (`old_speech_docker`), with no
+    project until a test sets `$PROJECT`; the commands it ran."""
+    return old_speech_docker(tmp_path, monkeypatch, project="")
 
 
 def test_an_updated_instance_loses_the_old_speech_container_and_its_image(
