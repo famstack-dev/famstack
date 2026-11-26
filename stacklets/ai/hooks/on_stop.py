@@ -17,6 +17,11 @@ A service that does not stop does not keep the others running: each is
 stopped in turn, and the hook then fails and names every one that still
 runs, so `stack down ai` fails and the AI still counts as up.
 
+0.4's speech container `stack-ai-speech` goes too (`old_speech`), as on
+the start: the stacklet has no compose file that would stop it, and a
+container left up keeps the AI counted as up, so a restart with
+snapshots would take none.
+
 What it does not do: stop an AI server famstack does not run, such as the
 oMLX app, or Homebrew's service when an earlier release did not start it.
 """
@@ -24,7 +29,7 @@ oMLX app, or Homebrew's service when an earlier release did not start it.
 import shlex
 from pathlib import Path
 
-from .. import homebrew_service, host_services
+from .. import homebrew_service, host_services, old_speech
 
 __all__ = ["run"]
 
@@ -35,9 +40,10 @@ NAMES = {host_services.OMLX: "oMLX", host_services.WHISPER: "Whisper"}
 
 
 def run(ctx):
-    """Stop famstack's oMLX and Whisper, and what an earlier release
-    started; each one that was up is named. Raises `RuntimeError` naming
-    each service that did not stop, after trying them all."""
+    """Stop famstack's oMLX and Whisper, what an earlier release started,
+    and 0.4's speech container; each one that was up is named. Raises
+    `RuntimeError` naming each service that did not stop, after trying
+    them all."""
     still_running: list[str] = []
     for label in host_services.LABELS:
         try:
@@ -53,6 +59,12 @@ def run(ctx):
             still_running.append(f"oMLX (Homebrew's service): {e}")
     if (homebrew_service.STATE_DIR / LM_STUDIO_MARKER).exists():
         stop_lm_studio(ctx)
+    try:
+        old_speech.remove(ctx)
+    except Exception as e:
+        # Docker failing or timing out names the container, and the
+        # services above that did not stop are still named.
+        still_running.append(f"the old speech container: {e}")
     if still_running:
         raise RuntimeError("did not stop: " + "; ".join(still_running))
 

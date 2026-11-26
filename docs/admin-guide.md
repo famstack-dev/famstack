@@ -871,7 +871,7 @@ When no AI server runs on the Mac, the first `./stack up ai` installs oMLX. The 
 7. Starts oMLX and Whisper as launchd services, `dev.famstack.omlx` and `dev.famstack.whisper`.
 8. Downloads the speech model of the house voice, `[ai] language`, into oMLX: Kokoro for English, Qwen3-TTS for German.
 
-The AI runs no container. Up to 0.4 it ran a speech container, `stack-ai-speech`. On an updated Mac, the next `./stack up ai` removes that container and its image.
+The AI runs no container. Up to 0.4 it ran a speech container, `stack-ai-speech`. On an updated Mac, the next `./stack up ai` or `./stack down ai` removes that container and its image.
 
 **About the Homebrew tap.** oMLX is not in Homebrew's own repositories, it is published through the `jundot/omlx` tap. Homebrew 6 refuses to run formulas from outside taps until you trust them, so `stack up ai` trusts this one for you and says so while it does it. That is a real widening of what Homebrew will execute on your Mac, which is why it is called out rather than buried in the install log. To take it back:
 
