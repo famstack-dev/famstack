@@ -18,25 +18,18 @@ from pathlib import Path
 
 from stack.prompt import out, nl, warn, dim, TEAL, RESET
 
-from .. import off, omlx_app, whisper_service
+from .. import off, old_speech, omlx_app, whisper_service
 from ..omlx_start import running
 from ..speech_setting import speech_is_off
 
 __all__ = ["run"]
 
 
-
-# The speech container this stacklet ran before the stack's voices moved
-# to oMLX (Piper, through openedai-speech). An instance that ran it keeps
-# it, and its image, after the update, and nothing else uses either.
-OLD_SPEECH_CONTAINER = "stack-ai-speech"
-
-
 def run(ctx):
     """Start what `[ai]` names on this Mac: famstack's oMLX for the
     managed route, then Whisper when it is built. Raises with the fix for
     a missing or contradicting `[ai]`, and while the stack runs no AI."""
-    _remove_old_speech_container(ctx)
+    old_speech.remove(ctx)
 
     provider = ctx.cfg("provider", default="")
 
@@ -90,19 +83,6 @@ def _start_local_engine(ctx):
     (`homebrew_service.move`)."""
     with running(ctx):
         pass
-
-
-def _remove_old_speech_container(ctx):
-    """Remove the old speech container and its image, once, when Docker
-    says the container belongs to this stacklet's compose project."""
-    from stack import docker
-
-    if not any(c["name"] == OLD_SPEECH_CONTAINER for c in docker.containers_for("ai")):
-        return
-    ctx.step("Removing the old speech container")
-    image = docker.remove_container(OLD_SPEECH_CONTAINER)
-    if image and not docker.remove_image(image):
-        dim(f"Its image {image} stays: Docker did not remove it.")
 
 
 def _reconcile_whisper(ctx):
