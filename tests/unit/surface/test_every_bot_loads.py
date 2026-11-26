@@ -32,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -182,6 +183,28 @@ def test_the_bot_loads_in_the_runner(toml, container):
                     "requirements.txt and the test environment does not")
     assert report["outcome"] == "loaded", report.get("error", report)
     assert MOVED not in report["log"], report["log"]
+
+
+def test_the_runner_finds_the_documents_room_is_for_the_parents(container):
+    """Given the shipped declarations, when the bot runner discovers them,
+    then the archivist's Documents Room is for the parents and the Server
+    Room is not: the runner joins the parents only to a room whose bot
+    declares `room_members = "parents"`."""
+    documents = _load(REPO / "stacklets" / "docs" / "bot" / "bot.toml", container)
+    server = _load(REPO / "stacklets" / "core" / "bot" / "bot.toml", container)
+
+    assert (documents["room"], documents["room_members"]) == ("documents", "parents"), documents
+    assert (server["room"], server["room_members"]) == ("famstack", None), server
+
+
+def test_every_bot_declares_a_room_members_value_the_runner_knows():
+    """Given every shipped bot declaration, then `room_members` is omitted
+    (the admins only) or `"parents"`: the runner treats any other value,
+    a typo such as `"parent"`, as admins only."""
+    declared = {f"{t.parent.parent.name} {t.name}": tomllib.loads(t.read_text()).get("room_members")
+                for t in _declarations()}
+
+    assert {name: v for name, v in declared.items() if v not in (None, "parents")} == {}
 
 
 # A bot module is ordinary Python. This one defines a frozen dataclass under

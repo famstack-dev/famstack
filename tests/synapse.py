@@ -10,7 +10,8 @@ runs no Synapse, so this answers those calls on a pytest-httpserver:
     synapse.posted_to("famstack")   # the texts posted into the Server room
 
 It keeps accounts with their passwords, how many times each account's
-devices were signed out, the rooms by alias and every message posted.
+devices were signed out, the rooms by alias with their members, every
+join and power-level write, and every message posted.
 Synapse's admin API is an upsert: a `PUT /_synapse/admin/v2/users/<id>`
 that carries `password` sets that password and signs out every device of
 the account, even when it is the same password. The stand-in does the
@@ -38,8 +39,10 @@ class Synapse:
 
     `passwords` maps a full user id to its password, `logouts` a full user
     id to how many times its devices were signed out, `rooms` an alias to
-    its room id, and `posted` holds `(room id, sender, body)` for every
-    message sent.
+    its room id, `members` a room id to the full user ids in it, `departed`
+    a room id to who left (`"leave"`) or was banned (`"ban"`), `writes`
+    holds `(room id, what)` for every admin join and power-level write,
+    and `posted` holds `(room id, sender, body)` for every message sent.
     """
 
     def __init__(self, httpserver, *, server: str = "simpson",
@@ -48,13 +51,43 @@ class Synapse:
         self.passwords = {f"@stackadmin:{server}": admin_password}
         self.logouts: dict[str, int] = {}
         self.rooms: dict[str, str] = {}
+        self.members: dict[str, set[str]] = {}
+        self.departed: dict[str, dict[str, str]] = {}
+        self.power_levels: dict[str, dict] = {}
+        self.writes: list[tuple[str, str]] = []
         self.posted: list[tuple[str, str, str]] = []
         self.account_reads_fail = False
+        self.no_account: set[str] = set()
         httpserver.expect_request(re.compile(".*")).respond_with_handler(self._handle)
 
     def has_account(self, name, password):
         """An existing account, as an earlier setup or the person left it."""
         self.passwords[f"@{name}:{self.server}"] = password
+
+    def has_room(self, alias, *names):
+        """An existing room `#<alias>` with these accounts in it, as an
+        earlier start left it. The tech admin made it, so it is in it too."""
+        rid = f"!{alias}:{self.server}"
+        self.rooms[f"#{alias}:{self.server}"] = rid
+        self.members[rid] = {f"@stackadmin:{self.server}",
+                             *(f"@{n}:{self.server}" for n in names)}
+
+    def left(self, alias, name, membership="leave"):
+        """`name` left the room `#<alias>` (`"leave"`) or was banned (`"ban"`)."""
+        rid = self.rooms[f"#{alias}:{self.server}"]
+        full = f"@{name}:{self.server}"
+        self.members[rid].discard(full)
+        self.departed.setdefault(rid, {})[full] = membership
+
+    def members_of(self, alias: str) -> set[str]:
+        """The names of the accounts in the room `#<alias>`, without the server."""
+        room = self.rooms.get(f"#{alias}:{self.server}")
+        return {m.split(":")[0].lstrip("@") for m in self.members.get(room, set())}
+
+    def has_no_account_for(self, name):
+        """`name` is in users.toml but has no chat account yet, so Synapse
+        refuses a join of them with 404, as it does for an unknown user."""
+        self.no_account.add(f"@{name}:{self.server}")
 
     def fails_account_reads(self):
         """Every admin read of an account answers 500, as a busy or failing server does.
@@ -89,13 +122,32 @@ class Synapse:
             if alias in self.rooms:
                 return _json({"errcode": "M_UNKNOWN", "error": "Room alias already in use"}, 400)
             self.rooms[alias] = f"!{body['room_alias_name']}:{self.server}"
+            self.members[self.rooms[alias]] = {f"@{token}:{self.server}"}
             return _json({"room_id": self.rooms[alias]})
+        if m := re.fullmatch(r"/_synapse/admin/v1/join/([^/]+)", path):
+            if body["user_id"] in self.no_account:
+                return _json({"errcode": "M_NOT_FOUND", "error": "User not found"}, 404)
+            self.members.setdefault(m.group(1), set()).add(body["user_id"])
+            self.departed.get(m.group(1), {}).pop(body["user_id"], None)
+            self.writes.append((m.group(1), f"join {body['user_id']}"))
+            return _json({"room_id": m.group(1)})
+        if m := re.fullmatch(r"/_synapse/admin/v1/rooms/([^/]+)/state", path):
+            rid = m.group(1)
+            held = {**self.departed.get(rid, {}),
+                    **dict.fromkeys(self.members.get(rid, set()), "join")}
+            return _json({"state": [
+                {"type": "m.room.member", "state_key": user, "content": {"membership": how}}
+                for user, how in sorted(held.items())]})
         if path == "/_matrix/client/v3/joined_rooms":
             return _json({"joined_rooms": list(self.rooms.values())})
         if re.fullmatch(r"/_matrix/client/v3/rooms/[^/]+/state", path):
             return _json([])
-        if "/state/m.room.power_levels" in path and request.method == "GET":
-            return _json({"users": {}, "events": {"m.space.child": 0}})
+        if m := re.fullmatch(r"/_matrix/client/v3/rooms/([^/]+)/state/m\.room\.power_levels/?", path):
+            if request.method == "GET":
+                return _json(self.power_levels.get(
+                    m.group(1), {"users": {}, "events": {"m.space.child": 0}}))
+            self.power_levels[m.group(1)] = body
+            self.writes.append((m.group(1), "power levels"))
         if m := re.fullmatch(r"/_matrix/client/v3/rooms/([^/]+)/send/m\.room\.message/[^/]+", path):
             self.posted.append((m.group(1), token, body.get("body", "")))
         return _json({"event_id": "$x"})

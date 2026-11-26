@@ -129,8 +129,10 @@ Your chat has a space called Family with these rooms:
 
 - **Family Room**: where the family talks. Photos, voice memos, plans, life.
 - **Memories**: a place to record your family's life. More on this [below](#the-memories-room).
-- **Documents Room**: the household paper inbox. Everything you drop here lands in the document archive. It appears once the admin sets up documents.
+- **Documents Room**: the household paper inbox. Everything you drop here lands in the document archive. It appears once the admin sets up documents. The admins and the parents are in it. Children, grandparents and other people join only when an admin invites them, because anyone in the room can see every family document.
 - **Server Room**: where the server talks back. Status, alerts, install confirmations. Only admins are in it.
+
+To invite a person into the Documents Room, open the room in Element as an admin. Select **Invite** and type the person's name. The person stays in the room after a restart of the server.
 
 You can create as many rooms as you like. Any room you invite the archivist into becomes a [capture room](#save-anything-capture-rooms), and a room named `Topic: ...` becomes a [topic room](#topic-rooms). Encrypted rooms work too: inviting a bot is your choice to let famstack read that room (see [the note below](#save-anything-capture-rooms)). The bot posts a short welcome when it joins, explaining what fits in that room. Type `help` (or just `?`) any time to read it again.
 
