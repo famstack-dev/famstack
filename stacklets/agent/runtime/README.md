@@ -85,6 +85,9 @@ of her page.
 - `chat_aside.py`: run by the entrypoint at every start, not a shim. Earlier
   releases left a shared history in the workspace. This script moves it into
   `~/.nanobot/chat-archive/`. A file that it cannot move stops the start.
+- `speech_off.py`: run by the entrypoint at every start, not a shim. With speech
+  off it removes the spoken twin from the reminders skill and lengthens
+  `zz-cache-pad` by the same number of characters.
 
 ```
 Dockerfile:  COPY runtime/ /app/runtime  +  ENV PYTHONPATH=/app/runtime

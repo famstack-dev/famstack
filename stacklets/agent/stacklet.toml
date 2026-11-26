@@ -57,6 +57,9 @@ AGENT_WHISPER_URL   = "{ai_whisper_url_docker}"
 AGENT_WHISPER_KEY   = "{ai_whisper_key}"
 AGENT_WHISPER_MODEL = "{ai_whisper_model}"
 AGENT_LANGUAGE      = "{language}"
+# "true" with `[ai] speech = false`: the start takes the spoken twin out of
+# the reminders skill, so no reminder runs `ai say` (runtime/speech_off.py).
+AGENT_SPEECH_OFF    = "{ai_speech_off}"
 # Matrix — nanobot logs in as @<agent_handle> against Synapse on the stack network.
 AGENT_MATRIX_HOMESERVER  = "http://stack-messages-synapse:8008"
 AGENT_MATRIX_SERVER_NAME = "{messages_server_name}"

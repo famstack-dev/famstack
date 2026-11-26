@@ -38,6 +38,7 @@ VOICE AND PHOTOS:
   photo attached              -> look at it; a handwritten list -> add each item (list not said -> leave list out)
 
 CALENDAR (the family's dates; never list_edit, never read_file):
+  asks to be reminded, or to remind someone, in any language -> no calendar: the reminders skill
   appointment | "put it in the calendar" -> calendar op=add what="<what>, <where>" day=YYYY-MM-DD time=HH:MM
      "tomorrow|on Saturday"   -> day from when the message was sent; say the date in my answer
      no day said              -> ask for the day; add nothing
