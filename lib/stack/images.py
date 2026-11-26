@@ -20,6 +20,11 @@ Where the answer comes from:
   checkout before the restart. The compose file on disk can then name a
   tag that this Mac never pulled, or a tag that now points to another
   image. The container still names the image that it started from.
+  Which of those images are built here comes from the compose file's
+  `build:` sections, read without the stacklet's `.env`. That `.env` is
+  still the old release's, and the new compose file can need a setting
+  it does not hold: an empty mount source makes `docker compose config`
+  refuse the whole file.
 - **The compose file when there is no container.** A stacklet without
   containers would start the images that its compose file names.
 - **Digests, not tags.** A pulled image is recorded with its registry
@@ -158,12 +163,14 @@ class ImageFacts:
 
 
 class ImageSource(Protocol):
-    """Answers the three questions that `images_of` asks Docker.
+    """Answers the four questions that `images_of` asks Docker.
 
     `services` lists the services of a compose file as compose resolves
-    it. `containers` lists the containers of a stacklet, running or
-    stopped. `inspect` gives the facts of one image by reference or id,
-    or None when the Mac does not hold it. `DockerImages` is the real one.
+    it. `dockerfiles` names the Dockerfile of each service that builds
+    its image, from the file without its variables. `containers` lists
+    the containers of a stacklet, running or stopped. `inspect` gives the
+    facts of one image by reference or id, or None when the Mac does not
+    hold it. `DockerImages` is the real one.
 
         source.containers("docs")
         # [Container("stack-docs-db", "postgres:16-alpine", "sha256:31b7…"), …]
@@ -172,6 +179,12 @@ class ImageSource(Protocol):
     def services(self, compose_file: Path) -> list[Service]:
         """The services of `compose_file`. Raises `ImageError` when the
         file cannot be read."""
+        ...
+
+    def dockerfiles(self, compose_file: Path) -> dict[str, Path]:
+        """The Dockerfile of each service of `compose_file` that builds
+        its image, by service name. Reads the file without its variables.
+        Raises `ImageError` when the file cannot be read."""
         ...
 
     def containers(self, stacklet_id: str) -> list[Container]:
@@ -203,6 +216,18 @@ class DockerImages:
             raise ImageError(f"{compose_file}: docker compose cannot read it: {err.strip()}")
         return _services_of(json.loads(out))
 
+    def dockerfiles(self, compose_file: Path) -> dict[str, Path]:
+        """The Dockerfile of each built service, from `docker compose
+        config --no-interpolate`. Compose still resolves the build context
+        against the file's folder. No stacklet puts a variable into its
+        `build:` section, so the paths are the same as with the `.env`.
+        Raises `ImageError` when compose cannot read the file."""
+        code, out, err = docker_runtime.compose(
+            compose_file, "config", "--no-interpolate", "--format", "json")
+        if code != 0:
+            raise ImageError(f"{compose_file}: docker compose cannot read it: {err.strip()}")
+        return {s.name: s.dockerfile for s in _services_of(json.loads(out)) if s.dockerfile}
+
     def containers(self, stacklet_id: str) -> list[Container]:
         """The containers of the stacklet, from `docker container inspect`."""
         names = [row["name"] for row in docker_runtime.containers_for(stacklet_id)]
@@ -230,12 +255,13 @@ def images_of(stacklet_dir: Path, source: ImageSource) -> dict[str, Image]:
 
         images_of(Path("stacklets/ai"), DockerImages())     # {}
 
-    A stacklet with containers is recorded also when its compose file
-    cannot be read. After `stack update` that file is the new release's,
-    which the running containers never used. In that case only one fact
-    is missing, because the containers name their images: which service
-    builds its image here. Such an image is recorded with its local id
-    and without `built` and `base`.
+    A stacklet with containers needs only one fact from its compose
+    file, because the containers name their images: which service builds
+    its image here. After `stack update` that file is the new release's,
+    and the `.env` is still the old one's. So the Dockerfiles are read
+    without the `.env` (`ImageSource.dockerfiles`). When even that read
+    fails (a file that does not parse), the stacklet is still recorded:
+    a built image then has its local id and no `built` and no `base`.
     """
     compose_file = Path(stacklet_dir) / COMPOSE_FILE
     if not compose_file.is_file():
@@ -244,26 +270,21 @@ def images_of(stacklet_dir: Path, source: ImageSource) -> dict[str, Image]:
     if not containers:
         return {s.name: _image(s.image, s.image, s.dockerfile, source)
                 for s in source.services(compose_file)}
-    services = _services_if_readable(compose_file, source)
-    return {c.service: _image(c.image, c.image_id, _dockerfile(services, c.service), source)
+    dockerfiles = _dockerfiles_if_readable(compose_file, source)
+    return {c.service: _image(c.image, c.image_id, dockerfiles.get(c.service), source)
             for c in containers}
 
 
 # ── One image ────────────────────────────────────────────────────────────
 
-def _services_if_readable(compose_file: Path, source: ImageSource) -> dict[str, Service]:
-    """The services of `compose_file` by name, or none when compose cannot
-    read it. Asked only for the Dockerfiles of a stacklet whose containers
-    already name their images."""
+def _dockerfiles_if_readable(compose_file: Path, source: ImageSource) -> dict[str, Path]:
+    """The Dockerfile of each built service of `compose_file`, or none
+    when compose cannot read the file. Asked only for a stacklet whose
+    containers already name their images."""
     try:
-        return {service.name: service for service in source.services(compose_file)}
+        return source.dockerfiles(compose_file)
     except ImageError:
         return {}
-
-
-def _dockerfile(services: dict[str, Service], name: str) -> Path | None:
-    service = services.get(name)
-    return service.dockerfile if service else None
 
 
 def _image(name: str, reference: str, dockerfile: Path | None, source: ImageSource) -> Image:
