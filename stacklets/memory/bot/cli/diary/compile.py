@@ -20,7 +20,7 @@ from typing import NamedTuple
 import httpx
 from stack import clock
 from stack.ai import transcripts
-from stack.ai.client import LLMError, Transcriber
+from stack.ai.client import LLMUnavailableError, Transcriber
 from stack.memory import CuratorDown, MemoryAPI, Refused
 
 from ... import diary_store
@@ -86,16 +86,19 @@ async def run(llm, argv: list[str]) -> int:
         return 1
     bucket = os.environ.get("SHARED_BUCKET", "family")
 
+    # No transcription address is an ordinary setting (speech off), as
+    # for the bots: the text entries compile, the recordings wait.
     try:
         transcriber = Transcriber.from_env(namespace="memory-diary")
-    except LLMError as e:
-        err(f"no transcription available: {e}")
-        return 1
+    except LLMUnavailableError as e:
+        err(f"no transcription: {e}; recordings wait until speech is on")
+        transcriber = None
     try:
         room = await _read(llm, opts, caches, zone=zone, homeserver=homeserver,
                            transcriber=transcriber, bucket=bucket)
     finally:
-        await transcriber.aclose()
+        if transcriber is not None:
+            await transcriber.aclose()
     if isinstance(room, int):
         return room
     return await _compile(llm, opts, caches, room, bucket=bucket)

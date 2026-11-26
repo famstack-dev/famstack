@@ -24,18 +24,10 @@ mkdir -p "$NB/workspace"
 
 cp -f /app/config.json "$NB/config.json"
 
-# The household language goes into the config as a value, not a ${VAR}:
-# nanobot checks transcription.language against ^[a-z]{2,3}$ before it
-# resolves variables, and refuses to start. Two letters, as the archivist
-# sends it; none at all lets Whisper detect the language.
-python3 - "$NB/config.json" "${AGENT_LANGUAGE:-}" <<'PY'
-import json, sys
-path, language = sys.argv[1], sys.argv[2].strip().lower()[:2]
-config = json.load(open(path))
-if language.isalpha():
-    config.setdefault("transcription", {})["language"] = language
-json.dump(config, open(path, "w"), indent=2)
-PY
+# The settings nanobot cannot take as a ${VAR}: the household language, and
+# transcription switched off when the stack gives no address for it (speech
+# off), because an empty address means api.openai.com to nanobot.
+python3 /app/runtime/agent_config.py "$NB/config.json"
 
 NAME="${AGENT_NAME:-Stacky}"
 

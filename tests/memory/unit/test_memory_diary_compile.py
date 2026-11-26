@@ -66,6 +66,13 @@ class Room:
     def says(self, who: str, words: str) -> str:
         return self._post(who, {"msgtype": "m.text", "body": words})
 
+    def records(self, who: str) -> str:
+        """A voice message, as Element sends one."""
+        return self._post(who, {"msgtype": "m.audio", "body": "voice-message.ogg",
+                                "url": "mxc://simpson/voice1",
+                                "info": {"duration": 4000, "mimetype": "audio/ogg"},
+                                "org.matrix.msc3245.voice": {}})
+
     def answers(self, who: str, to: str, words: str) -> str:
         """A reply to an entry, as a client sends one outside a thread."""
         return self._post(who, {"msgtype": "m.text", "body": words,
@@ -429,6 +436,22 @@ def test_after_new_prompts_a_compile_reads_only_the_new_entry_and_rewrites_no_ca
     assert cards(memory)[TREEHOUSE] == "We built a treehouse in the backyard"
     assert "3 cards were made under older prompts" in diary.progress
     assert "--rebuild" in diary.progress
+
+
+def test_with_speech_off_the_text_entries_get_their_cards_and_a_recording_waits(
+        memory, room, diary, monkeypatch, httpserver):
+    """Given speech off, as `stack up` renders it (`WHISPER_URL` without an
+    address), and a room with a text entry and a voice message, when the
+    diary compiles, then the text entry gets its card, the recording is
+    neither fetched nor sent for transcription, and it has no card yet."""
+    monkeypatch.setenv("WHISPER_URL", "/audio/transcriptions")
+    room.says("marge", LISA)
+    room.records("homer")
+
+    diary.runs()
+
+    assert list(cards(memory)) == [LISA]
+    assert not [r.path for r, _ in httpserver.log if "/media/" in r.path or "/audio/" in r.path]
 
 
 def test_every_model_call_of_the_compile_is_recorded(
