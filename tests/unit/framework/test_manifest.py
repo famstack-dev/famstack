@@ -59,6 +59,10 @@ class ThisMac:
     def services(self, compose_file: Path) -> list[Service]:
         return self.services_by_file[Path(compose_file)]
 
+    def dockerfiles(self, compose_file: Path) -> dict[str, Path]:
+        return {s.name: s.dockerfile for s in self.services_by_file.get(Path(compose_file), [])
+                if s.dockerfile}
+
     def containers(self, stacklet_id: str) -> list[Container]:
         return self.containers_by_stacklet.get(stacklet_id, [])
 

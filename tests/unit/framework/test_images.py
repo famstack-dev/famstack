@@ -54,7 +54,7 @@ PAPERLESS_NEW = "ghcr.io/paperless-ngx/paperless-ngx:3.5"
 @dataclass
 class ThisMac:
     """Docker on this Mac as `images_of` asks it: the services of each
-    compose file, the containers of each stacklet, and the images the Mac
+    compose file (and from them its Dockerfiles), the containers of each stacklet, and the images the Mac
     holds, by reference and by id."""
 
     services_by_file: dict[Path, list[Service]] = field(default_factory=dict)
@@ -63,6 +63,10 @@ class ThisMac:
 
     def services(self, compose_file: Path) -> list[Service]:
         return self.services_by_file[Path(compose_file)]
+
+    def dockerfiles(self, compose_file: Path) -> dict[str, Path]:
+        return {s.name: s.dockerfile for s in self.services_by_file.get(Path(compose_file), [])
+                if s.dockerfile}
 
     def containers(self, stacklet_id: str) -> list[Container]:
         return self.containers_by_stacklet.get(stacklet_id, [])
@@ -143,6 +147,9 @@ def test_a_running_stacklet_is_recorded_when_the_new_compose_file_does_not_parse
 
     class NewFileBroken(ThisMac):
         def services(self, compose_file: Path) -> list[Service]:
+            raise ImageError(f"{compose_file}: docker compose cannot read it: bad yaml")
+
+        def dockerfiles(self, compose_file: Path) -> dict[str, Path]:
             raise ImageError(f"{compose_file}: docker compose cannot read it: bad yaml")
 
     stacklet_dir = a_stacklet(tmp_path, "docs")
@@ -357,3 +364,66 @@ def test_the_real_adapter_fails_on_a_compose_file_compose_cannot_read(tmp_path, 
         DockerImages().services(compose_file)
 
     assert str(compose_file) in str(error.value)
+
+
+# The memory stacklet after `stack update` to a release whose compose file
+# mounts `${WIKI_INPUT_DIR}`, which the old release's `.env` does not set.
+# `docker compose config` then refuses the empty mount source; without
+# interpolation it reads. Recorded from Docker 29.4 with Compose 5.1.2.
+MEMORY_REFUSAL = "invalid spec: :/vault:ro: empty section between colons\n"
+WIKI = "stack-memory-wiki:local"
+WIKI_ID = "sha256:" + "7" * 64
+CURATOR = "stack-memory-curator:local"
+CURATOR_ID = "sha256:" + "8" * 64
+
+
+def memory_config(stacklet_dir: Path) -> dict:
+    """`docker compose config --no-interpolate --format json` for memory."""
+    return {"name": "stack-memory", "services": {
+        "stack-memory-curator": {"image": CURATOR, "container_name": "stack-memory-curator",
+                                 "build": {"context": str(stacklet_dir),
+                                           "dockerfile": "curator.Dockerfile"}},
+        "stack-memory-wiki": {"image": WIKI, "container_name": "stack-memory-wiki",
+                              "build": {"context": str(stacklet_dir), "dockerfile": "Dockerfile"}}}}
+
+
+MEMORY_PS = ("stack-memory-wiki\tstack-memory\texited\tExited (0) 1 minute ago\n"
+             "stack-memory-curator\tstack-memory\texited\tExited (0) 1 minute ago\n")
+
+MEMORY_CONTAINERS = [
+    {"Name": "/stack-memory-wiki", "Image": WIKI_ID,
+     "Config": {"Image": WIKI, "Labels": {"com.docker.compose.project": "stack-memory",
+                                          "com.docker.compose.service": "stack-memory-wiki"}}},
+    {"Name": "/stack-memory-curator", "Image": CURATOR_ID,
+     "Config": {"Image": CURATOR, "Labels": {"com.docker.compose.project": "stack-memory",
+                                             "com.docker.compose.service": "stack-memory-curator"}}},
+]
+
+
+def test_a_stacklet_whose_new_compose_file_needs_new_settings_keeps_its_built_images(
+        tmp_path, docker_answering):
+    """Given the stopped memory stacklet after `stack update`, whose new
+    compose file `docker compose config` refuses with the old release's
+    `.env`, when its images are recorded through `DockerImages`, then both
+    images built on this Mac are recorded as built, with their local id
+    and the digest of their base. The restart rebuilds them under the same
+    tag, so a rollback must know to rebuild them rather than look for the
+    old ids."""
+    stacklet_dir = a_stacklet(tmp_path, "memory", "FROM python:3.12-slim\n")
+    (stacklet_dir / "curator.Dockerfile").write_text("FROM python:3.12-slim\n")
+    compose_file = str(stacklet_dir / "docker-compose.yml")
+    docker_answering([
+        (["compose", "-f", compose_file, "config", "--no-interpolate"],
+         json.dumps(memory_config(stacklet_dir)), 0),
+        (["compose", "-f", compose_file, "config"], MEMORY_REFUSAL, 15),
+        (["ps"], MEMORY_PS, 0),
+        (["container", "inspect"], json.dumps(MEMORY_CONTAINERS), 0),
+        (["image", "inspect", WIKI_ID], json.dumps([{"Id": WIKI_ID, "RepoDigests": []}]), 0),
+        (["image", "inspect", CURATOR_ID], json.dumps([{"Id": CURATOR_ID, "RepoDigests": []}]), 0),
+        *image_answers(),
+    ])
+
+    assert images_of(stacklet_dir, DockerImages()) == {
+        "stack-memory-wiki": Image(name=WIKI, id=WIKI_ID, built=True, base=PYTHON_DIGEST),
+        "stack-memory-curator": Image(name=CURATOR, id=CURATOR_ID, built=True, base=PYTHON_DIGEST),
+    }
