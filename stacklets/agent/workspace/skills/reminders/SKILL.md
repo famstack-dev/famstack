@@ -8,7 +8,8 @@ metadata: {"nanobot": {"always": true}}
 A reminder is two scheduler entries at the same time: `remind-<x>` posts it in the chat, `remind-<x>-say` says it in the house.
 
 ```
-"remind <me|someone> ... <time>" -> exec both, same name and <when>:
+asks to be reminded, or to remind someone, later, in any language -> a reminder; never the calendar
+  exec both, same name and <when>:
   `stack core schedule add remind-<person>-<word> "<when>" --title "<text>" --by <sender> --for <person> -- messages send <room> "<text>" --as agent --mention <person>`
   `stack core schedule add remind-<person>-<word>-say "<when>" --title "<spoken>" --by <sender> --for <person> -- ai say "<spoken>"`
   person -> "me" is the sender; else their name, lowercase
