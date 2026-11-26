@@ -271,6 +271,7 @@ def test_speaking_does_not_open_the_rest_of_the_ai_stacklet(api, command):
     ("list_edit", "list",
      {"list": "einkaufsliste", "op": "move", "items": ["Eier"], "to": "markt"}),
     ("list_edit", "list", {"op": "move", "items": ["Eier"], "to": "Milchprodukte & Eier"}),
+    ("list_edit", "list", {"op": "move", "items": ["Eier"], "section": "Milchprodukte & Eier"}),
     ("list_edit", "list", {"list": "packliste", "op": "reset", "items": ["ignored"]}),
     ("list_edit", "list",
      {"op": "add", "items": ["Joghurt"], "topic": "einkaeufe-besorgungen"}),
@@ -331,6 +332,13 @@ def test_a_move_naming_no_list_moves_the_item_on_its_list(memory_cli, vault_tool
         text = store.text("family/lists/einkaufsliste.md")
     assert result["summary"] == "moved Äpfel to section Obst & Gemüse on Einkaufsliste"
     assert "\n## Obst & Gemüse\n- [ ] Äpfel\n" in text
+
+
+def test_a_move_sends_the_section_it_is_given(vault_tools):
+    """A model that names the section in `section` instead of `to` gets the
+    same move: the store takes `--section` for a move within the list."""
+    argv = argv_of(vault_tools["list_edit"], op="move", items=["Äpfel"], section="Obst & Gemüse")
+    assert argv[3:7] == ["move", "Äpfel", "--section", "Obst & Gemüse"]
 
 
 class TestTheCalendarTool:

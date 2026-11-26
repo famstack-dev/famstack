@@ -836,6 +836,10 @@ def move(vault: Path, config, words: list[str], to: str, actor: str, *,
     """
     lists = _all_lists_at(vault, readable)
     slug, names = _list_and_items(lists, words)
+    if not slug and len(names) > 1 and not any(find(lst, names[0]) for _, lst in lists):
+        # Before the list was optional, a misspelt list was refused with the
+        # lists to choose from; a model told only "no item" looks for one.
+        raise Refusal(f"{names[0]!r} names no list and no item. Lists: {_slugs(vault, readable)}")
     if not slug:
         held_by = {_locate(lists, name, "move")[1].slug for name in names}
         if len(held_by) > 1:
