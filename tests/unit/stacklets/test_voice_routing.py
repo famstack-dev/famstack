@@ -78,6 +78,56 @@ class TestWhatTheStackletsGet:
         assert instance.env("core")["WHISPER_KEY"] == "local"
 
 
+# Each place that hands a transcription address to a container, as
+# (stacklet, variable). Core's and memory's carry the endpoint's path,
+# which the client reads as no address (`Transcriber.from_env`).
+TRANSCRIPTION_ADDRESSES = [("core", "WHISPER_URL"), ("memory", "WHISPER_URL"),
+                           ("agent", "AGENT_WHISPER_URL"),
+                           ("chatai", "AUDIO_STT_OPENAI_API_BASE_URL")]
+
+
+class TestWithSpeechOff:
+    """`[ai] speech = false` (a small Mac) starts no Whisper, so nothing
+    gets a transcription address, also when the installer wrote
+    `[ai] whisper_url`. The bots then answer that voice messages are off
+    instead of trying a server that does not run."""
+
+    @pytest.mark.parametrize("stacklet, key", TRANSCRIPTION_ADDRESSES)
+    def test_nothing_gets_a_transcription_address(self, instance, stacklet, key):
+        instance._set_cfg("ai", "speech", False)
+        instance._set_cfg("ai", "whisper_url", "http://localhost:42062/v1")
+
+        said = instance.env(stacklet)[key]
+
+        assert said.removesuffix("/audio/transcriptions") == ""
+
+    @pytest.mark.parametrize("stacklet, key", TRANSCRIPTION_ADDRESSES)
+    def test_with_speech_on_the_speech_server_gets_voice_messages(
+            self, instance, stacklet, key):
+        instance._set_cfg("ai", "speech", True)
+        instance._set_cfg("ai", "whisper_url", "http://localhost:42062/v1")
+
+        assert ":42062/v1" in instance.env(stacklet)[key]
+
+    def test_the_proxy_still_serves_the_ai_by_name(
+            self, tmp_path, docker_with_projects):
+        """The AI's routes are one snippet (`stt.` and `openai.`), and a
+        snippet with an empty upstream is left out whole. Speech off must
+        not take `openai.<domain>` with it."""
+        (tmp_path / "stack.toml").write_text(
+            f'[core]\ndata_dir = "{tmp_path / "data"}"\ndomain = "home.example.family"\n'
+            '\n[ai]\nopenai_url = "http://localhost:42060/v1"\nspeech = false\n'
+            'whisper_url = "http://localhost:42062/v1"\n'
+            '\n[messages]\nserver_name = "simpson"\n')
+        docker_with_projects(infra="running", ai="running", core="running")
+        stck = Stack(REPO_ROOT, tmp_path / "data", instance_dir=tmp_path)
+
+        stck.write_caddyfile()
+
+        caddyfile = (tmp_path / "data" / "infra" / "Caddyfile").read_text()
+        assert "openai.{$STACK_DOMAIN}" in caddyfile
+
+
 class TestWhereSpeakingGoes:
     """What the bots speak with: the AI server, which on oMLX speaks as
     well as it writes, with its key; or the server `[ai] speech_url` names,

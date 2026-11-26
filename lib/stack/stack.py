@@ -34,6 +34,7 @@ from .host_address import for_containers
 from .live import follow
 from .migrations import ForgejoHistory, MigrationContext, MigrationError, Migrations, unmigrated
 from .output import SilentOutput
+from .profile import speech_is_off
 from .said import Said, fields
 from .secrets import TomlSecretStore
 
@@ -453,8 +454,12 @@ class Stack:
         # Voice messages go to the AI server, which answers transcription
         # too on oMLX and the hosted providers, unless [ai] whisper_url
         # names a dedicated speech server. The key follows the server.
+        # With speech off (`[ai] speech = false`) no Whisper runs, also when
+        # `whisper_url` names one, so there is no address either: the bots
+        # then answer that they cannot read voice messages now.
         dedicated_whisper = self._cfg("ai", "whisper_url")
-        ai_whisper_url = "" if off else (dedicated_whisper or ai_openai_url)
+        whisper_server = "" if off else (dedicated_whisper or ai_openai_url)
+        ai_whisper_url = "" if speech_is_off(self.config) else whisper_server
         ai_whisper_key = ((self._cfg("ai", "whisper_key") or "local")
                           if dedicated_whisper else ai_openai_key)
 
@@ -500,7 +505,10 @@ class Stack:
             # Where the proxy sends `openai.<domain>` and `stt.<domain>`
             # (the ai stacklet's caddy.snippet): the servers above.
             "ai_openai_upstream":    caddy.upstream(ai_openai_url),
-            "ai_whisper_upstream":   caddy.upstream(ai_whisper_url),
+            # The proxy keeps `stt.` with speech off: the ai snippet holds
+            # `openai.` too, and an empty upstream leaves the whole
+            # snippet out.
+            "ai_whisper_upstream":   caddy.upstream(whisper_server),
             # The voices in force, `[ai.voices]` over the stack's own, as
             # `stack.ai.voice.voices` reads them back in a container.
             "ai_speech_voices_json": json.dumps(voice_table(self.config.get("ai", {}).get("voices"))),
