@@ -49,7 +49,7 @@ _TIME = re.compile(r"^([01]?\d|2[0-3])[:.]([0-5]\d)$")
     tool_parameters_schema(
         op=StringSchema(
             "add an appointment, show what is planned for the coming days, or "
-            "remove an appointment.",
+            "remove an appointment. Never for a reminder: that is stack core schedule.",
             enum=("add", "show", "remove"),
         ),
         what=StringSchema(
@@ -86,12 +86,19 @@ class CalendarTool(Tool):
     def name(self) -> str:
         return "calendar"
 
+    # A small model follows a tool's own description more than an
+    # always-loaded skill: with the hand-over only in the skills, a request
+    # to be reminded still became a calendar entry. So the description and
+    # `op` say it too.
     @property
     def description(self) -> str:
         return (
             "The family calendar: add an appointment, show what is planned for "
             "the coming days, or remove one. Every entry comes back with its "
-            "weekday and how far away it is; read those out, never work them out."
+            "weekday and how far away it is; read those out, never work them out. "
+            "Not for reminders: a request, in any language, to be reminded of "
+            "something at a time is a reminder, set with stack core schedule "
+            "(the reminders skill)."
         )
 
     @property
