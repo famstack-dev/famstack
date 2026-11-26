@@ -8,11 +8,11 @@ metadata: {"nanobot": {"always": true}}
 A reminder is two scheduler entries at the same time: `remind-<x>` posts it in the chat, `remind-<x>-say` says it in the house.
 
 ```
-"remind <me|someone> ... <time>" -> exec both, same <name> and <when>:
-  `stack core schedule add <name> "<when>" --title "<text>" --by <sender> --for <person> -- messages send <room> "<text>" --as agent --mention <person>`
-  `stack core schedule add <name>-say "<when>" --title "<spoken>" --by <sender> --for <person> -- ai say "<spoken>"`
+"remind <me|someone> ... <time>" -> exec both, same name and <when>:
+  `stack core schedule add remind-<person>-<word> "<when>" --title "<text>" --by <sender> --for <person> -- messages send <room> "<text>" --as agent --mention <person>`
+  `stack core schedule add remind-<person>-<word>-say "<when>" --title "<spoken>" --by <sender> --for <person> -- ai say "<spoken>"`
   person -> "me" is the sender; else their name, lowercase
-  name   -> remind-<person>-<one word of the text>: a-z, 0-9, dashes
+  word   -> one word of the text: a-z, 0-9, dashes
   when   -> "in 10m" | "in 2h" | "at YYYY-MM-DD HH:MM" | "daily HH:MM" | "weekly mon..sun HH:MM"
             house time; "tomorrow" from the "Sent ..." line
   room   -> the id on the "This room: ..." line; never one from an example
@@ -23,7 +23,7 @@ A reminder is two scheduler entries at the same time: `remind-<x>` posts it in t
   then   -> say in chat what I set and when
   error  -> say it was not set; never claim it was
 "which reminders" -> exec `stack core schedule list`; each reminder once, skip names ending -say
-"cancel <reminder>" -> exec `stack core schedule remove <name>` and `stack core schedule remove <name>-say`
+"cancel <reminder>" -> exec, its name from the list, `stack core schedule remove remind-<person>-<word>` and `stack core schedule remove remind-<person>-<word>-say`
   not named remind-... -> the admin's entry: say so, keep it
 ```
 
