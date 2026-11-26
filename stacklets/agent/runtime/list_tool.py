@@ -74,8 +74,8 @@ _awaiting_yes = AwaitingYes()
             "The list's name, such as einkaufsliste. `stack memory list "
             "show` names every list with its description. Leave it out "
             "when nobody said which list: add puts a known item where it "
-            "was last bought, and tick, untick or remove find the item on "
-            "whichever list it is.",
+            "was last bought, and tick, untick, remove or move find the "
+            "item on whichever list it is.",
             nullable=True,
         ),
         topic=StringSchema(

@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.memory.unit.instance import running_memory
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 MEMORY_DIR = REPO_ROOT / "stacklets" / "memory"
 
@@ -268,6 +270,7 @@ def test_speaking_does_not_open_the_rest_of_the_ai_stacklet(api, command):
       "section": "Milchprodukte & Eier", "people": ["Marge"], "due": "2026-10-14"}),
     ("list_edit", "list",
      {"list": "einkaufsliste", "op": "move", "items": ["Eier"], "to": "markt"}),
+    ("list_edit", "list", {"op": "move", "items": ["Eier"], "to": "Milchprodukte & Eier"}),
     ("list_edit", "list", {"list": "packliste", "op": "reset", "items": ["ignored"]}),
     ("list_edit", "list",
      {"op": "add", "items": ["Joghurt"], "topic": "einkaeufe-besorgungen"}),
@@ -311,6 +314,23 @@ def test_the_flags_a_tool_sends_are_flags_the_cli_accepts(
             f"{tool_name} builds `{' '.join(argv)}`, which "
             f"`stack memory {command}` rejects (argparse exit {exit_.code})"
         )
+
+
+def test_a_move_naming_no_list_moves_the_item_on_its_list(memory_cli, vault_tools, tmp_path):
+    """"Put the apples under fruit" names no list. The move the tool sends
+    then finds the list holding the item, and the store's answer, which the
+    tool relays, says where it went."""
+    lists = memory_cli["list"]
+    marge = {"family/people/marge.md": "---\ntype: person\ntitle: Marge Simpson\naccount: marge\n---\n"}
+    with running_memory(tmp_path, marge) as store:
+        lists.run(["create", "einkaufsliste", "--title", "Einkaufsliste",
+                   "--section", "Obst & Gemüse", "--as", "marge"], None, store.config)
+        lists.run(["add", "einkaufsliste", "Äpfel", "--as", "marge"], None, store.config)
+        argv = argv_of(vault_tools["list_edit"], op="move", items=["Äpfel"], to="Obst & Gemüse")
+        result = lists.run(argv[3:], None, store.config)
+        text = store.text("family/lists/einkaufsliste.md")
+    assert result["summary"] == "moved Äpfel to section Obst & Gemüse on Einkaufsliste"
+    assert "\n## Obst & Gemüse\n- [ ] Äpfel\n" in text
 
 
 class TestTheCalendarTool:
