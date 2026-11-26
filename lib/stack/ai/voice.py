@@ -9,6 +9,8 @@ build their requests here, so the same text is spoken in the same voice
 wherever it is said:
 
     url, key = speech_server(ai, openai_url, openai_key)
+    heard = transcription_server(ai, openai_url, openai_key,
+                                 ai_off=False, speech_off=False)   # where voice messages go
     speed = speech_speed(ai)                # the Mac's commands: [ai] speech_speed, else 0.8
     table = voices(ai.get("voices"))        # a bot: json.loads(SPEECH_VOICES_JSON)
     voice = voice_for(table, "de")          # or voice_named(table, "stacky-de")
@@ -212,6 +214,47 @@ def speech_server(ai: dict, openai_url: str, openai_key: str) -> tuple[str, str]
     if ai.get("speech_url"):
         return _root(ai["speech_url"]), ai.get("speech_key", "")
     return _root(openai_url or MANAGED_URL), openai_key
+
+
+@dataclass(frozen=True)
+class Transcription:
+    """Where voice messages go to be written down, as the render hands it on.
+
+    `url` and `key` are what the clients get (the bots, the curator, the
+    agent, Open WebUI). `upstream` is the server the proxy routes
+    `stt.<domain>` to.
+
+        t = transcription_server(ai, openai_url, openai_key,
+                                 ai_off=False, speech_off=True)
+        # Transcription(url="", key="local", upstream="http://localhost:42062/v1")
+    """
+
+    url: str
+    key: str
+    upstream: str
+
+
+def transcription_server(ai: dict, openai_url: str, openai_key: str, *,
+                         ai_off: bool, speech_off: bool) -> Transcription:
+    """Where voice messages go, from `[ai]` and the AI server as the stack
+    resolved it.
+
+    The AI server, which answers transcription too on oMLX and the hosted
+    providers, unless `[ai] whisper_url` names a speech server of its own;
+    that one gets `[ai] whisper_key` (or the placeholder `local`, because
+    the clients refuse an empty key) and never the AI's key.
+
+    Without an AI (`ai_off`) there is no server at all. With speech off
+    (`[ai] speech = false`) no Whisper runs, so the clients get no address,
+    also when `whisper_url` names one: the bots then answer that they
+    cannot read voice messages now. The proxy keeps its upstream, because
+    the ai stacklet's routes are one snippet and an empty upstream would
+    leave `openai.<domain>` out with it.
+    """
+    dedicated = str(ai.get("whisper_url") or "")
+    server = "" if ai_off else (dedicated or openai_url)
+    key = (str(ai.get("whisper_key") or "") or "local") if dedicated else openai_key
+    return Transcription(url="" if speech_off else server, key=key, upstream=server)
 
 
 def _root(url: str) -> str:

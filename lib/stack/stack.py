@@ -23,7 +23,7 @@ import urllib.parse
 from pathlib import Path
 
 from . import caddy
-from .ai.voice import speech_server, voice_table
+from .ai.voice import speech_server, transcription_server, voice_table
 from .ai.server import openai_key
 from .config_file import read_stack_toml
 from .configure import FORMS, NOTHING, NOTHING_TO_ASK, asking, run_on_configure
@@ -451,17 +451,9 @@ class Stack:
         # One rule for the AI's key, which the ai stacklet's own questions
         # to the AI follow too (`stack.ai.server`).
         ai_openai_key = openai_key(self.config.get("ai", {}), self.secrets.get("", "AI_API_KEY"))
-        # Voice messages go to the AI server, which answers transcription
-        # too on oMLX and the hosted providers, unless [ai] whisper_url
-        # names a dedicated speech server. The key follows the server.
-        # With speech off (`[ai] speech = false`) no Whisper runs, also when
-        # `whisper_url` names one, so there is no address either: the bots
-        # then answer that they cannot read voice messages now.
-        dedicated_whisper = self._cfg("ai", "whisper_url")
-        whisper_server = "" if off else (dedicated_whisper or ai_openai_url)
-        ai_whisper_url = "" if speech_is_off(self.config) else whisper_server
-        ai_whisper_key = ((self._cfg("ai", "whisper_key") or "local")
-                          if dedicated_whisper else ai_openai_key)
+        # Where voice messages go, and where not: one rule (stack.ai.voice).
+        heard = transcription_server(self.config.get("ai", {}), ai_openai_url, ai_openai_key,
+                                     ai_off=off, speech_off=speech_is_off(self.config))
 
         # What the stack speaks with: the AI server, which on oMLX speaks
         # too, unless [ai] speech_url names a server of its own. The key
@@ -496,19 +488,16 @@ class Stack:
             "ai_openai_url":         ai_openai_url,
             "ai_openai_url_docker":  for_containers(ai_openai_url),
             "ai_openai_key":         ai_openai_key,
-            "ai_whisper_url":        ai_whisper_url,
-            "ai_whisper_url_docker": for_containers(ai_whisper_url),
-            "ai_whisper_key":        ai_whisper_key,
+            "ai_whisper_url":        heard.url,
+            "ai_whisper_url_docker": for_containers(heard.url),
+            "ai_whisper_key":        heard.key,
             "ai_speech_url":         ai_speech_url,
             "ai_speech_url_docker":  for_containers(ai_speech_url),
             "ai_speech_key":         ai_speech_key,
             # Where the proxy sends `openai.<domain>` and `stt.<domain>`
             # (the ai stacklet's caddy.snippet): the servers above.
             "ai_openai_upstream":    caddy.upstream(ai_openai_url),
-            # The proxy keeps `stt.` with speech off: the ai snippet holds
-            # `openai.` too, and an empty upstream leaves the whole
-            # snippet out.
-            "ai_whisper_upstream":   caddy.upstream(whisper_server),
+            "ai_whisper_upstream":   caddy.upstream(heard.upstream),
             # The voices in force, `[ai.voices]` over the stack's own, as
             # `stack.ai.voice.voices` reads them back in a container.
             "ai_speech_voices_json": json.dumps(voice_table(self.config.get("ai", {}).get("voices"))),
