@@ -480,6 +480,10 @@ class Stack:
             "wiki_nightly":          self._cfg("memory", "wiki_nightly", "03:30"),
             # "true" while the stack runs without an AI (`AI_OFF`), else "".
             "ai_off":                "true" if off else "",
+            # "true" while nothing speaks: `[ai] speech = false` or no AI
+            # (`stack.profile.speech_is_off`), else "". The agent drops the
+            # spoken twin of a reminder with it.
+            "ai_speech_off":         "true" if off or speech_is_off(self.config) else "",
             # AI service URLs — host-side for CLI, docker-side for containers.
             # An unusable URL reaches containers unchanged, never empty
             # (stack.host_address), so a hand-edited [ai] stops no command

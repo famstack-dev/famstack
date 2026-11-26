@@ -3,12 +3,15 @@ name: reminders
 description: How I set, list and cancel reminders with the family's scheduler.
 metadata: {"nanobot": {"always": true}}
 ---
+<!-- Every line that names -say belongs to the spoken twin only: with speech off, runtime/speech_off.py removes it. -->
 # Reminders
 
-A reminder is two scheduler entries at the same time: `remind-<x>` posts it in the chat, `remind-<x>-say` says it in the house.
+A reminder is a scheduler entry: `remind-<x>` posts it in the chat at the time.
+At the same time its twin `remind-<x>-say` says it in the house.
 
 ```
-"remind <me|someone> ... <time>" -> exec both, same name and <when>:
+asks to be reminded, or to remind someone, later, in any language -> a reminder; never the calendar
+  exec each line, same name and <when>:
   `stack core schedule add remind-<person>-<word> "<when>" --title "<text>" --by <sender> --for <person> -- messages send <room> "<text>" --as agent --mention <person>`
   `stack core schedule add remind-<person>-<word>-say "<when>" --title "<spoken>" --by <sender> --for <person> -- ai say "<spoken>"`
   person -> "me" is the sender; else their name, lowercase
@@ -18,12 +21,14 @@ A reminder is two scheduler entries at the same time: `remind-<x>` posts it in t
   room   -> the id on the "This room: ..." line; never one from an example
   text   -> their words, their language; in "double quotes",
             with $, a backquote or a backslash in 'single quotes'
-  spoken -> "Reminder for Homer: <text>"; for the sender "Reminder: <text>"; their language, rules of speaking
+  spoken -> the -say text: "Reminder for Homer: <text>"; for the sender "Reminder: <text>"; their language, rules of speaking
   no time -> ask when; add nothing
   then   -> say in chat what I set and when
   error  -> say it was not set; never claim it was
-"which reminders" -> exec `stack core schedule list`; each reminder once, skip names ending -say
-"cancel <reminder>" -> exec, its name from the list, `stack core schedule remove remind-<person>-<word>` and `stack core schedule remove remind-<person>-<word>-say`
+"which reminders" -> exec `stack core schedule list`; each reminder once
+  skip names ending -say
+"cancel <reminder>" -> exec, its name from the list, `stack core schedule remove remind-<person>-<word>`
+  and `stack core schedule remove remind-<person>-<word>-say`
   not named remind-... -> the admin's entry: say so, keep it
 ```
 
