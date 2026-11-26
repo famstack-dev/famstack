@@ -235,8 +235,8 @@ Available template variables:
 | `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url`; empty while `[ai].provider = "none"`, as are the whisper and speech addresses and the upstreams |
 | `{ai_openai_url_docker}` | Same, as a container reaches it: `localhost`, `127.0.0.1`, `::1` and `0.0.0.0` become `host.docker.internal`. An unusable URL (no scheme, a bad port) stays unchanged, never empty. The other `_docker` variables follow the same rule |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
-| `{ai_whisper_url_docker}` | Derived from `stack.toml` → `[ai].whisper_url`, or the AI server when unset |
-| `{ai_openai_upstream}`, `{ai_whisper_upstream}` | The AI server and the speech server as a proxy upstream: scheme, host and port, no path; `localhost` and `127.0.0.1` become `host.docker.internal`. Used by the ai stacklet's `caddy.snippet` |
+| `{ai_whisper_url_docker}` | Derived from `stack.toml` → `[ai].whisper_url`, or the AI server when unset. Empty while `[ai].speech = false`, and in a run with `STACK_AI_NO_VOICE=1` (`stack up ai --no-voice`), because no Whisper runs then. The archivist then answers that it cannot read voice messages, and the agent gets a voice message without its words |
+| `{ai_openai_upstream}`, `{ai_whisper_upstream}` | The AI server and the speech server as a proxy upstream: scheme, host and port, no path; `localhost` and `127.0.0.1` become `host.docker.internal`. Used by the ai stacklet's `caddy.snippet`. `{ai_whisper_upstream}` stays set while `[ai].speech = false`, because the snippet also routes `openai.<domain>` |
 | `{ai_speech_url}`, `{ai_speech_url_docker}` | The server that speaks, as its root (requests go to `/v1/audio/speech`): `stack.toml` → `[ai].speech_url`, or the AI server when unset |
 | `{ai_speech_key}` | `stack.toml` → `[ai].speech_key` with a speech server of its own, otherwise the AI key |
 | `{ai_speech_voices_json}` | The voice of each language as JSON: `stack.toml` → `[ai.voices.<lang>]` (`model`, `voice`, `clip`) over the stack's own voices; read back with `stack.ai.voice.voices` |
