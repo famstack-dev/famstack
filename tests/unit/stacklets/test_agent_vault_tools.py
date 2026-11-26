@@ -361,6 +361,16 @@ class TestTheCalendarTool:
     def test_show_without_a_span_is_the_week(self, vault_tools):
         assert argv_of(vault_tools["calendar"], op="show")[-2:] == ["--days", "7"]
 
+    def test_the_tool_hands_a_reminder_to_the_scheduler(self, vault_tools):
+        """Given the model reads the calendar tool, then its description and
+        its `op` name the scheduler as where a reminder goes, because a small
+        model follows the tool's own text more than the reminders skill."""
+        tool = vault_tools["calendar"]
+        op_text = tool.parameters_schema["op"].args[0]
+
+        assert "stack core schedule" in tool().description
+        assert "stack core schedule" in op_text
+
 
 def test_an_unknown_flag_would_be_caught(memory_cli):
     """Guards the guard: prove the parser check can actually fail.
