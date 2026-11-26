@@ -721,6 +721,64 @@ class TestMovingWithinAList:
         assert "- [ ] Eier" not in store.text(GROCERIES)
 
 
+class TestMovingWithoutNamingTheList:
+    """"Put the apples under fruit" names no list: the move finds the list
+    holding the item, as a tick does."""
+
+    FRUIT = "Gemüse & Obst"
+
+    @pytest.fixture
+    def apples(self, run, groceries):
+        run("add", "einkaufsliste", "Äpfel", "--as", "marge")
+        return groceries
+
+    def test_an_item_on_one_list_moves_there(self, run, store, apples):
+        result = run("move", "Äpfel", "--to", self.FRUIT, "--as", "marge")
+        assert result["summary"] == "moved Äpfel to section Gemüse & Obst on Einkaufsliste"
+        assert "\n## Gemüse & Obst\n- [ ] Äpfel\n" in store.text(GROCERIES)
+
+    def test_an_item_on_two_lists_is_refused_with_both(self, run, store, apples):
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        run("add", "markt", "Äpfel", "--as", "marge")
+        before, commits = store.text(GROCERIES), len(store.commits)
+        result = run("move", "Äpfel", "--to", self.FRUIT, "--as", "marge")
+        assert result["error"] == ("'Äpfel' is on several lists (einkaufsliste: Äpfel; "
+                                   "markt: Äpfel). Name the list.")
+        assert store.text(GROCERIES) == before and len(store.commits) == commits
+
+    def test_a_move_naming_the_list_still_moves(self, run, store, apples):
+        result = run("move", "einkaufsliste", "Äpfel", "--to", self.FRUIT, "--as", "marge")
+        assert result["summary"] == "moved Äpfel to section Gemüse & Obst on Einkaufsliste"
+
+    def test_an_item_on_no_list_is_refused(self, run, store, apples):
+        before, commits = store.text(GROCERIES), len(store.commits)
+        result = run("move", "Birnen", "--to", self.FRUIT, "--as", "marge")
+        assert result["error"] == "no item matching 'Birnen' on any list"
+        assert store.text(GROCERIES) == before and len(store.commits) == commits
+
+    def test_items_on_different_lists_are_refused(self, run, store, apples):
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        run("add", "markt", "Eier", "--as", "marge")
+        commits = len(store.commits)
+        result = run("move", "Äpfel", "Eier", "--to", self.FRUIT, "--as", "marge")
+        assert result["error"] == ("the items are on several lists (einkaufsliste, markt). "
+                                   "Move them one list at a time.")
+        assert len(store.commits) == commits
+
+    def test_an_item_moves_to_another_list_from_the_list_holding_it(self, run, store, apples):
+        run("create", "markt", "--title", "Wochenmarkt", "--as", "marge")
+        result = run("move", "Äpfel", "--to", "markt", "--as", "marge")
+        assert result["summary"] == "moved Äpfel from Einkaufsliste to Wochenmarkt"
+        assert "- [ ] Äpfel" in store.text("family/lists/markt.md")
+        assert "Äpfel" not in store.text(GROCERIES)
+
+    def test_a_misspelt_list_is_refused_with_the_lists(self, run, store, apples):
+        commits = len(store.commits)
+        result = run("move", "einkaufsl", "Äpfel", "--to", self.FRUIT, "--as", "marge")
+        assert result["error"] == "'einkaufsl' names no list and no item. Lists: einkaufsliste"
+        assert len(store.commits) == commits
+
+
 class TestDeletingAList:
     """A list nobody needs any more is deleted, never emptied and left behind.
 

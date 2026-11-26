@@ -74,8 +74,8 @@ _awaiting_yes = AwaitingYes()
             "The list's name, such as einkaufsliste. `stack memory list "
             "show` names every list with its description. Leave it out "
             "when nobody said which list: add puts a known item where it "
-            "was last bought, and tick, untick or remove find the item on "
-            "whichever list it is.",
+            "was last bought, and tick, untick, remove or move find the "
+            "item on whichever list it is.",
             nullable=True,
         ),
         topic=StringSchema(
@@ -101,7 +101,7 @@ _awaiting_yes = AwaitingYes()
             nullable=True,
         ),
         section=StringSchema(
-            "For add: one of the list's own sections, such as "
+            "For add or move: one of the list's own sections, such as "
             "Milchprodukte & Eier.",
             nullable=True,
         ),
@@ -112,7 +112,8 @@ _awaiting_yes = AwaitingYes()
             nullable=True,
         ),
         due=StringSchema("For add: the day it is due, YYYY-MM-DD.", nullable=True),
-        to=StringSchema("For move: the list the items go to.", nullable=True),
+        to=StringSchema("For move: the list the items go to, or a section of "
+                        "their own list.", nullable=True),
         title=StringSchema("For create or set: the list's name as the family says it, "
                            "such as Baumarkt.", nullable=True),
         # Not `description`: the schema builder takes that keyword for the
@@ -246,14 +247,14 @@ def _item_args(op, slug, items, topic, section, people, due, to) -> "list[str]":
     if op == "add":
         if topic and not slug:
             args += ["--topic", topic]
-        if section:
-            args += ["--section", section]
         for person in people or []:
             args += ["--for", person]
         if due:
             args += ["--due", due]
     if op == "move" and to:
         args += ["--to", to]
+    if op in ("add", "move") and section:
+        args += ["--section", section]
     return args
 
 

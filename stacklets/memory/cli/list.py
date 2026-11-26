@@ -107,6 +107,7 @@ USAGE = """\
     stack memory list tick|untick|remove groceries yogurt --as homer
     stack memory list tick "Field trip form" --as marge   on whichever list it is
     stack memory list move groceries eggs --to market [--section Eggs] --as marge
+    stack memory list move eggs --to "Dairy & eggs" --as marge   on whichever list it is
     stack memory list move groceries eggs --section "Dairy & eggs" --as marge
                                                     to another section of the same list;
                                                     --to "Dairy & eggs" does the same, unless
@@ -181,16 +182,14 @@ def _parser() -> argparse.ArgumentParser:
 
     # As for `add`, the list is optional: a first word naming a list is
     # the list, and without one the item is looked up on every list.
-    for verb in ("tick", "untick", "remove"):
+    for verb in ("tick", "untick", "remove", "move"):
         one = verbs.add_parser(verb, add_help=False)
         one.add_argument("items", nargs="+")
 
     # Without `--to` the items stay on their list, and `--section` says
     # where on it they go. A `--to` naming no list but a section of the
     # list is that section: it is the form a model writes.
-    move = verbs.add_parser("move", add_help=False)
-    move.add_argument("slug")
-    move.add_argument("items", nargs="+")
+    move = verbs.choices["move"]
     move.add_argument("--to", action="append", default=[])
     move.add_argument("--section", action="append", default=[])
 
@@ -270,7 +269,7 @@ def run(args, stacklet, config):
         if ns.verb == "set":
             return change_details(vault, config, ns, actor, readable=readable)
         if ns.verb == "move":
-            return move(vault, config, ns.slug, ns.items, ns.to, actor, section=ns.section,
+            return move(vault, config, ns.items, ns.to, actor, section=ns.section,
                         readable=readable)
         if ns.verb == "delete":
             return delete(vault, config, ns.slug, actor, even_open=ns.yes, readable=readable)
@@ -821,9 +820,13 @@ def delete(vault: Path, config, slug: str, actor: str, *, even_open: bool,
     return _commit(config, path, _delete, actor, f"deleted the list {lst.title}")
 
 
-def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str, *,
+def move(vault: Path, config, words: list[str], to: str, actor: str, *,
          section: str = "", readable: Callable[[str], bool] = _every_list) -> dict:
     """Move items to another list, or to `section` of the same list.
+
+    Without a list first in `words`, the list is the one holding the
+    items, found as `tick` finds it; items on different lists are refused,
+    because one move leaves one list.
 
     To another list, an item is added there first and removed here after,
     so a failure between the two commits leaves it on both, never on
@@ -831,6 +834,18 @@ def move(vault: Path, config, slug: str, names: list[str], to: str, actor: str, 
     there the second commit would take the only line. A `--to` that names
     no list but a section of this one moves the items to that section.
     """
+    lists = _all_lists_at(vault, readable)
+    slug, names = _list_and_items(lists, words)
+    if not slug and len(names) > 1 and not any(find(lst, names[0]) for _, lst in lists):
+        # Before the list was optional, a misspelt list was refused with the
+        # lists to choose from; a model told only "no item" looks for one.
+        raise Refusal(f"{names[0]!r} names no list and no item. Lists: {_slugs(vault, readable)}")
+    if not slug:
+        held_by = {_locate(lists, name, "move")[1].slug for name in names}
+        if len(held_by) > 1:
+            raise Refusal(f"the items are on several lists ({', '.join(sorted(held_by))}). "
+                          "Move them one list at a time.")
+        slug = held_by.pop()
     path, lst = _find_list(vault, slug, readable)
     # An exact slug, not a glob: on macOS a glob ignores case, and `to` is
     # the caller's text, which may hold glob characters.
