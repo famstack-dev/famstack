@@ -175,6 +175,7 @@ try:
     import nanobot.agent.loop as _loop
     from brief import brief_lines as _brief_lines
     from brief import ANSWER_LANGUAGE as _ANSWER_LANGUAGE
+    from brief import this_room as _this_room
     from brief import when_sent as _when_sent
     from nanobot.runtime_context import RuntimeContextBlock as _Block
     from nanobot.runtime_context import wrap_runtime_context_lines as _wrap
@@ -183,6 +184,10 @@ try:
 
     async def _family_brief(request):
         lines = [_when_sent(_datetime.datetime.now().astimezone()), _ANSWER_LANGUAGE]
+        # Outside the try below: the room needs no read of the memory, and a
+        # reminder needs it even when those reads fail.
+        if room := _this_room(request):
+            lines.append(room)
         try:
             # In a thread: the brief runs `stack memory` commands, which
             # would otherwise hold up every other room while they answer.
