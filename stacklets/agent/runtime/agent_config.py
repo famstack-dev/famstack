@@ -50,7 +50,10 @@ def settle(config: dict, *, language: str, whisper_url: str) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    """Settle the config file at `argv[1]` from the environment, in place."""
+    """Settle the config file at `argv[1]` from the environment, in place.
+
+        main(["agent_config.py", "/home/nanobot/.nanobot/config.json"])   # 0
+    """
     path = argv[1]
     with open(path) as f:
         config = json.load(f)

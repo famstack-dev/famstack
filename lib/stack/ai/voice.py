@@ -250,6 +250,11 @@ def transcription_server(ai: dict, openai_url: str, openai_key: str, *,
     cannot read voice messages now. The proxy keeps its upstream, because
     the ai stacklet's routes are one snippet and an empty upstream would
     leave `openai.<domain>` out with it.
+
+        transcription_server({}, "http://localhost:42060/v1", "k",
+                             ai_off=False, speech_off=False)
+        # Transcription(url="http://localhost:42060/v1", key="k",
+        #               upstream="http://localhost:42060/v1")
     """
     dedicated = str(ai.get("whisper_url") or "")
     server = "" if ai_off else (dedicated or openai_url)
