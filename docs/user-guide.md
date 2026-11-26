@@ -181,9 +181,9 @@ Archivist captures your notes, thoughts and links for you. The bot
 creates summaries, tags them so you can find them again and starts to build your 
 personal knowledge base.
 
-> 🔒 **Encrypted rooms and the bots.** A room with only people in it stays private: it is encrypted between your devices, and nothing on the server reads it. Inviting a bot (the archivist, Stacky) is your choice to let famstack work with that room. The bot then reads it on your own Mac, encrypted or not, and files what you send like anywhere else. Element X encrypts direct chats on its own, so a direct chat with Stacky is encrypted too.
->
-> If a bot answers "I couldn't read that message", your app had not given it the room's key yet. Send the message again; if it keeps happening, remove the bot from the room and invite it again.
+> 🔒 **Encrypted rooms and the bots.** The chat server does not encrypt rooms by default. A room is encrypted only when someone turns encryption on in it. Inviting a bot (the archivist, Stacky) is your choice to let famstack work with that room. The bot reads it on your own Mac, encrypted or not.
+
+> A bot may answer "I couldn't read that message". Then your app had not given it the room's key yet. Send the message again. If it keeps happening, remove the bot and invite it again.
 
 What you can drop there:
 
@@ -261,6 +261,44 @@ Every list is a page in the [family wiki](#the-family-wiki) and a plain Markdown
 
 ---
 
+## Reminders
+
+> Needs the `agent` stacklet (Stacky) and the `core` stacklet.
+
+A reminder is a message that Stacky sends at the time you name. It mentions the person, and their phone rings. The house also says it aloud on the server Mac. A reminder is not a calendar entry: the calendar holds dates to read, and a reminder interrupts.
+
+**Ask for a reminder.** Say it in any room Stacky is in, starting with its name. Name a time or a wait:
+
+- "Stacky, remind me in 10 minutes to take the cake out."
+- "Stacky, remind Homer tomorrow at 17:00 to take out the trash."
+- "Stacky, remind me every day at 08:00 to take my pills."
+- "Stacky, remind us every Tuesday at 17:00 to water the plants."
+
+Stacky answers with what it set and when the reminder is due. If a time is missing, Stacky asks for one.
+
+**What comes back.** At the time, Stacky writes the reminder text in the room where you asked. It mentions the person:
+
+> **Stacky**: @homer Take out the trash
+
+At the same time, the house says it aloud in the family's language:
+
+- For the person who asked: "Reminder: Take out the trash".
+- For someone else: "Reminder for Homer: Take out the trash".
+
+A repeating reminder comes back at each time until you remove it.
+
+**List your reminders.** Ask "Stacky, what reminders are set?" Stacky lists them. Each line has the text, the person, the next time and the last run. Add "for Homer" to list only his.
+
+**Remove a reminder.** Say "Stacky, cancel the reminder about the trash". Stacky removes the message and the spoken reminder together. A reminder that ran once is gone after it ran.
+
+**Limits.**
+
+- A reminder says only what you wrote. It reads no notes, because it runs later when nobody is in the room.
+- Stacky removes only reminders that it set. A reminder that the admin set up by hand stays.
+- A reminder that is due while the Mac is off runs when the Mac is back, if the time passed less than 15 minutes ago. A later one is skipped.
+
+---
+
 ## Email
 
 > Needs the `core` stacklet, plus `docs` and `code` to file what arrives. Connected by the admin (see the admin guide).
@@ -312,9 +350,21 @@ The archivist re-reads the document with your correction, re-files it, and confi
 
 Anything you write in the filing's thread counts as a correction, so you can also just type in the thread the bot answered in, or reply to your own original message. You do not have to quote the confirmation.
 
-This works for captures too: reply to a bookmark or note confirmation and it gets re-filed with your hint.
-
 Memories work the same way, in the thread under each memory: see [Put a memory right](#put-a-memory-right).
+
+---
+
+## One card for each capture
+
+> Needs the `docs` and `code` stacklets.
+
+Every card names a person the way your family names them, and a topic the way your topic room names it. A note, a bookmark, a letter and a diary card use the same words. A search for "Lisa" or for "Camper Van" finds all of them.
+
+A topic that one person keeps stays private. A room with other people never shows it.
+
+Send a capture twice, and the archivist keeps one card. This happens when the phone was offline and you tried again.
+
+A correction keeps every message you wrote. The history of the card shows each one with its time. A later correction does not replace an earlier one.
 
 ---
 

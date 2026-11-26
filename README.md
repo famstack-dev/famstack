@@ -29,20 +29,20 @@ The reference implementation runs on a Mac Studio M1 in our living room at Lake 
 <br>
 
 > [!NOTE]
-> [**v0.5.0-beta.1**](https://github.com/famstack-dev/famstack/releases/tag/v0.5.0-beta.1) is the current Beta.
+> [**v0.5.0-rc.1**](https://github.com/famstack-dev/famstack/releases/tag/v0.5.0-rc.1) is the current release candidate of 0.5.0.
 >
 > famstack runs in other homes now, not just ours. If it doesn't work in yours, tell me: [open an issue](https://github.com/famstack-dev/famstack/issues), start a [discussion](https://github.com/famstack-dev/famstack/discussions) or join our [Discord](https://discord.gg/hfutdmmfBe).
 > If it works: please share it. A star, a post, a mention. That's what keeps a project like this alive.
 
 > [!TIP]
-> **New in 0.4**
-> - **A family diary.** Post voice memos, photos and a few lines in the Memories room, and famstack keeps them as plain files you own and back up, and turns them into a diary you can keep forever, with a nice web page to browse your memories.
-> - **Lists and a calendar in the chat.** Tell Stacky, the family agent, what goes on the shopping list: by text, by voice or with a photo of a handwritten list. [How lists work](docs/user-guide.md#lists).
-> - **A wiki that starts with the family.** The home page shows the household at a glance, what happened last month and what is ahead.
-> - **Talk to the bots.** A voice message works like a typed one, and the bots answer in the encrypted chats you invite them to.
-> - **Updates in one command.** `./stack update` moves your install to the newest release, and a menu bar app shows and controls the stack.
+> **New in 0.5**
+> - **Reminders.** Tell Stacky, the family agent, to remind you or someone else at a time. The phone rings and the house says it aloud. [How reminders work](docs/user-guide.md#reminders).
+> - **The same people and topics on every card.** A note, a letter and a diary card name a person or a topic the same way. One search finds them all.
+> - **Filing that keeps every message.** A capture sent twice stays one card, and a correction keeps every message you wrote.
+> - **Stacky reads only what the room may read.** In a room with other people, it answers only from what the family shares.
+> - **Snapshots and rollback.** Take a snapshot on request and go back to it with `./stack rollback`.
 >
-> Stacky is beta, and the part I am most excited about: it is the main topic of 0.5. [Read the 0.4.0 release notes](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0).
+> Earlier: 0.4 added the family diary, lists, Stacky, backups and one-command updates. [Read the 0.4.0 release notes](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0).
 
 ## What you get today
 
@@ -205,7 +205,7 @@ Want to add your own to your stack? [Creating a stacklet](docs/creating-stacklet
 
 ## Roadmap
 
-Document filing, photo backup, family chat with voice memos, and the family memory wiki all work today, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) ([what landed in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)). [`v0.4.0`](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0) adds the family diary, household lists, the family agent, encrypted chats with the bots, backups and one-command updates. 0.5 is about Stacky as the family's assistant and an even better family wiki.
+Document filing, photo backup, family chat with voice memos, and the family memory wiki all work today, first tagged as [`v0.3.0-beta.1`](https://github.com/famstack-dev/famstack/releases/tag/v0.3.0-beta.1) ([what landed in 0.3](https://famstack.dev/blog/famstack-0-3-beta/)). [`v0.4.0`](https://github.com/famstack-dev/famstack/releases/tag/v0.4.0) adds the family diary, household lists, the family agent, encrypted chats with the bots, backups and one-command updates. 0.5 makes Stacky the family's assistant, with reminders, and keeps the family wiki consistent.
 
 | Feature                                                  | Status                       |
 |----------------------------------------------------------|------------------------------|
