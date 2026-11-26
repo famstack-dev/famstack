@@ -27,7 +27,8 @@ from pathlib import Path
 from ._matrix import MatrixClient
 from ._server import synapse_port, synapse_url
 from stack.own_service import OWN_SERVICE_HOST
-from stack.users import user_id, get_admin_password, get_user_password, TECH_ADMIN_USERNAME
+from stack.users import (user_id, get_admin_password, get_user_password, has_account_on,
+                         TECH_ADMIN_USERNAME)
 from ._admins import admin_user_ids, ensure_admins, family_room_ids, summary
 from ._welcomes import memories, server_room
 
@@ -168,10 +169,9 @@ def _setup(client, users, config, secrets=None):
     for u in remaining:
         uid = user_id(u)
         is_admin_role = u.get("role") == "admin"
-        allowed = u.get("stacklets", [])
-        # Admins are created on every stacklet per core-reference.md —
-        # the `stacklets` opt-in list only gates non-admin members.
-        if not is_admin_role and "messages" not in allowed:
+        # Admins are created on every stacklet per core-reference.md; the
+        # `stacklets` opt-in list only gates non-admin members.
+        if not has_account_on(u, "messages"):
             results.append({"item": uid, "action": "skipped (not in stacklets list)"})
             continue
 

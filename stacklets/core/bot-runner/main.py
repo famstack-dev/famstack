@@ -177,6 +177,7 @@ def discover_bots():
                 "display_name": decl.get("name", bot_id),
                 "room": decl.get("room"),
                 "room_topic": decl.get("room_topic"),
+                "room_members": decl.get("room_members"),
                 "join_rooms": list(decl.get("join_rooms") or []),
                 "settings": decl.get("settings", {}),
             })
@@ -310,22 +311,26 @@ def _ensure_bot_accounts(configs):
         logger.info("All bots have sessions — skipping account creation")
 
     # Rooms and joins must run every time — a new stacklet may have been
-    # enabled since last boot, and its admin users need to be joined
-    admin_user_ids = [
-        uid.strip() for uid in
-        os.environ.get("STACK_ADMIN_USER_IDS", "").split(",")
-        if uid.strip()
-    ]
+    # enabled since last boot, and its people need to be joined. A parent
+    # added to users.toml since then is joined to the rooms for the parents.
     all_bots = [{
         "id": c["bot_id"],
         "room": c.get("room"),
         "room_topic": c.get("room_topic"),
+        "room_members": c.get("room_members"),
         "join_rooms": c.get("join_rooms") or [],
     } for c in configs]
     ensure_rooms(
         all_bots, MATRIX_HOMESERVER, MATRIX_SERVER_NAME,
-        admin_user, admin_password, admin_user_ids,
+        admin_user, admin_password,
+        admin_user_ids=_user_ids("STACK_ADMIN_USER_IDS"),
+        parent_user_ids=_user_ids("STACK_PARENT_USER_IDS"),
     )
+
+
+def _user_ids(env_name):
+    """The user IDs in a comma-separated env var core renders, blanks dropped."""
+    return [uid.strip() for uid in os.environ.get(env_name, "").split(",") if uid.strip()]
 
 
 def migrations_of(stacklet_ids):

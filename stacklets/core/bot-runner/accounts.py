@@ -1,8 +1,17 @@
 """Create Matrix accounts and rooms for discovered bots.
 
 Runs on bot-runner startup before any bots are launched. Uses the
-Synapse admin API to create/upsert accounts and join bots to their
-declared rooms. Idempotent — safe to run on every restart.
+Synapse admin API to create accounts, create each bot's declared room
+and join the bot and its people to it. A bot's `room_members` says who
+those are: `"parents"` joins the admins and the parents (the Documents
+Room), anything else the admins only (the Server Room). Anyone else, a
+child for example, joins when an admin invites them.
+
+Idempotent, so it is safe on every restart: people are only added, never
+removed, so an invited member stays, and a room whose members are
+already right gets no new event. A parent who left a room for the
+parents, or was banned from it, stays out: only the bot and the admins
+are joined again.
 """
 
 import json
@@ -12,6 +21,16 @@ import urllib.parse
 import urllib.request
 
 from loguru import logger
+
+# The `room_members` values a bot may declare. Omitted means the admins only.
+PARENTS = "parents"
+ROOM_MEMBERS = (None, PARENTS)
+
+# The power level of the admins in a bot's room. In a room for the parents
+# inviting takes it too, so only an admin can invite: the `private_chat`
+# preset lets any member invite, and anyone in the Documents Room can see
+# every document of the family.
+ADMIN_LEVEL = 100
 
 _SSL = ssl.create_default_context()
 _SSL.check_hostname = False
@@ -104,11 +123,20 @@ def setup_bot_accounts(bots, homeserver, server_name, admin_user, admin_password
 
 
 def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
-                 admin_user_ids=None):
-    """Ensure bot rooms exist and admin users are joined.
+                 admin_user_ids=None, parent_user_ids=None):
+    """Ensure bot rooms exist and their people are in them.
 
-    Always runs on startup, even when bot sessions already exist.
-    Creates rooms, joins bots, joins admin-role users.
+    Always runs on startup, even when bot sessions already exist. Creates
+    each bot's room, joins the bot, and joins the people its declaration
+    names: the admins and every user in `parent_user_ids` for
+    `room_members = "parents"`, otherwise the admins only. Admins are made
+    admins of the room.
+
+    It only adds: nobody is removed, and a person already in the room is
+    not joined again, so a restart with the right members writes nothing.
+    A member who left the room or was banned from it is not joined again,
+    because that was their choice or an admin's. The bot and the admins
+    are, as the room does not work without them.
     """
     # Only process bots that declare a room
     bots_with_rooms = [b for b in bots if b.get("room") or b.get("join_rooms")]
@@ -121,9 +149,11 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         return
 
     space_id = _resolve_space(base, token, server_name)
+    admins = [f"@{uid}:{server_name}" for uid in admin_user_ids or []]
+    parents = [f"@{uid}:{server_name}" for uid in parent_user_ids or []]
 
     for bot in bots_with_rooms:
-        bot_id = bot["id"]
+        bot_user = f"@{bot['id']}:{server_name}"
         room_alias = bot.get("room")
 
         # Rooms another stacklet owns, which the bot takes part in:
@@ -132,7 +162,7 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         for alias in bot.get("join_rooms") or []:
             existing = _resolve_room(base, token, server_name, alias)
             if existing:
-                _join_user(base, token, existing, f"@{bot_id}:{server_name}")
+                _join_missing(base, token, existing, [bot_user])
 
         if not room_alias:
             continue
@@ -141,27 +171,76 @@ def ensure_rooms(bots, homeserver, server_name, admin_user, admin_password,
         if not room_id:
             continue
 
-        # Join the bot and every person with the admin role, and make those
-        # admins of the room: the tech admin created it and is otherwise
-        # the only account with power there.
-        _join_user(base, token, room_id, f"@{bot_id}:{server_name}")
-        for uid in (admin_user_ids or []):
-            _join_user(base, token, room_id, f"@{uid}:{server_name}")
-            _ensure_admin_power(base, token, room_id, f"@{uid}:{server_name}")
+        members = bot.get("room_members")
+        if members not in ROOM_MEMBERS:
+            logger.warning("{} declares room_members = {!r}, which is not \"{}\": "
+                           "#{} is for the admins only", bot["id"], members, PARENTS, room_alias)
+        for_parents = members == PARENTS
+        people = parents if for_parents else []
+        _join_missing(base, token, room_id, [bot_user, *admins],
+                      [p for p in people if p not in admins])
+        # The tech admin created the room and is otherwise the only
+        # account with power there.
+        _ensure_power(base, token, room_id, admins,
+                      invite=ADMIN_LEVEL if for_parents else None)
 
 
-def _ensure_admin_power(base, token, room_id, full_user):
-    """Give a user power level 100 in a room, writing only when it differs.
-    The same rule `stack messages setup --room-admins` applies to every room the stack creates."""
+def _join_missing(base, token, room_id, required, optional=()):
+    """Force-join each user who is not in the room yet.
+
+    `required` users are joined whatever their membership. `optional`
+    users are joined only when they never were in the room: one who left
+    or was banned stays out.
+
+    The memberships are read first, because a join of a member who is
+    already in the room can still write a membership event. When the
+    read fails, every required user is joined (a join that may repeat is
+    better than a bot or an admin left out) and no optional one, as
+    nothing says whether they left.
+    """
+    memberships = _memberships(base, token, room_id)
+    for user in dict.fromkeys(required):
+        if memberships is None or memberships.get(user) != "join":
+            _join_user(base, token, room_id, user)
+    if memberships is None:
+        return
+    for user in dict.fromkeys(optional):
+        if user not in memberships:
+            _join_user(base, token, room_id, user)
+
+
+def _memberships(base, token, room_id):
+    """Each user's membership in the room (`"join"`, `"leave"`, `"ban"`,
+    `"invite"`), from its state; None when the state cannot be read."""
+    status, resp = _api("GET", f"{base}/_synapse/admin/v1/rooms/{room_id}/state", token=token)
+    if status != 200:
+        return None
+    return {e["state_key"]: (e.get("content") or {}).get("membership")
+            for e in resp.get("state") or [] if e.get("type") == "m.room.member"}
+
+
+def _ensure_power(base, token, room_id, admins, invite=None):
+    """Give each admin power level 100 in a room and, when `invite` is
+    set, make inviting take that level. One read, and one write only when
+    a level differs, so a room that is right gets no new event.
+
+    The admins' level is the same rule `stack messages setup --room-admins`
+    applies to every room the stack creates.
+    """
     path = f"{base}/_matrix/client/v3/rooms/{room_id}/state/m.room.power_levels/"
     status, body = _api("GET", path, token=token)
-    levels: dict = dict(body) if status == 200 else {}
-    users: dict = dict(levels.get("users") or {})
-    if status != 200 or users.get(full_user) == 100:
-        return
-    status, resp = _api("PUT", path, {**levels, "users": {**users, full_user: 100}}, token=token)
     if status != 200:
-        logger.warning("Could not make {} an admin of {}: {}", full_user, room_id, resp.get("error", "?"))
+        return
+    levels: dict = dict(body)
+    wanted = {**levels, "users": {**(levels.get("users") or {}),
+                                  **dict.fromkeys(admins, ADMIN_LEVEL)}}
+    if invite is not None:
+        wanted["invite"] = invite
+    if wanted == levels:
+        return
+    status, resp = _api("PUT", path, wanted, token=token)
+    if status != 200:
+        logger.warning("Could not set the power levels of {}: {}", room_id, resp.get("error", "?"))
 
 
 def _resolve_room(base, token, server_name, alias):
@@ -209,6 +288,11 @@ def _ensure_room(base, token, server_name, alias, topic, space_id):
 
 
 def _join_user(base, token, room_id, full_user):
-    """Force-join a user to a room via the Synapse admin API."""
-    _api("POST", f"{base}/_synapse/admin/v1/join/{room_id}",
-         {"user_id": full_user}, token=token)
+    """Force-join a user to a room via the Synapse admin API. A refused
+    join is logged, for example of a person whose chat account does not
+    exist yet: the next start tries again."""
+    status, resp = _api("POST", f"{base}/_synapse/admin/v1/join/{room_id}",
+                        {"user_id": full_user}, token=token)
+    if status != 200:
+        logger.warning("Could not join {} to {} ({}): {}",
+                       full_user, room_id, status, resp.get("error", "?"))
