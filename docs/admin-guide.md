@@ -2085,6 +2085,8 @@ To go back to an older snapshot, name it: `./stack rollback 2026-11-01T0900Z`. T
 
 The rollback does not restore the configuration. A password, a paired phone or a person added since the snapshot
 stays.
+The snapshot keeps a copy of the configuration in `~/famstack-data/.snapshots/<snapshot>/stack/`. To use an old
+setting again, copy it from there by hand.
 
 A host stacklet, such as `ai`, gets its data folder back. Its Homebrew packages and its LaunchAgents stay as they are,
 because they are outside the data folder.
