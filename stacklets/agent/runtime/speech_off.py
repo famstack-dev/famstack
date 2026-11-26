@@ -14,9 +14,19 @@ The setting reaches the container as `AGENT_SPEECH_OFF` (`{ai_speech_off}`,
 "true" or empty), one value per install. The skill stays the same for every
 turn, so nanobot's cached prompt prefix holds.
 
-It reads and writes only `reminders/SKILL.md` in the skills folder, which the
-start has just copied from the image. The `speaking` skill also runs `ai
-say`, on request; it is left alone.
+The skills are always loaded, so they are part of the prompt prefix that
+oMLX keeps in its cache in blocks of 4096 tokens. `zz-cache-pad` parks that
+prefix just past a block boundary, measured with the full skill
+(`tools/agent-lab/rig/README.md`, "cache-block rule"). A prefix shorter by
+the removed lines could fall below the boundary, and every turn would then
+prefill a whole block again. So the start lengthens the pad by as many
+characters as it removed, from the pad's own filler words: the prefix keeps
+its length within a few tokens, with speech on and off.
+
+It reads and writes only `reminders/SKILL.md` and `zz-cache-pad/SKILL.md` in
+the skills folder, which the start has just copied from the image; that copy
+makes a second run change nothing. The `speaking` skill also runs `ai say`,
+on request; it is left alone.
 
     >>> without_spoken("post it\\nremind-x-say says it\\nlist them\\n")
     'post it\\nlist them\\n'
@@ -31,6 +41,7 @@ from pathlib import Path
 # only, so one marker finds them all.
 SPOKEN_MARKER = "-say"
 REMINDERS = Path("reminders") / "SKILL.md"
+PAD = Path("zz-cache-pad") / "SKILL.md"
 
 
 def without_spoken(text: str) -> str:
@@ -39,8 +50,22 @@ def without_spoken(text: str) -> str:
     return "".join(line for line in lines if SPOKEN_MARKER not in line)
 
 
+def padded(pad: str, count: int) -> str:
+    """The pad's text with `count` more characters of its own filler at the
+    end: its last lines repeated, cut to the exact count, ending in a line
+    break. A pad without filler lines, or `count` 0, comes back unchanged."""
+    filler = [line for line in pad.splitlines() if line.endswith(".")][-8:]
+    if count <= 0 or not filler:
+        return pad
+    text = ""
+    while len(text) < count:
+        text += "\n".join(filler) + "\n"
+    return pad + text[:count - 1] + "\n"
+
+
 def main(argv: list[str]) -> int:
-    """Rewrite `<skills>/reminders/SKILL.md` without its spoken lines when
+    """Rewrite `<skills>/reminders/SKILL.md` without its spoken lines, and
+    lengthen `<skills>/zz-cache-pad/SKILL.md` by what they held, when
     `<speech off>` is "true". Any other value, or no reminders skill,
     changes nothing. Returns the exit code."""
     if len(argv) != 2:
@@ -50,7 +75,12 @@ def main(argv: list[str]) -> int:
     skill = skills / REMINDERS
     if speech_off != "true" or not skill.is_file():
         return 0
-    skill.write_text(without_spoken(skill.read_text()))
+    shipped = skill.read_text()
+    trimmed = without_spoken(shipped)
+    skill.write_text(trimmed)
+    pad = skills / PAD
+    if pad.is_file():
+        pad.write_text(padded(pad.read_text(), len(shipped) - len(trimmed)))
     print("reminders: speech is off, so a reminder is the chat message only")
     return 0
 

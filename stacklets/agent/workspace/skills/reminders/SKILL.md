@@ -3,6 +3,7 @@ name: reminders
 description: How I set, list and cancel reminders with the family's scheduler.
 metadata: {"nanobot": {"always": true}}
 ---
+<!-- Every line that names -say belongs to the spoken twin only: with speech off, runtime/speech_off.py removes it. -->
 # Reminders
 
 A reminder is a scheduler entry: `remind-<x>` posts it in the chat at the time.

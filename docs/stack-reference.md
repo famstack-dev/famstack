@@ -231,7 +231,7 @@ Available template variables:
 | `{admin_password}` | Tech admin password, generated and stored in `secrets.toml` |
 | `{family_names}` | Comma-separated first names of everyone in `users.toml` |
 | `{ai_off}` | `"true"` while `[ai].provider = "none"` (no AI for now), else empty. The bot runner and the curator read it as `AI_OFF`: the archivist files without tags, the memory compiles without the model |
-| `{ai_speech_off}` | `"true"` while nothing speaks: `[ai].speech = false`, or `[ai].provider = "none"`; else empty. The agent reads it as `AGENT_SPEECH_OFF`: a reminder then has no spoken twin |
+| `{ai_speech_off}` | `"true"` while nothing speaks: `[ai].speech = false`, `[ai].provider = "none"`, or `STACK_AI_NO_VOICE=1` (`stack up ai --no-voice`); else empty. The agent reads it as `AGENT_SPEECH_OFF`: a reminder then has no spoken twin |
 | `{ai_openai_url}` | Derived from `stack.toml` → `[ai].openai_url`; empty while `[ai].provider = "none"`, as are the whisper and speech addresses and the upstreams |
 | `{ai_openai_url_docker}` | Same, as a container reaches it: `localhost`, `127.0.0.1`, `::1` and `0.0.0.0` become `host.docker.internal`. An unusable URL (no scheme, a bad port) stays unchanged, never empty. The other `_docker` variables follow the same rule |
 | `{ai_openai_key}` | `stack.toml` → `[ai].openai_key` |
